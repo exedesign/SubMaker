@@ -1,0 +1,545 @@
+"""
+Subtitle Engine
+Generates ASS/SSA subtitle files with professional styling and animations
+"""
+import os
+import re
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from config import (
+    DEFAULT_FONT, DEFAULT_FONT_SIZE, DEFAULT_FONT_COLOR,
+    DEFAULT_BORDER_COLOR, DEFAULT_BORDER_WIDTH, DEFAULT_SHADOW_DEPTH,
+    VIDEO_FORMATS, FONTS_DIR
+)
+
+
+@dataclass
+class SubtitleStyle:
+    """Subtitle style configuration"""
+    name: str = "Default"
+    font_name: str = DEFAULT_FONT
+    font_size: int = DEFAULT_FONT_SIZE
+    primary_color: str = DEFAULT_FONT_COLOR  # Hex format
+    secondary_color: str = "#FFFF00"
+    border_color: str = DEFAULT_BORDER_COLOR
+    shadow_color: str = "#000000"
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    border_width: float = DEFAULT_BORDER_WIDTH
+    shadow_depth: float = DEFAULT_SHADOW_DEPTH
+    alignment: int = 2  # 1-9 numpad style (2 = bottom center)
+    margin_left: int = 20      # Increased for 4K (2x of 1080p)
+    margin_right: int = 20     # Increased for 4K (2x of 1080p)
+    margin_vertical: int = 60  # Increased for 4K (2x of 1080p)
+    blur: float = 0
+    
+    def to_ass_color(self, hex_color: str, alpha: int = 0) -> str:
+        """Convert hex color to ASS format (&HAABBGGRR)"""
+        hex_color = hex_color.lstrip("#")
+        if len(hex_color) == 6:
+            r, g, b = hex_color[0:2], hex_color[2:4], hex_color[4:6]
+            return f"&H{alpha:02X}{b}{g}{r}"
+        return f"&H00FFFFFF"
+    
+    def to_ass_style_line(self) -> str:
+        """Generate ASS style line"""
+        return (
+            f"Style: {self.name},"
+            f"{self.font_name},"
+            f"{self.font_size},"
+            f"{self.to_ass_color(self.primary_color)},"
+            f"{self.to_ass_color(self.secondary_color)},"
+            f"{self.to_ass_color(self.border_color)},"
+            f"{self.to_ass_color(self.shadow_color, 128)},"
+            f"{int(self.bold) * -1},"
+            f"{int(self.italic) * -1},"
+            f"{int(self.underline) * -1},"
+            f"0,"  # StrikeOut
+            f"100,100,"  # ScaleX, ScaleY
+            f"0,"  # Spacing
+            f"0,"  # Angle
+            f"1,"  # BorderStyle (1 = outline + shadow)
+            f"{self.border_width},"
+            f"{self.shadow_depth},"
+            f"{self.alignment},"
+            f"{self.margin_left},{self.margin_right},{self.margin_vertical},"
+            f"1"  # Encoding
+        )
+
+
+@dataclass
+class AnimationConfig:
+    """Animation configuration for subtitles - optimized for 4K performance"""
+    type: str = "none"  # none, fade, karaoke, typewriter, word_highlight, pop
+    fade_in: int = 0  # milliseconds
+    fade_out: int = 0
+    karaoke_type: str = "instant"  # instant (fast), sweep (slower), border (slowest)
+    highlight_color: str = "#FFFF00"
+    rtl: bool = False  # Right-to-left language support (Arabic, Hebrew, etc.)
+    
+    
+class SubtitleEngine:
+    """Engine for generating professional subtitle files"""
+    
+    def __init__(self, video_width: int = 1920, video_height: int = 1080):
+        self.video_width = video_width
+        self.video_height = video_height
+        self.styles: Dict[str, SubtitleStyle] = {}
+        self.default_style = SubtitleStyle()
+        self.styles["Default"] = self.default_style
+        
+    def set_resolution(self, width: int, height: int):
+        """Set video resolution"""
+        self.video_width = width
+        self.video_height = height
+    
+    def set_resolution_from_format(self, format_type: str):
+        """Set resolution from format type"""
+        config = VIDEO_FORMATS.get(format_type, VIDEO_FORMATS["horizontal"])
+        self.video_width = config["width"]
+        self.video_height = config["height"]
+    
+    def add_style(self, style: SubtitleStyle):
+        """Add a subtitle style"""
+        self.styles[style.name] = style
+    
+    def create_style(self, name: str, **kwargs) -> SubtitleStyle:
+        """Create and add a new style"""
+        style = SubtitleStyle(name=name, **kwargs)
+        self.styles[name] = style
+        return style
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format time as ASS timestamp (H:MM:SS.cc)"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        centisecs = int((seconds % 1) * 100)
+        return f"{hours}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
+    
+    def _apply_animation(
+        self,
+        text: str,
+        animation: AnimationConfig,
+        duration: float,
+        words: Optional[List] = None
+    ) -> str:
+        """Apply animation effects to subtitle text"""
+        
+        print(f"[ANIMATION DEBUG] Type: {animation.type}, Words: {words is not None}, Text: '{text[:50]}...'")
+        
+        if animation.type == "none":
+            return text
+        
+        if animation.type == "fade":
+            return f"{{\\fad({animation.fade_in},{animation.fade_out})}}{text}"
+        
+        if animation.type == "pop":
+            # Scale animation
+            return (
+                f"{{\\fscx0\\fscy0\\t(0,200,\\fscx100\\fscy100)"
+                f"\\t({int(duration*1000)-200},{int(duration*1000)},\\fscx0\\fscy0)}}{text}"
+            )
+        
+        if animation.type == "karaoke" and words:
+            # Debug karaoke animation
+            print(f"[KARAOKE DEBUG] Applying karaoke animation: words={words}, type={type(words)}")
+            # Simplified karaoke effect - performance optimized for 4K
+            karaoke_parts = []
+            
+            # Process words with minimal ASS complexity
+            word_list = list(words)
+            
+            # For RTL languages, reverse the word order for karaoke effect
+            if animation.rtl:
+                word_list = list(reversed(word_list))
+            
+            for word_data in word_list:
+                # Handle both dict format and string format for words
+                if isinstance(word_data, dict):
+                    word = word_data.get("word", "")
+                    word_duration = word_data.get("end", 0) - word_data.get("start", 0)
+                else:
+                    # word_data is a string
+                    word = str(word_data) + " "
+                    # Estimate word duration based on total duration and word count
+                    word_duration = duration / len(words) if words else 0
+                
+                # Use optimized timing for better performance (minimum 20cs per word)
+                duration_cs = max(20, int(word_duration * 100))  # Minimum 200ms per word
+                
+                # Simple karaoke tags without complex inline styling
+                karaoke_parts.append(f"{{\\kf{duration_cs}}}{word}")
+            
+            # For RTL, reverse back to get correct visual order
+            if animation.rtl:
+                karaoke_parts = list(reversed(karaoke_parts))
+                
+            # Simple style override - much faster than complex inline styling
+            return "".join(karaoke_parts)
+        
+        elif animation.type == "karaoke" and not words:
+            # FALLBACK: Words verisi yok, metni kelimelere böl
+            print(f"[KARAOKE FALLBACK] Creating karaoke without words data for: '{text[:50]}...'")
+            
+            # Text'i kelimelere ayır
+            words_list = text.strip().split()
+            if not words_list:
+                return text
+            
+            karaoke_parts = []
+            # Her kelime için eşit süre dağıt
+            word_duration = duration / len(words_list)
+            
+            for word in words_list:
+                # Minimum 30cs (300ms) per word için optimize et
+                duration_cs = max(30, int(word_duration * 100))
+                # Kelime sonuna boşluk ekle (son kelime hariç)
+                if word != words_list[-1]:
+                    word += " "
+                karaoke_parts.append(f"{{\\kf{duration_cs}}}{word}")
+            
+            fallback_result = "".join(karaoke_parts)
+            print(f"[KARAOKE FALLBACK] Generated: {len(words_list)} words with {duration_cs}cs each")
+            return fallback_result
+        
+        if animation.type == "word_highlight" and words:
+            # Highlight words one at a time
+            return self._create_word_highlight(words, animation)
+        
+        if animation.type == "typewriter":
+            # Character by character reveal
+            chars = list(text)
+            char_duration = int((duration * 1000) / len(chars))
+            typewriter_text = ""
+            for i, char in enumerate(chars):
+                delay = i * char_duration
+                typewriter_text += f"{{\\t({delay},{delay + 50},\\alpha&H00&)}}{char}"
+            return f"{{\\alpha&HFF&}}{typewriter_text}"
+        
+        print(f"[ANIMATION DEBUG] No animation applied for type: {animation.type}, returning original text: '{text[:50]}...'")
+        return text
+    
+    def _create_word_highlight(
+        self,
+        words: List,
+        animation: AnimationConfig
+    ) -> str:
+        """Create word-by-word highlight effect"""
+        # This creates multiple dialogue lines for word highlighting
+        # For simplicity, return basic karaoke
+        text = ""
+        for word_data in words:
+            # Handle both dict format and string format for words
+            if isinstance(word_data, dict):
+                word = word_data.get("word", "")
+                duration_cs = int((word_data.get("end", 0) - word_data.get("start", 0)) * 100)
+            else:
+                # word_data is a string
+                word = str(word_data) + " "
+                duration_cs = 50  # Default duration for string words
+            text += f"{{\\kf{duration_cs}}}{word}"
+        return text
+    
+    def generate_ass(
+        self,
+        subtitles: List[Dict[str, Any]],
+        style: Optional[SubtitleStyle] = None,
+        animation: Optional[AnimationConfig] = None,
+        title: str = "SubMaker Subtitles"
+    ) -> str:
+        """
+        Generate ASS subtitle file content
+        
+        Args:
+            subtitles: List of subtitle dicts with start, end, text (and optionally words)
+            style: Subtitle style to use
+            animation: Animation configuration
+            title: Script title
+            
+        Returns:
+            ASS file content as string
+        """
+        if style is None:
+            style = self.default_style
+        
+        if animation is None:
+            animation = AnimationConfig()
+
+        # Simplified karaoke style handling - avoid complex style duplication
+        if animation.type == "karaoke" and style:
+            # Create optimized karaoke style with secondary color set to highlight
+            style.secondary_color = animation.highlight_color
+        
+        style = self.styles.get(style.name, style) if style else self.default_style
+
+        # Always update the style in collection (overwrite if exists)
+        self.styles[style.name] = style
+        # Also update default style to use the provided style
+        self.default_style = style
+        
+        # Build ASS content
+        ass_content = f"""[Script Info]
+Title: {title}
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+PlayResX: {self.video_width}
+PlayResY: {self.video_height}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+"""
+        
+        # Add all styles
+        for s in self.styles.values():
+            ass_content += s.to_ass_style_line() + "\n"
+        
+        ass_content += """
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        
+        # Add dialogue lines
+        for sub in subtitles:
+            start = self._format_time(sub["start"])
+            end = self._format_time(sub["end"])
+            text = sub["text"]
+            words = sub.get("words")
+            duration = sub["end"] - sub["start"]
+            
+            # Apply animation
+            animated_text = self._apply_animation(text, animation, duration, words)
+            
+            # Escape special characters
+            animated_text = animated_text.replace("\n", "\\N")
+            
+            ass_content += f"Dialogue: 0,{start},{end},{style.name},,0,0,0,,{animated_text}\n"
+        
+        return ass_content
+    
+    def generate_srt(self, subtitles: List[Dict[str, Any]]) -> str:
+        """
+        Generate SRT subtitle file content
+        
+        Args:
+            subtitles: List of subtitle dicts
+            
+        Returns:
+            SRT file content as string
+        """
+        srt_content = ""
+        
+        for i, sub in enumerate(subtitles, 1):
+            start = self._format_srt_time(sub["start"])
+            end = self._format_srt_time(sub["end"])
+            text = sub["text"]
+            
+            srt_content += f"{i}\n{start} --> {end}\n{text}\n\n"
+        
+        return srt_content
+    
+    def _format_srt_time(self, seconds: float) -> str:
+        """Format time as SRT timestamp (HH:MM:SS,mmm)"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+    
+    def save_ass(
+        self,
+        subtitles: List[Dict[str, Any]],
+        output_path: str,
+        style: Optional[SubtitleStyle] = None,
+        animation: Optional[AnimationConfig] = None
+    ) -> str:
+        """
+        Generate and save ASS file
+        
+        Args:
+            subtitles: List of subtitles
+            output_path: Output file path
+            style: Style configuration
+            animation: Animation configuration
+            
+        Returns:
+            Path to saved file
+        """
+        content = self.generate_ass(subtitles, style, animation)
+        
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        return output_path
+    
+    def save_srt(
+        self,
+        subtitles: List[Dict[str, Any]],
+        output_path: str
+    ) -> str:
+        """
+        Generate and save SRT file
+        
+        Args:
+            subtitles: List of subtitles
+            output_path: Output file path
+            
+        Returns:
+            Path to saved file
+        """
+        content = self.generate_srt(subtitles)
+        
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        return output_path
+    
+    def generate_ass_dual(
+        self,
+        primary_subtitles: List[Dict[str, Any]],
+        secondary_subtitles: List[Dict[str, Any]],
+        primary_style: Optional[SubtitleStyle] = None,
+        secondary_style: Optional[SubtitleStyle] = None,
+        animation: Optional[AnimationConfig] = None,
+        title: str = "SubMaker Dual Subtitles"
+    ) -> str:
+        """
+        Generate ASS subtitle file with dual language support
+        
+        Args:
+            primary_subtitles: Primary language subtitles
+            secondary_subtitles: Secondary (translated) subtitles
+            primary_style: Primary subtitle style
+            secondary_style: Secondary subtitle style
+            animation: Animation configuration
+            title: Script title
+            
+        Returns:
+            ASS file content as string
+        """
+        if primary_style is None:
+            primary_style = self.default_style
+        
+        if secondary_style is None:
+            # Create a default secondary style (yellow, smaller, below primary)
+            secondary_style = SubtitleStyle(
+                name="Secondary",
+                font_name=primary_style.font_name,
+                font_size=int(primary_style.font_size * 0.75),  # 75% of primary
+                primary_color="#FFFF00",  # Yellow
+                border_color="#000000",
+                border_width=primary_style.border_width,
+                shadow_depth=primary_style.shadow_depth,
+                alignment=2,  # Bottom center
+                margin_vertical=primary_style.margin_vertical + 120,  # Below primary (increased for 4K)
+            )
+        else:
+            secondary_style.name = "Secondary"
+        
+        if animation is None:
+            animation = AnimationConfig()
+        
+        # Update styles
+        self.styles[primary_style.name] = primary_style
+        self.styles[secondary_style.name] = secondary_style
+        
+        # Build ASS content
+        ass_content = f"""[Script Info]
+Title: {title}
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+PlayResX: {self.video_width}
+PlayResY: {self.video_height}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+"""
+        
+        # Add both styles
+        ass_content += primary_style.to_ass_style_line() + "\n"
+        ass_content += secondary_style.to_ass_style_line() + "\n"
+        
+        ass_content += """
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        
+        # Create a lookup for secondary subtitles by ID
+        secondary_by_id = {sub.get('id'): sub for sub in secondary_subtitles}
+        
+        # Add dialogue lines - primary first, then secondary
+        for sub in primary_subtitles:
+            start = self._format_time(sub["start"])
+            end = self._format_time(sub["end"])
+            text = sub["text"]
+            words = sub.get("words")
+            duration = sub["end"] - sub["start"]
+            
+            # Apply animation to primary
+            animated_text = self._apply_animation(text, animation, duration, words)
+            animated_text = animated_text.replace("\n", "\\N")
+            
+            # Add primary dialogue
+            ass_content += f"Dialogue: 0,{start},{end},{primary_style.name},,0,0,0,,{animated_text}\n"
+            
+            # Add secondary dialogue if exists
+            sub_id = sub.get('id')
+            if sub_id and sub_id in secondary_by_id:
+                secondary_sub = secondary_by_id[sub_id]
+                secondary_text = secondary_sub.get('translatedText', '')
+                if secondary_text:
+                    # Secondary has simple fade animation
+                    secondary_animated = f"{{\\fad(150,150)}}{secondary_text}"
+                    secondary_animated = secondary_animated.replace("\n", "\\N")
+                    ass_content += f"Dialogue: 1,{start},{end},{secondary_style.name},,0,0,0,,{secondary_animated}\n"
+        
+        return ass_content
+    
+    def save_ass_dual(
+        self,
+        primary_subtitles: List[Dict[str, Any]],
+        secondary_subtitles: List[Dict[str, Any]],
+        output_path: str,
+        primary_style: Optional[SubtitleStyle] = None,
+        secondary_style: Optional[SubtitleStyle] = None,
+        animation: Optional[AnimationConfig] = None
+    ) -> str:
+        """
+        Generate and save dual language ASS file
+        """
+        content = self.generate_ass_dual(
+            primary_subtitles,
+            secondary_subtitles,
+            primary_style,
+            secondary_style,
+            animation
+        )
+        
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        return output_path
+
+
+# Singleton instance
+_subtitle_engine = None
+
+def get_subtitle_engine(fresh: bool = False) -> SubtitleEngine:
+    """Get or create the subtitle engine singleton
+    
+    Args:
+        fresh: If True, create a new instance (for render jobs to avoid cached styles)
+    """
+    global _subtitle_engine
+    if fresh or _subtitle_engine is None:
+        _subtitle_engine = SubtitleEngine()
+    return _subtitle_engine

@@ -1,0 +1,27 @@
+# SubMaker Backend Dependencies
+# =============================
+
+# Transcription
+faster-whisper>=1.0.0
+ctranslate2>=4.0.0
+
+# Translation (Offline)
+argostranslate>=1.10.0
+
+# Arabic Support (RTL)
+arabic-reshaper>=3.0.0
+python-bidi>=0.4.2
+
+# API Framework
+flask>=3.0.0
+flask-cors>=4.0.0
+flask-socketio>=5.3.0
+eventlet>=0.35.0
+
+# Utilities
+numpy>=1.24.0
+tqdm>=4.65.0
+pydub>=0.25.1
+
+# Optional: GPU Support (uncomment if CUDA available)
+# torch>=2.0.0
