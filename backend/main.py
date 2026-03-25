@@ -22,11 +22,10 @@ def create_app():
     app = Flask(__name__)
     
     # Enable CORS for all origins (development mode)
-    CORS(app, 
-         origins="*",
+    CORS(app,
+         resources={r"/api/*": {"origins": "*"}},
          allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         supports_credentials=True)
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     
     # Allow large file uploads (500MB for WAV files)
     app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB

@@ -134,6 +134,25 @@ body.dragging-preview * {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 150ms ease;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--accent-primary);
 }
 
 .sidebar-tabs {
@@ -196,6 +215,21 @@ body.dragging-preview * {
 .sidebar-section {
   padding: 16px;
   border-bottom: 1px solid var(--border-color);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.sidebar-section[draggable="true"] {
+  cursor: default;
+}
+
+.sidebar-section.dragging {
+  opacity: 0.5;
+  background: var(--bg-tertiary);
+}
+
+.sidebar-section.drag-over {
+  border-top: 2px solid var(--accent-primary);
+  background: rgba(233, 69, 96, 0.05);
 }
 
 .sidebar-section-title {
@@ -203,7 +237,68 @@ body.dragging-preview * {
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: 12px;
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 12px 16px;
+  margin: -16px -16px 0;
+  border-radius: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+  user-select: none;
+}
+
+.sidebar-section-title:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.sidebar-section-label {
+  flex: 1;
+}
+
+.sidebar-collapse-icon {
+  display: flex;
+  align-items: center;
+  opacity: 0.4;
+  transition: opacity 0.12s ease, transform 0.2s ease;
+}
+
+.sidebar-section-title:hover .sidebar-collapse-icon {
+  opacity: 0.8;
+}
+
+.sidebar-section-body {
+  padding-top: 12px;
+}
+
+.sidebar-section.collapsed {
+  padding-bottom: 0;
+}
+
+.sidebar-section.collapsed .sidebar-section-title {
+  margin-bottom: 0;
+}
+
+.sidebar-drag-handle {
+  display: flex;
+  align-items: center;
+  cursor: grab;
+  opacity: 0.3;
+  padding: 2px;
+  border-radius: 3px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.sidebar-drag-handle:hover {
+  opacity: 0.8;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-drag-handle:active {
+  cursor: grabbing;
+  opacity: 1;
 }
 
 /* Main Content */
@@ -673,23 +768,30 @@ body.dragging-preview * {
 /* Tabs */
 .tabs {
   display: flex;
-  gap: 4px;
-  padding: 4px;
+  gap: 3px;
+  padding: 3px;
   background: var(--bg-secondary);
   border-radius: 8px;
 }
 
 .tab {
   flex: 1;
-  padding: 8px 16px;
+  padding: 6px 4px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 500;
   border-radius: 6px;
   cursor: pointer;
   transition: var(--transition-fast);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
 }
 
 .tab:hover {
@@ -1560,6 +1662,65 @@ body.dragging-preview * {
 
 .preview-empty-state span {
   font-size: 12px;
+}
+
+/* ===== FULLSCREEN MODE ===== */
+.preview-fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #000;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: none;
+}
+
+.preview-fullscreen-overlay:hover {
+  cursor: default;
+}
+
+.preview-fullscreen-overlay .fullscreen-frame {
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
+}
+
+.preview-fullscreen-overlay .fullscreen-frame .frame-format-badge,
+.preview-fullscreen-overlay .fullscreen-frame .frame-safe-area {
+  display: none;
+}
+
+.preview-fullscreen-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  backdrop-filter: blur(8px);
+}
+
+.preview-fullscreen-overlay:hover .preview-fullscreen-close {
+  opacity: 0.7;
+}
+
+.preview-fullscreen-close:hover {
+  opacity: 1 !important;
+  background: rgba(239, 68, 68, 0.8);
 }
 
 /* ===== FLOATING MODE ===== */

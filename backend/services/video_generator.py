@@ -476,7 +476,9 @@ class VideoGenerator:
         font_path: Optional[str] = None,
         logo: Optional[Dict] = None,
         logos: Optional[list] = None,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        visualizer_video_path: Optional[str] = None,
+        visualizer_opacity: float = 0.8,
     ) -> Dict[str, Any]:
         """
         Generate video with burned-in subtitles
@@ -551,7 +553,25 @@ class VideoGenerator:
         # Build complex filter chain
         filter_parts = []
         input_count = 1  # temp_video is [0]
-        
+
+        # Visualizer video overlay (rendered by frontend Butterchurn)
+        viz_input_args = []
+        if visualizer_video_path and os.path.exists(str(visualizer_video_path)):
+            viz_input_args = ["-i", str(visualizer_video_path)]
+            viz_input_idx = input_count
+            input_count += 1
+            # Scale visualizer to match video, apply opacity, overlay on base
+            width_viz, height_viz = self._get_resolution(format_type)
+            viz_opacity = max(0.0, min(1.0, visualizer_opacity))
+            filter_parts.append(
+                f"[{viz_input_idx}:v]scale={width_viz}:{height_viz},format=rgba,"
+                f"colorchannelmixer=aa={viz_opacity}[viz_alpha]"
+            )
+            filter_parts.append(
+                f"[0:v][viz_alpha]overlay=0:0:shortest=1[vwithviz]"
+            )
+            print(f"[VideoGen] Visualizer overlay added: {visualizer_video_path}, opacity={viz_opacity}")
+
         # Collect all logos (support both single logo and logos array)
         all_logos = []
         if logos and len(logos) > 0:
@@ -614,13 +634,14 @@ class VideoGenerator:
                 else:
                     logo_input_args.extend(["-i", logo_path])
             
-            input_count = 1 + len(logo_paths)  # temp_video [0], logos [1], [2], ...
-            
-            # Build overlay chain
-            current_output = "[0:v]"
-            
+            logo_base_idx = input_count  # logos start after temp_video + optional visualizer
+            input_count += len(logo_paths)
+
+            # Build overlay chain — start from visualizer output if present
+            current_output = "[vwithviz]" if viz_input_args else "[0:v]"
+
             for idx, (logo_path, single_logo) in enumerate(logo_paths):
-                input_idx = idx + 1  # logo inputs start at index 1
+                input_idx = logo_base_idx + idx
                 
                 # Calculate logo position and size from percentages
                 logo_pos_x = single_logo.get('position', {}).get('x', 50)
@@ -664,12 +685,16 @@ class VideoGenerator:
                 print(f"[VideoGen] Logo {idx+1} filter added: pos=({logo_pos_x},{logo_pos_y}), size={logo_size}%, opacity={logo_opacity}")
         
         # Add subtitle filter
-        if filter_parts:
+        if logo_paths and filter_parts:
             # Logos were added, subtitle filter works on [vlogo]
             filter_parts.append(f"[vlogo]{subtitle_filter}[vout]")
             full_filter = ";".join(filter_parts)
+        elif filter_parts:
+            # Only visualizer (no logos), subtitle filter works on [vwithviz]
+            filter_parts.append(f"[vwithviz]{subtitle_filter}[vout]")
+            full_filter = ";".join(filter_parts)
         else:
-            # No logo, simple subtitle filter
+            # No logo or visualizer, simple subtitle filter
             full_filter = subtitle_filter
         
         # Build FFmpeg command for subtitle burning with compatibility
@@ -683,7 +708,11 @@ class VideoGenerator:
             print("🚀 Auto Hardware Acceleration for subtitle burning")
         
         cmd.extend(["-i", temp_video])
-        
+
+        # Add visualizer video input if present
+        if viz_input_args:
+            cmd.extend(viz_input_args)
+
         # Add logo inputs if needed (GIF ignore_loop already added per input)
         if logo_input_args:
             cmd.extend(logo_input_args)

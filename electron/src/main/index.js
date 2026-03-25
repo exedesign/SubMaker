@@ -29,6 +29,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
       preload: path.join(__dirname, 'preload.js'),
       enableRemoteModule: false,
       webSecurity: true,
@@ -208,4 +209,15 @@ ipcMain.handle('backend:restart', () => {
   stopPythonBackend();
   setTimeout(startPythonBackend, 1000);
   return true;
+});
+
+// =============================================================================
+// Path Utilities (exposed to renderer)
+// =============================================================================
+ipcMain.handle('path:resolve', (event, relativePath) => {
+  return path.resolve(relativePath);
+});
+
+ipcMain.handle('path:basename', (event, fullPath) => {
+  return path.basename(fullPath);
 });

@@ -1,20 +1,27 @@
 import React from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiMonitor, FiSmartphone, FiSquare } from 'react-icons/fi';
+import { FiMonitor, FiSmartphone, FiSquare, FiCheck } from 'react-icons/fi';
+
+const FORMAT_OPTIONS = [
+  { value: 'horizontal', label: '16:9', desc: '1920×1080 - YouTube, Desktop', Icon: FiMonitor },
+  { value: 'vertical', label: '9:16', desc: '1080×1920 - TikTok, Reels, Shorts', Icon: FiSmartphone },
+  { value: 'square', label: '1:1', desc: '1080×1080 - Instagram, Facebook', Icon: FiSquare },
+];
 
 function FormatSelector() {
-  const { 
-    videoFormat, 
-    setVideoFormat, 
-    outputFormat, 
+  const {
+    selectedFormats,
+    toggleSelectedFormat,
+    videoFormat,
+    outputFormat,
     setOutputFormat,
     quality,
     setQuality,
     background,
   } = useAppStore();
-  
+
   // Determine available output formats
-  const outputFormats = background.type === 'transparent' 
+  const outputFormats = background.type === 'transparent'
     ? [
         { value: 'webm', label: 'WebM (VP9)', desc: 'Smaller size, web compatible' },
         { value: 'mov', label: 'MOV (ProRes)', desc: 'Professional, larger size' },
@@ -24,49 +31,80 @@ function FormatSelector() {
         { value: 'webm', label: 'WebM (VP9)', desc: 'Web optimized' },
         { value: 'mov', label: 'MOV', desc: 'Apple/Final Cut' },
       ];
-  
+
   return (
     <div>
-      {/* Aspect Ratio */}
+      {/* Aspect Ratio — Multi-select */}
       <div className="form-group">
-        <label className="label">Aspect Ratio</label>
+        <label className="label">
+          Aspect Ratio
+          {selectedFormats.length > 1 && (
+            <span style={{
+              marginLeft: 8,
+              fontSize: 10,
+              padding: '1px 6px',
+              borderRadius: 8,
+              background: 'rgba(34, 197, 94, 0.2)',
+              color: 'var(--accent-success)',
+              fontWeight: 500,
+            }}>
+              {selectedFormats.length} format seçili
+            </span>
+          )}
+        </label>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            className={`btn ${videoFormat === 'horizontal' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setVideoFormat('horizontal')}
-            style={{ flex: 1, flexDirection: 'column', padding: '12px 8px' }}
-          >
-            <FiMonitor size={20} />
-            <span style={{ fontSize: 11, marginTop: 4 }}>16:9</span>
-          </button>
-          <button
-            className={`btn ${videoFormat === 'vertical' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setVideoFormat('vertical')}
-            style={{ flex: 1, flexDirection: 'column', padding: '12px 8px' }}
-          >
-            <FiSmartphone size={20} />
-            <span style={{ fontSize: 11, marginTop: 4 }}>9:16</span>
-          </button>
-          <button
-            className={`btn ${videoFormat === 'square' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setVideoFormat('square')}
-            style={{ flex: 1, flexDirection: 'column', padding: '12px 8px' }}
-          >
-            <FiSquare size={20} />
-            <span style={{ fontSize: 11, marginTop: 4 }}>1:1</span>
-          </button>
+          {FORMAT_OPTIONS.map(({ value, label, Icon }) => {
+            const isSelected = selectedFormats.includes(value);
+            const isPreview = videoFormat === value;
+            return (
+              <button
+                key={value}
+                className={`btn ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => toggleSelectedFormat(value)}
+                style={{
+                  flex: 1,
+                  flexDirection: 'column',
+                  padding: '12px 8px',
+                  position: 'relative',
+                  outline: isPreview ? '2px solid var(--accent-primary)' : 'none',
+                  outlineOffset: 2,
+                }}
+                title={`${isSelected ? 'Kaldır' : 'Ekle'}: ${label}`}
+              >
+                {isSelected && (
+                  <span style={{
+                    position: 'absolute',
+                    top: 4,
+                    right: 4,
+                    width: 14,
+                    height: 14,
+                    borderRadius: '50%',
+                    background: 'var(--accent-success)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <FiCheck size={9} color="#fff" />
+                  </span>
+                )}
+                <Icon size={20} />
+                <span style={{ fontSize: 11, marginTop: 4 }}>{label}</span>
+              </button>
+            );
+          })}
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-          {videoFormat === 'horizontal' && '1920×1080 - YouTube, Desktop'}
-          {videoFormat === 'vertical' && '1080×1920 - TikTok, Reels, Shorts'}
-          {videoFormat === 'square' && '1080×1080 - Instagram, Facebook'}
+          {selectedFormats.length > 1
+            ? `${selectedFormats.map(f => FORMAT_OPTIONS.find(o => o.value === f)?.label).join(', ')} formatlarında render alınacak`
+            : FORMAT_OPTIONS.find(o => o.value === selectedFormats[0])?.desc
+          }
         </p>
       </div>
-      
+
       {/* Output Format */}
       <div className="form-group">
         <label className="label">Output Format</label>
-        <select 
+        <select
           className="select"
           value={outputFormat}
           onChange={(e) => setOutputFormat(e.target.value)}
@@ -81,7 +119,7 @@ function FormatSelector() {
           {outputFormats.find(f => f.value === outputFormat)?.desc}
         </p>
       </div>
-      
+
       {/* Quality */}
       <div className="form-group">
         <label className="label">Quality</label>

@@ -181,13 +181,13 @@ function StatusBar() {
           {currentStep === 'upload' && <FiMusic size={14} />}
           {currentStep === 'transcribe' && <FiMic size={14} />}
           {currentStep === 'edit' && <FiEdit3 size={14} />}
-          {currentStep === 'style' && <FiVideo size={14} />}
+          {(currentStep === 'style' || currentStep === 'render') && <FiFilm size={14} />}
           {currentStep === 'complete' && <FiCheck size={14} style={{ color: 'var(--accent-success)' }} />}
           <span>
             {currentStep === 'upload' && 'Dosya Yükle'}
             {currentStep === 'transcribe' && 'Transkript'}
             {currentStep === 'edit' && 'Düzenleme'}
-            {currentStep === 'style' && 'Stil & Önizleme'}
+            {(currentStep === 'style' || currentStep === 'render') && 'Video Oluşturma'}
             {currentStep === 'complete' && 'Tamamlandı'}
           </span>
         </div>

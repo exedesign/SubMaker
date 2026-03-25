@@ -1,24 +1,12 @@
 """
-Transcription Service using faster-whisper
-Converts audio/video files to text with timestamps
+Transcription Service — Faster-Whisper ASR with built-in word timestamps.
+Handles preprocessing, RTL handling, and subtitle formatting.
 """
 import os
 import time
 import logging
 from typing import Iterator, List, Dict, Any, Optional
 from pathlib import Path
-
-try:
-    from faster_whisper import WhisperModel
-    WHISPER_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: faster-whisper not available: {e}")
-    WHISPER_AVAILABLE = False
-    WhisperModel = None
-except Exception as e:
-    print(f"Warning: faster-whisper loading failed: {e}")
-    WHISPER_AVAILABLE = False
-    WhisperModel = None
 
 try:
     import numpy as np
@@ -33,66 +21,32 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from config import (
     MODELS_DIR, WHISPER_MODEL_SIZE, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE,
-    LANGUAGE_MODELS, LANGUAGE_PARAMS, CONTENT_TYPE_CONFIGS, MUSIC_GENRE_CONFIGS
+    LANGUAGE_MODELS, LANGUAGE_PARAMS, CONTENT_TYPE_CONFIGS, MUSIC_GENRE_CONFIGS,
+    LANGUAGE_PROMPTS
 )
+
+from services.engines import get_engine
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class ModelCache:
-    """Cache system for Whisper models to avoid reloading"""
-    
-    def __init__(self):
-        self.models = {}
-        self.last_used = {}
-        self.max_cached_models = 3  # Limit memory usage
-    
-    def get_model(self, model_size: str, device: str, compute_type: str) -> WhisperModel:
-        """Get or load a model from cache"""
-        cache_key = f"{model_size}_{device}_{compute_type}"
-        
-        if cache_key in self.models:
-            self.last_used[cache_key] = time.time()
-            logger.info(f"Using cached model: {cache_key}")
-            return self.models[cache_key]
-        
-        # Remove least recently used model if cache is full
-        if len(self.models) >= self.max_cached_models:
-            lru_key = min(self.last_used.keys(), key=lambda k: self.last_used[k])
-            logger.info(f"Removing cached model: {lru_key}")
-            del self.models[lru_key]
-            del self.last_used[lru_key]
-        
-        logger.info(f"Loading new model: {cache_key}")
-        model = WhisperModel(
-            model_size,
-            device=device,
-            compute_type=compute_type,
-            download_root=str(MODELS_DIR)
-        )
-        
-        self.models[cache_key] = model
-        self.last_used[cache_key] = time.time()
-        return model
-
-
 class TranscriptionService:
-    """Service for transcribing audio files using faster-whisper with optimizations"""
-    
+    """Service for transcribing audio files using Faster-Whisper with word timestamps"""
+
     def __init__(
         self,
         model_size: str = WHISPER_MODEL_SIZE,
         device: str = WHISPER_DEVICE,
-        compute_type: str = WHISPER_COMPUTE_TYPE
+        compute_type: str = WHISPER_COMPUTE_TYPE,
     ):
         self.default_model_size = model_size
         self.device = device
         self.compute_type = compute_type
-        self.model_cache = ModelCache()
+        self.engine = get_engine()
         self.performance_metrics = {}
-        
+
         # RTL (Right-to-Left) languages that need special handling
         self.RTL_LANGUAGES = {'ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'}
     
@@ -115,7 +69,7 @@ class TranscriptionService:
             'beam_size': 5,
             'best_of': 3,
             'patience': 1.0,
-            'temperature': 0.0,
+            'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
             'condition_on_previous_text': False
         }
     
@@ -201,21 +155,15 @@ class TranscriptionService:
             return audio_path
     
     def _apply_music_preprocessing(self, y: "np.ndarray", sr: int, genre: Optional[str], config: Dict) -> "np.ndarray":
-        """Apply music-specific audio processing"""
+        """Apply music-specific audio processing.
+
+        When Demucs vocal isolation has been applied upstream, the audio
+        arriving here is already clean isolated vocals. Heavy filtering
+        would DEGRADE quality, so we apply minimal processing.
+        """
         try:
-            # Vocal frequency enhancement
-            if config.get('vocal_freq_boost', False):
-                # Focus on vocal frequency range (typically 80Hz - 8kHz for vocals)
-                freq_range = (100, 8000)
-                if genre and genre in MUSIC_GENRE_CONFIGS:
-                    freq_range = MUSIC_GENRE_CONFIGS[genre]['vocal_freq_range']
-                
-                # Apply bandpass-like enhancement (simple version)
-                y = librosa.effects.preemphasis(y, coef=0.97)
-            
             # Dynamic range compression for consistent vocal levels
             if config.get('dynamic_range_compression', False):
-                # Simple compression using numpy
                 threshold = 0.3
                 ratio = 4.0
                 y = np.where(
@@ -223,23 +171,21 @@ class TranscriptionService:
                     np.sign(y) * (threshold + (np.abs(y) - threshold) / ratio),
                     y
                 )
-            
-            # Enhanced noise reduction for music
-            if config.get('noise_reduction') == 'enhanced':
-                # Multiple preemphasis passes for better noise reduction
-                y = librosa.effects.preemphasis(y, coef=0.95)
-                y = librosa.effects.preemphasis(y, coef=0.98)
-            
-            # Vocal isolation attempt (basic stereo to mono with mid extraction)
-            if config.get('vocal_isolation', False) and len(y.shape) > 1:
-                # This is a placeholder - for real vocal isolation, we'd need Spleeter/DEMUCS
-                logger.info("Note: For professional vocal isolation, consider using Spleeter or DEMUCS")
-                # Simple mid extraction if we had stereo (but librosa.load already converts to mono)
-                pass
-                
+
+            # Single gentle preemphasis for vocal clarity only
+            # NOTE: Do NOT apply multiple passes — cascaded preemphasis
+            # destroys bass/mid frequencies and degrades ASR accuracy.
+            if config.get('vocal_freq_boost', False):
+                y = librosa.effects.preemphasis(y, coef=0.97)
+
+            # Final normalization to prevent clipping
+            max_val = np.abs(y).max()
+            if max_val > 0:
+                y = y / max_val * 0.95
+
         except Exception as e:
             logger.warning(f"Music-specific preprocessing failed: {e}")
-        
+
         return y
     
     def _apply_podcast_preprocessing(self, y: "np.ndarray", sr: int, config: Dict) -> "np.ndarray":
@@ -290,27 +236,127 @@ class TranscriptionService:
             
         return device, compute_type
     
-    def load_model(self, language: Optional[str] = None) -> WhisperModel:
-        """Load the optimal Whisper model for the given language"""
-        if not WHISPER_AVAILABLE:
+    def load_model(self, language: Optional[str] = None, model_size_override: Optional[str] = None):
+        """Load the optimal model for the given language via the active ASR engine.
+
+        Args:
+            language: Language code for optimal model selection
+            model_size_override: Explicit model ID (overrides language-based selection)
+        """
+        if not self.engine.is_available():
             raise ImportError(
-                "faster-whisper is not installed. "
-                "Please run: pip install faster-whisper"
+                "faster-whisper is not installed. Run: pip install faster-whisper"
             )
-        
-        model_size = self.get_optimal_model_size(language)
+
+        if model_size_override:
+            model_id = model_size_override
+        else:
+            model_id = self.get_optimal_model_size(language)
         device, compute_type = self._get_device_and_compute()
-        
-        logger.info(f"Loading Whisper model '{model_size}' for language '{language or 'auto'}' on {device} ({compute_type})")
-        
-        model = self.model_cache.get_model(model_size, device, compute_type)
-        
+
+        logger.info(f"Loading model '{model_id}' for language '{language or 'auto'}' on {device} ({compute_type})")
+
+        self.engine.load_model(model_id, device, compute_type)
+
         logger.info("Model loaded successfully!")
-        return model
     
     # RTL (Right-to-Left) languages that need special handling
     RTL_LANGUAGES = {'ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'}
-    
+
+    def _process_rtl_text(self, text: str, language: str) -> str:
+        """Process RTL text for proper display using ArabicTextProcessor."""
+        try:
+            from services.arabic_support import ArabicTextProcessor
+            if ArabicTextProcessor.is_available():
+                return ArabicTextProcessor.process_text(text, language)
+        except ImportError:
+            logger.warning("Arabic support libraries not available for RTL processing")
+        return text
+
+    def _filter_hallucinations(self, segments: List[Dict], language: Optional[str] = None) -> List[Dict]:
+        """Filter out common Whisper hallucination patterns from segments.
+
+        Handles: exact duplicates, near-duplicate consecutive segments,
+        known hallucination phrases, and low-confidence segments.
+        """
+        if not segments:
+            return segments
+
+        HALLUCINATION_PATTERNS = [
+            "thanks for watching", "thank you for watching",
+            "please subscribe", "like and subscribe",
+            "subtitle by", "subtitles by", "captions by",
+            "translated by", "transcribed by",
+            "amara.org", "www.", "http",
+            "music playing", "♪",
+        ]
+
+        if language and language.lower() == 'tr':
+            HALLUCINATION_PATTERNS.extend([
+                "abone ol", "beğen", "altyazı",
+                "izlediğiniz için teşekkürler",
+            ])
+
+        filtered = []
+        seen_texts = set()
+        prev_text = ""
+
+        for seg in segments:
+            text = seg.get('text', '').strip()
+            normalized = text.lower().strip()
+
+            # Skip empty or very short segments
+            if len(normalized) < 2:
+                logger.debug(f"Filtered too-short segment: '{text}'")
+                continue
+
+            # Skip exact duplicates
+            if normalized in seen_texts:
+                logger.info(f"Filtered duplicate: '{text[:40]}...'")
+                continue
+
+            # Skip near-duplicate of previous segment (stuttering/looping)
+            if prev_text and self._text_similarity(normalized, prev_text) > 0.85:
+                logger.info(f"Filtered near-duplicate: '{text[:40]}...'")
+                continue
+
+            # Skip known hallucination patterns
+            is_hallucination = False
+            for pattern in HALLUCINATION_PATTERNS:
+                if pattern in normalized:
+                    logger.info(f"Filtered hallucination '{pattern}': '{text[:40]}...'")
+                    is_hallucination = True
+                    break
+            if is_hallucination:
+                continue
+
+            # Skip segments where all words have very low probability
+            if seg.get('words') and seg['words']:
+                avg_prob = sum(w.get('probability', 0) for w in seg['words']) / len(seg['words'])
+                if avg_prob < 0.25:
+                    logger.info(f"Filtered low-confidence (avg_prob={avg_prob:.2f}): '{text[:40]}...'")
+                    continue
+
+            seen_texts.add(normalized)
+            prev_text = normalized
+            filtered.append(seg)
+
+        removed = len(segments) - len(filtered)
+        if removed > 0:
+            logger.info(f"Hallucination filter: removed {removed}/{len(segments)} segments")
+
+        return filtered
+
+    @staticmethod
+    def _text_similarity(a: str, b: str) -> float:
+        """Simple character-level Jaccard similarity."""
+        if not a or not b:
+            return 0.0
+        set_a, set_b = set(a), set(b)
+        intersection = len(set_a & set_b)
+        union = len(set_a | set_b)
+        return intersection / union if union > 0 else 0.0
+
     def transcribe_with_content_type(
         self,
         audio_path: str,
@@ -319,7 +365,8 @@ class TranscriptionService:
         language: Optional[str] = None,
         task: str = "transcribe",
         word_timestamps: bool = True,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        user_params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Content-aware transcription with optimized preprocessing and model selection
@@ -344,14 +391,46 @@ class TranscriptionService:
         
         # Get content-specific configuration
         config = CONTENT_TYPE_CONFIGS.get(content_type, CONTENT_TYPE_CONFIGS['speech'])
-        
-        # Enhanced audio preprocessing based on content type
+
+        # Vocal isolation for music content (separate vocals from instruments)
+        vocal_audio_path = audio_path
+        vocal_isolation_applied = False
+        if content_type == 'music' and config['preprocessing'].get('vocal_isolation', False):
+            try:
+                from services.vocal_isolator import get_vocal_isolator
+                isolator = get_vocal_isolator()
+                if isolator.is_available():
+                    logger.info("Performing vocal isolation with demucs...")
+                    if progress_callback:
+                        progress_callback(5, "Vokaller ayrıştırılıyor...")
+                    # Map isolator's 0-100% to pipeline's 5-40%
+                    def vocal_progress(pct, msg=""):
+                        if progress_callback:
+                            progress_callback(5 + int(pct * 0.35), msg)
+                    vocal_audio_path = isolator.separate_vocals(
+                        audio_path,
+                        progress_callback=vocal_progress
+                    )
+                    vocal_isolation_applied = (vocal_audio_path != audio_path)
+                    if vocal_isolation_applied:
+                        logger.info(f"Vocal isolation complete: {vocal_audio_path}")
+                    else:
+                        logger.warning("Vocal isolation returned original audio (fallback)")
+                else:
+                    logger.warning("Demucs not available, skipping vocal isolation")
+            except Exception as e:
+                logger.warning(f"Vocal isolation failed, using original audio: {e}")
+                vocal_audio_path = audio_path
+
+        # Enhanced audio preprocessing based on content type (applied to isolated vocals)
+        if progress_callback:
+            progress_callback(42, "Ses önişleme yapılıyor...")
         processed_audio_path = self.preprocess_music_audio(
-            audio_path, 
-            content_type=content_type, 
+            vocal_audio_path,
+            content_type=content_type,
             genre=content_genre
         )
-        
+
         # Determine optimal model size based on content type
         optimal_model = config['default_model']
         if language:
@@ -362,98 +441,101 @@ class TranscriptionService:
             content_idx = model_priority.index(optimal_model) if optimal_model in model_priority else 2
             lang_idx = model_priority.index(lang_model) if lang_model in model_priority else 2
             optimal_model = model_priority[max(content_idx, lang_idx)]
-        
+
         logger.info(f"Using optimal model: {optimal_model} for {content_type}")
-        
-        # Load optimal model
-        original_model_size = self.default_model_size
-        self.default_model_size = optimal_model
-        model = self.load_model(language)
-        self.default_model_size = original_model_size
+
+        # Load optimal model with explicit override
+        if progress_callback:
+            progress_callback(45, f"{optimal_model} modeli yükleniyor...")
+        self.load_model(language, model_size_override=optimal_model)
         
         # Get content-specific transcription parameters
         params = config['whisper_params'].copy()
         
-        # Override with language-specific params if available
+        # Merge with language-specific params if available
         if language:
             lang_params = self.get_language_params(language)
-            # Merge content-type params with language params (language takes priority for conflicts)
-            for key, value in lang_params.items():
-                if key in params:
-                    params[key] = value
+            if content_type in ('music', 'podcast'):
+                # Music/podcast: pick the MORE PERMISSIVE/STRONGER value for each param
+                HIGHER_IS_BETTER = {'beam_size', 'best_of', 'patience', 'compression_ratio_threshold'}
+                LOWER_IS_BETTER = {'no_speech_threshold'}
+                MORE_NEGATIVE_IS_BETTER = {'log_prob_threshold'}
+                for key, value in lang_params.items():
+                    if key in params:
+                        if key == 'temperature':
+                            continue  # Keep content-type config's fallback list
+                        elif key == 'condition_on_previous_text':
+                            if content_type == 'music':
+                                continue  # Music: keep False to prevent hallucination loops
+                            else:
+                                params[key] = value
+                        elif key in HIGHER_IS_BETTER:
+                            params[key] = max(params[key], value)
+                        elif key in LOWER_IS_BETTER:
+                            params[key] = min(params[key], value)
+                        elif key in MORE_NEGATIVE_IS_BETTER:
+                            params[key] = min(params[key], value)
+                        else:
+                            params[key] = value
+                logger.info(f"Merged params (music-priority) for {language}/{content_type}: {params}")
+            else:
+                # Speech: language params take priority
+                for key, value in lang_params.items():
+                    if key in params:
+                        params[key] = value
         
         is_rtl = language and language.lower() in self.RTL_LANGUAGES
         
         if is_rtl:
             logger.info(f"RTL language detected: {language} - using optimized settings")
         
-        # Content-specific VAD settings
-        vad_filter = False  # Disabled for music content by default
-        if content_type == 'speech':
-            vad_filter = True  # Enable for speech content
-        elif content_type == 'podcast':
-            vad_filter = False  # Disabled for long-form content
-        
-        logger.info(f"VAD filter: {vad_filter} for {content_type}")
-        
-        # Transcribe with optimized parameters
-        segments, info = model.transcribe(
+        # Transcribe via ASR engine with optimized parameters
+        if progress_callback:
+            progress_callback(50, "Transkripsiyon başladı...")
+        if is_rtl:
+            params['initial_prompt'] = ""  # RTL: empty prompt prevents garbled output
+        elif language and language.lower() in LANGUAGE_PROMPTS:
+            lang_prompts = LANGUAGE_PROMPTS[language.lower()]
+            if lang_prompts is not None:
+                prompt = lang_prompts.get(content_type, lang_prompts.get('speech', ''))
+                params['initial_prompt'] = prompt
+                logger.info(f"Using initial_prompt for {language}/{content_type}")
+
+        # Apply user fine-tune overrides (highest priority)
+        if user_params:
+            for key, value in user_params.items():
+                if value is not None:
+                    params[key] = value
+                    logger.info(f"User override: {key} = {value}")
+
+        result = self.engine.transcribe(
             processed_audio_path,
             language=language,
             task=task,
             word_timestamps=word_timestamps,
-            vad_filter=vad_filter,
-            initial_prompt="" if is_rtl else None,
+            progress_callback=progress_callback,
             **params
         )
-        
-        print(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
-        print(f"Duration: {info.duration:.2f}s")
-        print(f"Content type: {content_type} with {optimal_model} model")
-        
-        # Convert segments to list with progress tracking
-        result_segments = []
-        total_duration = info.duration if info.duration else 0
-        segment_count = 0
-        
-        for segment in segments:
-            segment_count += 1
-            
-            # RTL text processing
-            text = segment.text.strip()
-            if is_rtl:
-                text = self._process_rtl_text(text, language)
-            
-            segment_data = {
-                "id": segment_count,
-                "start": round(segment.start, 2),
-                "end": round(segment.end, 2),
-                "text": text
-            }
-            
-            # Add word-level timestamps if requested
-            if word_timestamps and hasattr(segment, 'words') and segment.words:
-                words = []
-                for word in segment.words:
-                    word_text = word.word.strip()
-                    if is_rtl:
-                        word_text = self._process_rtl_text(word_text, language)
-                    
-                    words.append({
-                        "word": word_text,
-                        "start": round(word.start, 2),
-                        "end": round(word.end, 2),
-                        "probability": round(word.probability, 3)
-                    })
-                segment_data["words"] = words
-            
-            result_segments.append(segment_data)
-            
-            # Progress callback
-            if progress_callback and total_duration > 0:
-                progress = min((segment.end / total_duration) * 100, 100)
-                progress_callback(progress)
-        
+
+        total_duration = result.get("duration", 0)
+        result_segments = result["segments"]
+
+        logger.info(f"Detected language: {result['language']} (probability: {result.get('language_probability', 0):.2f})")
+        logger.info(f"Duration: {total_duration:.2f}s")
+        logger.info(f"Content type: {content_type} with {optimal_model} model")
+
+        # Post-process: RTL text handling (engine-independent)
+        if is_rtl:
+            for seg in result_segments:
+                seg["text"] = self._process_rtl_text(seg["text"], language)
+                if "words" in seg:
+                    for w in seg["words"]:
+                        w["word"] = self._process_rtl_text(w["word"], language)
+
+        # Filter hallucinations and repetitions
+        result_segments = self._filter_hallucinations(result_segments, language)
+        logger.info(f"After hallucination filtering: {len(result_segments)} segments")
+
         # Performance metrics
         processing_time = time.time() - start_time
         self.performance_metrics[content_type] = {
@@ -464,27 +546,30 @@ class TranscriptionService:
             'model_used': optimal_model,
             'preprocessing_type': content_type
         }
-        
+
         logger.info(f"Transcription completed in {processing_time:.2f}s")
         logger.info(f"Real-time factor: {self.performance_metrics[content_type]['real_time_factor']:.2f}x")
-        
+
         # Cleanup preprocessed file if different from original
-        if processed_audio_path != audio_path:
+        if processed_audio_path != audio_path and processed_audio_path != vocal_audio_path:
             try:
                 os.remove(processed_audio_path)
                 logger.info(f"Cleaned up preprocessed file: {processed_audio_path}")
             except Exception as e:
                 logger.warning(f"Failed to cleanup preprocessed file: {e}")
-        
+
+        # Note: vocal isolation cache files are intentionally kept for reuse
+
         return {
             "segments": result_segments,
-            "language": info.language,
-            "language_probability": round(info.language_probability, 3),
-            "duration": round(total_duration, 2),
+            "language": result["language"],
+            "language_probability": result.get("language_probability", 0),
+            "duration": round(total_duration, 3),
             "content_type": content_type,
             "content_genre": content_genre,
             "model_used": optimal_model,
             "preprocessing_applied": True,
+            "vocal_isolation_applied": vocal_isolation_applied,
             "performance": self.performance_metrics[content_type]
         }
     
@@ -494,22 +579,21 @@ class TranscriptionService:
         language: Optional[str] = None,
         task: str = "transcribe",
         word_timestamps: bool = True,
-        vad_filter: bool = False,  # Disabled by default for music/songs
         progress_callback: Optional[callable] = None,
-        preprocess_audio: bool = True
+        preprocess_audio: bool = True,
+        user_params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Transcribe an audio file with language-specific optimizations
-        
+
         Args:
             audio_path: Path to audio/video file
             language: Language code (e.g., 'en', 'ar') or None for auto-detect
             task: 'transcribe' or 'translate' (to English)
             word_timestamps: Include word-level timestamps
-            vad_filter: Filter out non-speech segments (disabled for songs)
             progress_callback: Callback function for progress updates
             preprocess_audio: Whether to preprocess audio for better quality
-            
+
         Returns:
             Dict containing segments and metadata
         """
@@ -518,90 +602,87 @@ class TranscriptionService:
         # Preprocess audio if requested
         processed_audio_path = audio_path
         if preprocess_audio:
+            if progress_callback:
+                progress_callback(10, "Ses önişleme yapılıyor...")
             processed_audio_path = self.preprocess_audio(audio_path)
-        
-        model = self.load_model(language)
+
+        if progress_callback:
+            progress_callback(20, "Model yükleniyor...")
+        self.load_model(language)
         
         if not os.path.exists(processed_audio_path):
             raise FileNotFoundError(f"Audio file not found: {processed_audio_path}")
         
         logger.info(f"Transcribing: {audio_path}")
-        logger.info(f"Language: {language or 'auto-detect'}, VAD: {vad_filter}")
-        
+        logger.info(f"Language: {language or 'auto-detect'}")
+
         # Get language-specific parameters
         params = self.get_language_params(language)
         is_rtl = language and language.lower() in self.RTL_LANGUAGES
-        
+
         if is_rtl:
             logger.info(f"RTL language detected: {language} - using optimized settings")
-        
-        # Transcribe with language-specific optimizations
-        segments, info = model.transcribe(
+
+        # Transcribe via ASR engine
+        if progress_callback:
+            progress_callback(30, "Transkripsiyon başladı...")
+        if is_rtl:
+            params['initial_prompt'] = ""  # RTL: empty prompt prevents garbled output
+        elif language and language.lower() in LANGUAGE_PROMPTS:
+            lang_prompts = LANGUAGE_PROMPTS[language.lower()]
+            if lang_prompts is not None:
+                prompt = lang_prompts.get('speech', '')
+                params['initial_prompt'] = prompt
+                logger.info(f"Using initial_prompt for {language}/speech")
+
+        # Apply user fine-tune overrides (highest priority)
+        if user_params:
+            for key, value in user_params.items():
+                if value is not None:
+                    params[key] = value
+                    logger.info(f"User override: {key} = {value}")
+
+        result = self.engine.transcribe(
             processed_audio_path,
             language=language,
             task=task,
             word_timestamps=word_timestamps,
-            vad_filter=vad_filter,
-            initial_prompt="" if is_rtl else None,
+            progress_callback=progress_callback,
             **params
         )
-        
-        print(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
-        print(f"Duration: {info.duration:.2f}s")
-        
-        # Convert segments to list with progress tracking
-        result_segments = []
-        total_duration = info.duration if info.duration else 0
-        segment_count = 0
-        
-        for segment in segments:
-            segment_count += 1
-            segment_data = {
-                "id": segment.id,
-                "start": segment.start,
-                "end": segment.end,
-                "text": segment.text.strip(),
-                "confidence": segment.avg_logprob
-            }
-            
-            print(f"Segment {segment_count}: [{segment.start:.2f}s - {segment.end:.2f}s] {segment.text.strip()[:50]}...")
-            
-            # Add word-level timestamps if available
-            if word_timestamps and segment.words:
-                segment_data["words"] = [
-                    {
-                        "word": word.word,
-                        "start": word.start,
-                        "end": word.end,
-                        "confidence": word.probability
-                    }
-                    for word in segment.words
-                ]
-            
-            result_segments.append(segment_data)
-            
-            # Progress callback
-            if progress_callback and total_duration > 0:
-                progress = min(100, int((segment.end / total_duration) * 100))
-                progress_callback(progress, segment_data)
-        
-        logger.info(f"Total segments found: {segment_count}")
-        
+
+        result_segments = result["segments"]
+        total_duration = result.get("duration", 0)
+
+        logger.info(f"Detected language: {result['language']} (probability: {result.get('language_probability', 0):.2f})")
+        logger.info(f"Duration: {total_duration:.2f}s")
+        logger.info(f"Total segments found: {len(result_segments)}")
+
+        # Post-process: RTL text handling
+        if is_rtl:
+            for seg in result_segments:
+                seg["text"] = self._process_rtl_text(seg["text"], language)
+                if "words" in seg:
+                    for w in seg["words"]:
+                        w["word"] = self._process_rtl_text(w["word"], language)
+
+        # Filter hallucinations and repetitions
+        result_segments = self._filter_hallucinations(result_segments, language)
+
         # Performance metrics
         transcription_time = time.time() - start_time
-        audio_duration = info.duration if info.duration else 0
-        speed_factor = audio_duration / transcription_time if transcription_time > 0 else 0
-        
+        speed_factor = total_duration / transcription_time if transcription_time > 0 else 0
+
         self.performance_metrics[language or 'auto'] = {
             'transcription_time': transcription_time,
-            'audio_duration': audio_duration,
+            'audio_duration': total_duration,
             'speed_factor': speed_factor,
             'model_size': self.get_optimal_model_size(language),
-            'segment_count': segment_count
+            'segment_count': len(result_segments)
         }
-        
+
         logger.info(f"Transcription completed in {transcription_time:.2f}s (speed: {speed_factor:.2f}x)")
-        
+
         # Cleanup preprocessed file if it was created
         if preprocess_audio and processed_audio_path != audio_path:
             try:
@@ -609,29 +690,11 @@ class TranscriptionService:
                 logger.info("Cleaned up preprocessed audio file")
             except Exception as e:
                 logger.warning(f"Failed to cleanup preprocessed file: {e}")
-        
-        # Filter out likely hallucinations (repeated segments)
-        if len(result_segments) > 1:
-            filtered_segments = []
-            seen_texts = set()
-            for seg in result_segments:
-                # Normalize text for comparison
-                normalized = seg['text'].lower().strip()
-                if len(normalized) < 3:  # Skip very short segments
-                    continue
-                if normalized in seen_texts:
-                    logger.info(f"Filtered duplicate/hallucination: {seg['text'][:30]}...")
-                    continue
-                seen_texts.add(normalized)
-                filtered_segments.append(seg)
-            
-            logger.info(f"After filtering: {len(filtered_segments)} segments (removed {segment_count - len(filtered_segments)} duplicates)")
-            result_segments = filtered_segments
-        
+
         return {
-            "language": info.language,
-            "language_probability": info.language_probability,
-            "duration": info.duration,
+            "language": result["language"],
+            "language_probability": result.get("language_probability", 0),
+            "duration": total_duration,
             "segments": result_segments,
             "performance": self.performance_metrics.get(language or 'auto', {})
         }
@@ -640,8 +703,6 @@ class TranscriptionService:
         """Get performance statistics for all languages"""
         return {
             'metrics': self.performance_metrics.copy(),
-            'cached_models': list(self.model_cache.models.keys()),
-            'cache_usage': len(self.model_cache.models)
         }
     
     def transcribe_to_subtitles(
@@ -676,42 +737,42 @@ class TranscriptionService:
             if "words" in segment and segment["words"]:
                 # Split by words for better timing
                 words = segment["words"]
-                current_words = []
+                current_word_objs = []
                 current_start = None
-                
+
                 for word in words:
                     if current_start is None:
                         current_start = word["start"]
-                    
-                    current_words.append(word["word"])
-                    current_text = " ".join(current_words).strip()
-                    
+
+                    current_word_objs.append(word)
+                    current_text = " ".join(w["word"] for w in current_word_objs).strip()
+
                     # Check if we should split
                     should_split = (
-                        len(current_words) >= max_words_per_segment or
+                        len(current_word_objs) >= max_words_per_segment or
                         len(current_text) >= max_chars_per_line
                     )
-                    
+
                     if should_split:
                         subtitles.append({
                             "id": subtitle_id,
                             "start": current_start,
                             "end": word["end"],
                             "text": current_text,
-                            "words": current_words.copy()
+                            "words": [w.copy() if isinstance(w, dict) else w for w in current_word_objs]
                         })
                         subtitle_id += 1
-                        current_words = []
+                        current_word_objs = []
                         current_start = None
-                
+
                 # Add remaining words
-                if current_words:
+                if current_word_objs:
                     subtitles.append({
                         "id": subtitle_id,
                         "start": current_start,
                         "end": words[-1]["end"],
-                        "text": " ".join(current_words).strip(),
-                        "words": current_words
+                        "text": " ".join(w["word"] for w in current_word_objs).strip(),
+                        "words": [w.copy() if isinstance(w, dict) else w for w in current_word_objs]
                     })
                     subtitle_id += 1
             else:
@@ -723,7 +784,7 @@ class TranscriptionService:
                     "text": segment["text"]
                 })
                 subtitle_id += 1
-        
+
         return {
             "language": result["language"],
             "duration": result["duration"],
@@ -776,45 +837,45 @@ class TranscriptionService:
         
         for segment in result["segments"]:
             if "words" in segment and segment["words"]:
-                # Split by words for better timing
+                # Split by words for better timing — preserve full word objects with timestamps
                 words = segment["words"]
-                current_words = []
+                current_word_objs = []
                 current_start = None
-                
+
                 for word in words:
                     if current_start is None:
                         current_start = word["start"]
-                    
-                    current_words.append(word["word"])
-                    current_text = " ".join(current_words).strip()
-                    
+
+                    current_word_objs.append(word)
+                    current_text = " ".join(w["word"] for w in current_word_objs).strip()
+
                     # Check if we should split
                     should_split = (
-                        len(current_words) >= max_words_per_segment or
+                        len(current_word_objs) >= max_words_per_segment or
                         len(current_text) >= max_chars_per_line
                     )
-                    
+
                     if should_split:
                         subtitles.append({
                             "id": subtitle_id,
                             "start": current_start,
                             "end": word["end"],
                             "text": current_text,
-                            "words": current_words.copy(),
+                            "words": [w.copy() if isinstance(w, dict) else w for w in current_word_objs],
                             "content_type": content_type
                         })
                         subtitle_id += 1
-                        current_words = []
+                        current_word_objs = []
                         current_start = None
-                
+
                 # Add remaining words
-                if current_words:
+                if current_word_objs:
                     subtitles.append({
                         "id": subtitle_id,
                         "start": current_start,
                         "end": words[-1]["end"],
-                        "text": " ".join(current_words).strip(),
-                        "words": current_words,
+                        "text": " ".join(w["word"] for w in current_word_objs).strip(),
+                        "words": [w.copy() if isinstance(w, dict) else w for w in current_word_objs],
                         "content_type": content_type
                     })
                     subtitle_id += 1
@@ -837,6 +898,7 @@ class TranscriptionService:
             "content_genre": content_genre,
             "model_used": result.get("model_used"),
             "preprocessing_applied": result.get("preprocessing_applied", True),
+            "vocal_isolation_applied": result.get("vocal_isolation_applied", False),
             "performance": result.get("performance", {})
         }
 

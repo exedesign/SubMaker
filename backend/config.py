@@ -22,25 +22,25 @@ SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 5000
 DEBUG = False
 
-# Whisper settings
-# For better Arabic transcription accuracy, use 'small' or 'medium' model
-# Options: tiny, base, small, medium, large-v3
-# - tiny/base: Fast but less accurate (especially for Arabic)
-# - small: Good balance for most languages including Arabic  
-# - medium/large-v3: Best accuracy for Arabic but slower
-WHISPER_MODEL_SIZE = "small"  # Default model size
+# Whisper settings (faster-whisper / CTranslate2)
+# Available models: turbo, large-v3, large-v3-turbo, large-v2, distil-large-v3, medium, small, base, tiny
+# - turbo/large-v3-turbo: Best speed/accuracy balance (recommended)
+# - large-v3: Highest accuracy, slower
+# - distil-large-v3: Fast with high accuracy
+# - medium/small/base/tiny: Smaller models, progressively faster but less accurate
+WHISPER_MODEL_SIZE = "turbo"  # Default model size
 WHISPER_DEVICE = "cpu"  # Options: auto, cpu, cuda - Set to cpu to avoid ROCm SDK errors
 WHISPER_COMPUTE_TYPE = "int8"  # Options: auto, int8, float16, float32 - int8 for better CPU performance
 
 # Language-specific model sizes for optimal performance
 LANGUAGE_MODELS = {
     'ar': 'medium',   # Arabic: Use larger model for better accuracy
-    'tr': 'small',    # Turkish: Small model is sufficient
-    'en': 'base',     # English: Base model for speed
-    'es': 'small',    # Spanish: Small model
-    'fr': 'small',    # French: Small model
-    'de': 'small',    # German: Small model
-    'ru': 'small',    # Russian: Small model
+    'tr': 'turbo',    # Turkish: Turbo for best speed/accuracy
+    'en': 'turbo',    # English: Turbo for speed
+    'es': 'turbo',    # Spanish: Turbo
+    'fr': 'turbo',    # French: Turbo
+    'de': 'turbo',    # German: Turbo
+    'ru': 'turbo',    # Russian: Turbo
     'zh': 'medium',   # Chinese: Larger model needed
     'ja': 'medium',   # Japanese: Larger model needed
     'ko': 'medium'    # Korean: Larger model needed
@@ -55,18 +55,18 @@ LANGUAGE_PARAMS = {
         'beam_size': 10,
         'best_of': 5,
         'patience': 2.0,
-        'temperature': 0.0,
+        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
         'condition_on_previous_text': False
     },
-    'tr': {  # Turkish: Balanced settings
-        'no_speech_threshold': 0.4,
-        'log_prob_threshold': -0.7,
-        'compression_ratio_threshold': 2.4,
-        'beam_size': 5,
-        'best_of': 3,
-        'patience': 1.5,
-        'temperature': 0.0,
-        'condition_on_previous_text': False
+    'tr': {  # Turkish: Optimized for music/lyrics
+        'no_speech_threshold': 0.3,
+        'log_prob_threshold': -1.0,
+        'compression_ratio_threshold': 2.8,
+        'beam_size': 8,
+        'best_of': 5,
+        'patience': 2.0,
+        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
+        'condition_on_previous_text': True  # Context helps Turkish speech accuracy
     },
     'en': {  # English: Standard settings
         'no_speech_threshold': 0.5,
@@ -75,15 +75,81 @@ LANGUAGE_PARAMS = {
         'beam_size': 5,
         'best_of': 3,
         'patience': 1.0,
-        'temperature': 0.0,
-        'condition_on_previous_text': False
+        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
+        'condition_on_previous_text': True  # Context helps speech accuracy
     }
+}
+
+# Language-specific initial prompts for Whisper
+# These dramatically improve transcription accuracy by guiding the decoder
+# toward the correct character set and vocabulary for each language.
+LANGUAGE_PROMPTS = {
+    'tr': {
+        'music': "Bu bir Türkçe şarkıdır. Şarkı sözleri:",
+        'speech': "Bu bir Türkçe konuşmadır.",
+        'podcast': "Bu bir Türkçe podcast yayınıdır.",
+    },
+    'en': {
+        'music': "These are English song lyrics.",
+        'speech': "This is an English speech transcription.",
+        'podcast': "This is an English podcast transcription.",
+    },
+    'es': {
+        'music': "Esta es una canción en español. La letra dice:",
+        'speech': "Esta es una transcripción en español.",
+        'podcast': "Este es un podcast en español.",
+    },
+    'fr': {
+        'music': "Ceci est une chanson en français. Les paroles:",
+        'speech': "Ceci est une transcription en français.",
+        'podcast': "Ceci est un podcast en français.",
+    },
+    'de': {
+        'music': "Dies ist ein deutsches Lied. Der Liedtext:",
+        'speech': "Dies ist eine deutsche Transkription.",
+        'podcast': "Dies ist ein deutscher Podcast.",
+    },
+    'it': {
+        'music': "Questa è una canzone italiana. Il testo:",
+        'speech': "Questa è una trascrizione in italiano.",
+        'podcast': "Questo è un podcast in italiano.",
+    },
+    'pt': {
+        'music': "Esta é uma música em português. A letra:",
+        'speech': "Esta é uma transcrição em português.",
+        'podcast': "Este é um podcast em português.",
+    },
+    'ru': {
+        'music': "Это песня на русском языке. Текст песни:",
+        'speech': "Это транскрипция на русском языке.",
+        'podcast': "Это подкаст на русском языке.",
+    },
+    'zh': {
+        'music': "这是一首中文歌曲。歌词如下：",
+        'speech': "这是中文语音转录。",
+        'podcast': "这是中文播客。",
+    },
+    'ja': {
+        'music': "これは日本語の歌です。歌詞：",
+        'speech': "これは日本語の音声転写です。",
+        'podcast': "これは日本語のポッドキャストです。",
+    },
+    'ko': {
+        'music': "이것은 한국어 노래입니다. 가사:",
+        'speech': "이것은 한국어 음성 전사입니다.",
+        'podcast': "이것은 한국어 팟캐스트입니다.",
+    },
+    # RTL languages: None means use empty prompt (handled in transcription.py)
+    'ar': None,
+    'he': None,
+    'fa': None,
+    'ur': None,
 }
 
 # Content type specific configurations
 CONTENT_TYPE_CONFIGS = {
     'speech': {
-        'default_model': 'small',
+        'default_model': 'turbo',
         'preprocessing': {
             'vocal_isolation': False,
             'noise_reduction': 'standard',
@@ -94,7 +160,8 @@ CONTENT_TYPE_CONFIGS = {
             'log_prob_threshold': -0.5,
             'compression_ratio_threshold': 2.0,
             'beam_size': 5,
-            'best_of': 3
+            'best_of': 3,
+            'condition_on_previous_text': True  # Context helps speech coherence
         }
     },
     'music': {
@@ -113,8 +180,8 @@ CONTENT_TYPE_CONFIGS = {
             'beam_size': 10,  # Enhanced beam search
             'best_of': 5,
             'patience': 2.0,
-            'temperature': 0.0,
-            'condition_on_previous_text': False,
+            'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
+            'condition_on_previous_text': False,  # Prevents hallucination loops in music
             'suppress_blank': False  # Don't suppress silence in music
         }
     },
@@ -131,7 +198,8 @@ CONTENT_TYPE_CONFIGS = {
             'compression_ratio_threshold': 2.2,
             'beam_size': 8,
             'best_of': 4,
-            'patience': 1.5
+            'patience': 1.5,
+            'condition_on_previous_text': True  # Context helps podcast coherence
         }
     }
 }
@@ -246,6 +314,41 @@ OUTPUT_FORMATS = {
     "mp4": {"codec": "libx264", "ext": "mp4", "supports_alpha": False},
     "webm": {"codec": "libvpx-vp9", "ext": "webm", "supports_alpha": True},
     "mov": {"codec": "prores_ks", "ext": "mov", "supports_alpha": True}
+}
+
+# Vocal Isolation Settings
+# Engine: "mdx" (audio-separator: MDX23C, BS-Roformer) or "demucs" (PyTorch, higher quality 4-stem)
+VOCAL_ENGINE = "mdx"
+
+# audio-separator models (MDX23C, BS-Roformer — auto-download on first use)
+# Options: "MDX23C-8KFFT-InstVoc_HQ.ckpt", "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+VOCAL_MDX_MODEL = "MDX23C-8KFFT-InstVoc_HQ.ckpt"
+VOCAL_MDX_SEGMENT_SIZE = 256    # Chunk size (256 = default balance, 512 = faster but more RAM)
+VOCAL_MDX_BATCH_SIZE = 4        # Batch size for GPU (higher = faster but more VRAM)
+
+# Demucs fallback settings
+DEMUCS_MODEL = "htdemucs"
+DEMUCS_DEVICE = "auto"
+DEMUCS_SHIFTS = 0
+DEMUCS_OVERLAP = 0.1
+DEMUCS_SEGMENT = None
+DEMUCS_FLOAT16 = True
+
+# Shared settings
+VOCAL_CACHE_ENABLED = True
+VOCAL_CACHE_DIR = TEMP_DIR / "vocal_cache"
+VOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# ASR Engine Settings (Faster-Whisper — direct transcription with word timestamps)
+ASR_ENGINE_CONFIG = {
+    "name": "Faster-Whisper",
+    "description": "CTranslate2 tabanlı hızlı transkripsiyon — dahili kelime zamanlama",
+    "default_model": "turbo",
+    "language_models": {
+        "tr": {"speech": "turbo", "music": "selimc/whisper-large-v3-turbo-turkish"},
+        "ar": {"speech": "medium", "music": "large-v3"},
+        "en": {"speech": "turbo", "music": "large-v3"},
+    }
 }
 
 # Tenor GIF API

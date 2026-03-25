@@ -1,21 +1,150 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
 
+// Stem track constants
+const STEM_ORDER = ['vocals', 'instrumental', 'drums', 'bass', 'other'];
+const STEM_TRACK_HEIGHT = 48;
+const STEM_HEADER_WIDTH = 110;
+
+// Memoized stem track row component
+const StemTrackRow = React.memo(({
+  trackId, label, icon, color, waveformData, isMuted, volume,
+  onVolumeChange, onMuteToggle, currentTime, duration,
+}) => {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+
+    ctx.clearRect(0, 0, width, height);
+
+    // Background
+    ctx.fillStyle = isMuted ? 'rgba(40, 40, 50, 0.4)' : 'rgba(20, 25, 35, 0.6)';
+    ctx.fillRect(0, 0, width, height);
+
+    // Center line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+
+    // Waveform bars
+    if (waveformData && waveformData.length > 0) {
+      const barWidth = Math.max(0.5, width / waveformData.length);
+      const centerY = height / 2;
+      let maxAmp = 0;
+      for (let i = 0; i < waveformData.length; i++) {
+        if (waveformData[i] > maxAmp) maxAmp = waveformData[i];
+      }
+      if (maxAmp < 0.01) maxAmp = 0.01;
+
+      ctx.fillStyle = isMuted ? 'rgba(100, 100, 100, 0.2)' : color.replace('0.8)', '0.7)');
+
+      for (let i = 0; i < waveformData.length; i++) {
+        const amp = waveformData[i] / maxAmp;
+        const barH = amp * (height * 0.4);
+        const x = i * barWidth;
+        ctx.fillRect(x, centerY - barH, barWidth, barH * 2);
+      }
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.font = '10px "Segoe UI", Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Dalga formu yükleniyor...', width / 2, height / 2 + 3);
+    }
+
+    // Playhead
+    if (duration > 0 && currentTime >= 0) {
+      const x = (currentTime / duration) * width;
+      ctx.strokeStyle = '#ff3333';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+  }, [waveformData, color, isMuted, volume, currentTime, duration]);
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', height: STEM_TRACK_HEIGHT,
+      borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+      background: isMuted ? 'rgba(0, 0, 0, 0.2)' : 'transparent',
+      opacity: isMuted ? 0.5 : 1, transition: 'opacity 0.15s',
+    }}>
+      {/* Track Header */}
+      <div style={{
+        flex: `0 0 ${STEM_HEADER_WIDTH}px`, display: 'flex', flexDirection: 'column',
+        padding: '2px 6px', gap: 2,
+        borderRight: `2px solid ${isMuted ? 'rgba(100,100,100,0.3)' : color}`,
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          fontSize: 10, fontWeight: 600,
+          color: isMuted ? 'var(--text-muted)' : color.replace('0.8)', '1)'),
+        }}>
+          <span style={{ fontSize: 12 }}>{icon}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{label}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onMuteToggle(); }}
+            style={{
+              width: 22, height: 16, padding: 0, fontSize: 8, fontWeight: 700,
+              background: isMuted ? 'rgba(239, 68, 68, 0.7)' : 'rgba(100, 100, 100, 0.3)',
+              color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer',
+            }}
+          >M</button>
+          <input
+            type="range" min="0" max="100"
+            value={Math.round(volume * 100)}
+            onChange={(e) => { e.stopPropagation(); onVolumeChange(parseInt(e.target.value) / 100); }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ flex: 1, height: 2, cursor: 'pointer', accentColor: color.replace('0.8)', '1)') }}
+            title={`Volume: ${Math.round(volume * 100)}%`}
+          />
+          <span style={{ fontSize: 8, color: 'var(--text-muted)', minWidth: 20, textAlign: 'right' }}>
+            {Math.round(volume * 100)}%
+          </span>
+        </div>
+      </div>
+      {/* Track Waveform Canvas */}
+      <canvas
+        ref={canvasRef}
+        style={{ flex: 1, height: STEM_TRACK_HEIGHT - 4, borderRadius: '0 4px 4px 0', background: 'rgba(0, 0, 0, 0.3)' }}
+        width={700}
+        height={STEM_TRACK_HEIGHT - 4}
+      />
+    </div>
+  );
+});
+StemTrackRow.displayName = 'StemTrackRow';
+
 function SubtitleTimeline({ currentTime, duration, onSeek }) {
-  const { 
-    subtitles, 
-    selectedSubtitleId, 
-    setSelectedSubtitleId, 
-    updateSubtitle, 
+  const {
+    subtitles,
+    selectedSubtitleId,
+    setSelectedSubtitleId,
+    updateSubtitle,
     settings,
     mediaFile,
     originalFileName,
-    savedFileName
+    savedFileName,
+    audioMixer,
+    setTrackVolume,
+    setTrackMuted,
+    setTrackSolo,
   } = useAppStore();
   
   const containerRef = useRef(null);
   const waveformCanvasRef = useRef(null);
-  
+  const stemContainerRef = useRef(null);
+
   const [isDragging, setIsDragging] = useState(false);
   const [dragData, setDragData] = useState(null);
   const [hoveredSubtitle, setHoveredSubtitle] = useState(null);
@@ -23,6 +152,19 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const lastDrawTime = useRef(0); // For throttling canvas draws
   const analysisTimeout = useRef(null); // For debouncing analysis
+
+  // Derive sorted tracks when mixer is active
+  const mixerEnabled = audioMixer?.enabled && Object.keys(audioMixer.tracks || {}).length > 0;
+  const sortedTracks = mixerEnabled
+    ? Object.entries(audioMixer.tracks)
+        .map(([id, track]) => ({ id, ...track }))
+        .filter(t => !t.isOriginal) // Exclude 'original' track, show only stems
+        .sort((a, b) => {
+          const ia = STEM_ORDER.indexOf(a.id);
+          const ib = STEM_ORDER.indexOf(b.id);
+          return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+        })
+    : [];
   
   // Calculate position from time
   const timeToPercent = (time) => {
@@ -43,7 +185,15 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
     setIsAnalyzing(true);
     try {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const response = await fetch(`http://localhost:5000/api/media/temp/${encodeURIComponent(savedFileName || mediaFile.split(/[\\/]/).pop())}`);
+
+      const isAbsolutePath = (p) => /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/');
+      const isTempPath = (p) => /[\\/]temp[\\/]/i.test(p);
+
+      const mediaUrl = (isAbsolutePath(mediaFile) && !isTempPath(mediaFile))
+        ? `http://localhost:5000/api/media/local?path=${encodeURIComponent(mediaFile)}`
+        : `http://localhost:5000/api/media/temp/${encodeURIComponent(savedFileName || mediaFile.split(/[\\/]/).pop())}`;
+
+      const response = await fetch(mediaUrl);
       const arrayBuffer = await response.arrayBuffer();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
       
@@ -322,6 +472,26 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
   useEffect(() => {
     drawWaveform();
   }, [drawWaveform]);
+
+  // Resize stem track canvases when container width changes
+  useEffect(() => {
+    if (!mixerEnabled || !stemContainerRef.current) return;
+
+    const handleResize = () => {
+      if (!stemContainerRef.current) return;
+      const containerWidth = stemContainerRef.current.clientWidth;
+      const canvasWidth = Math.max(200, containerWidth - STEM_HEADER_WIDTH);
+      const canvases = stemContainerRef.current.querySelectorAll('canvas');
+      canvases.forEach((canvas) => {
+        if (canvas.width !== canvasWidth) canvas.width = canvasWidth;
+      });
+    };
+
+    handleResize();
+    const observer = new ResizeObserver(handleResize);
+    observer.observe(stemContainerRef.current);
+    return () => observer.disconnect();
+  }, [mixerEnabled, sortedTracks.length]);
   
   // Format time display
   const formatTime = (secs) => {
@@ -384,7 +554,55 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
           </div>
         )}
       </div>
-      
+
+      {/* Stem Tracks Panel - shown when vocal isolation is complete */}
+      {mixerEnabled && sortedTracks.length > 0 && (
+        <div
+          ref={stemContainerRef}
+          style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+            borderTop: 'none',
+            borderBottom: 'none',
+            maxHeight: sortedTracks.length * STEM_TRACK_HEIGHT + 28,
+            overflowY: sortedTracks.length > 4 ? 'auto' : 'hidden',
+          }}
+        >
+          {/* Section Header */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '3px 8px',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+            background: 'rgba(0, 0, 0, 0.15)',
+          }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)' }}>
+              Ses Katmanları ({sortedTracks.length})
+            </span>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6 }}>
+              {sortedTracks.filter(t => t.waveformData).length}/{sortedTracks.length} dalga formu
+            </span>
+          </div>
+
+          {/* Track Rows */}
+          {sortedTracks.map((track) => (
+            <StemTrackRow
+              key={track.id}
+              trackId={track.id}
+              label={track.label}
+              icon={track.icon}
+              color={track.color}
+              waveformData={track.waveformData}
+              isMuted={track.muted}
+              volume={track.volume}
+              onVolumeChange={(vol) => setTrackVolume(track.id, vol)}
+              onMuteToggle={() => setTrackMuted(track.id, !track.muted)}
+              currentTime={currentTime}
+              duration={duration}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Timeline container */}
       <div
         ref={containerRef}
@@ -398,14 +616,14 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
           position: 'relative',
           height: 60,
           background: 'var(--bg-tertiary)',
-          borderRadius: settings.audioVisualization.showWaveform 
-            ? '0 0 6px 6px' 
+          borderRadius: (settings.audioVisualization.showWaveform || mixerEnabled)
+            ? '0 0 6px 6px'
             : 6,
           overflow: 'hidden',
           cursor: 'pointer',
           border: '1px solid var(--border-color)',
-          borderTop: settings.audioVisualization.showWaveform 
-            ? 'none' 
+          borderTop: (settings.audioVisualization.showWaveform || mixerEnabled)
+            ? 'none'
             : '1px solid var(--border-color)',
         }}
       >

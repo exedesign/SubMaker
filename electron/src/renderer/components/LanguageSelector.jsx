@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiGlobe, FiArrowRight, FiRefreshCw, FiAlertCircle, FiMusic, FiInfo } from 'react-icons/fi';
+import { FiGlobe, FiArrowRight, FiRefreshCw, FiAlertCircle, FiInfo } from 'react-icons/fi';
 import SecondarySubtitleEditor from './SecondarySubtitleEditor';
 
 // Common languages
@@ -36,39 +36,12 @@ function LanguageSelector() {
     clearSubtitles,
     subtitles,
     isProcessing,
-    contentType,  // Müzik modu kontrolü için
   } = useAppStore();
   
   const [showRetranscribe, setShowRetranscribe] = useState(false);
   
   return (
     <div>
-      {/* Music Mode Info */}
-      {contentType === 'music' && (
-        <div style={{
-          background: 'rgba(139, 69, 19, 0.1)',
-          border: '1px solid rgba(139, 69, 19, 0.3)',
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 16,
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 8
-        }}>
-          <FiMusic size={16} style={{ color: 'rgba(139, 69, 19, 0.8)', marginTop: 2 }} />
-          <div style={{ fontSize: 12, lineHeight: 1.4 }}>
-            <div style={{ fontWeight: 600, color: 'rgba(139, 69, 19, 0.9)', marginBottom: 4 }}>
-              🎵 Müzik Modu Aktif
-            </div>
-            <div style={{ color: 'var(--text-muted)' }}>
-              • Large-v3 model kullanılarak lirik tespiti yapılıyor<br/>
-              • Vocal enhancement ve müzik-spesifik preprocessing aktif<br/>
-              • Suno MP3/WAV dosyaları için optimize edilmiş
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Source Language */}
       <div className="form-group">
         <label className="label">

@@ -1,10 +1,208 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useAppStore } from '../stores/appStore'
 
+// ── Sony ACID-style DAW Track Constants ──────────────────────────────────────
+const STEM_ORDER = ['vocals', 'instrumental', 'drums', 'bass', 'other']
+const TRACK_LANE_HEIGHT = 80   // Taller lanes like professional DAWs
+const TRACK_HEADER_WIDTH = 150 // Wider header for controls
+
+// ── Per-track waveform canvas (memoized) ─────────────────────────────────────
+const TrackWaveformCanvas = React.memo(({ waveformData, color, height, width, currentTime, duration, muted }) => {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    canvas.width = width
+    canvas.height = height
+
+    // Dark background with subtle gradient
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, height)
+    bgGrad.addColorStop(0, '#0d1520')
+    bgGrad.addColorStop(0.5, '#111b2b')
+    bgGrad.addColorStop(1, '#0d1520')
+    ctx.fillStyle = bgGrad
+    ctx.fillRect(0, 0, width, height)
+
+    // Grid lines (every 50px)
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)'
+    ctx.lineWidth = 1
+    for (let x = 0; x < width; x += 50) {
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, height)
+      ctx.stroke()
+    }
+
+    // Center line
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(0, height / 2)
+    ctx.lineTo(width, height / 2)
+    ctx.stroke()
+
+    if (waveformData && waveformData.length > 0) {
+      const barWidth = Math.max(1, width / waveformData.length)
+      const centerY = height / 2
+      let maxAmp = 0
+      for (let i = 0; i < waveformData.length; i++) {
+        if (waveformData[i] > maxAmp) maxAmp = waveformData[i]
+      }
+      if (maxAmp < 0.01) maxAmp = 0.01
+
+      // Waveform bars with gradient fill
+      for (let i = 0; i < waveformData.length; i++) {
+        const amp = waveformData[i] / maxAmp
+        const barH = amp * (height * 0.42)
+        const x = i * barWidth
+        const grad = ctx.createLinearGradient(x, centerY - barH, x, centerY + barH)
+        grad.addColorStop(0, color)
+        grad.addColorStop(0.5, color.replace('0.8)', '1)').replace(')', ', 0.95)'))
+        grad.addColorStop(1, color)
+        ctx.fillStyle = muted ? 'rgba(100,100,100,0.3)' : grad
+        ctx.fillRect(x, centerY - barH, Math.max(1, barWidth - 0.5), barH * 2)
+      }
+
+      // Top edge highlight
+      ctx.strokeStyle = muted ? 'rgba(100,100,100,0.15)' : color.replace('0.8)', '0.3)')
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      for (let i = 0; i < waveformData.length; i++) {
+        const amp = waveformData[i] / maxAmp
+        const barH = amp * (height * 0.42)
+        const x = i * barWidth + barWidth / 2
+        if (i === 0) ctx.moveTo(x, centerY - barH)
+        else ctx.lineTo(x, centerY - barH)
+      }
+      ctx.stroke()
+    } else {
+      // Loading animation dots
+      ctx.fillStyle = 'rgba(255,255,255,0.25)'
+      ctx.font = '12px "Segoe UI", Arial'
+      ctx.textAlign = 'center'
+      ctx.fillText('Dalga formu yukleniyor...', width / 2, height / 2 + 4)
+    }
+
+    // Playhead
+    if (duration > 0 && currentTime >= 0) {
+      const x = (currentTime / duration) * width
+      // Glow effect
+      ctx.shadowColor = '#ff3333'
+      ctx.shadowBlur = 6
+      ctx.strokeStyle = '#ff3333'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, height)
+      ctx.stroke()
+      ctx.shadowBlur = 0
+    }
+  }, [waveformData, color, height, width, currentTime, duration, muted])
+
+  return (
+    <canvas
+      ref={ref}
+      style={{ flex: 1, display: 'block', height: '100%', borderRadius: '0 4px 4px 0' }}
+    />
+  )
+})
+
+// ── Track Header Component (DAW-style) ──────────────────────────────────────
+const TrackHeader = React.memo(({ track, trackId, isOriginal, onVolumeChange, onMuteToggle, onSoloToggle }) => {
+  const dimmed = !isOriginal && (track.muted || track._dimmed)
+
+  return (
+    <div style={{
+      position: 'sticky',
+      left: 0,
+      width: TRACK_HEADER_WIDTH,
+      minWidth: TRACK_HEADER_WIDTH,
+      flexShrink: 0,
+      background: 'linear-gradient(135deg, #0f1923 0%, #162033 100%)',
+      borderRight: `3px solid ${track.color}`,
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      padding: '6px 8px',
+      zIndex: 10,
+      gap: 3,
+      opacity: dimmed ? 0.4 : 1,
+      transition: 'opacity 0.15s',
+    }}>
+      {/* Row 1: Icon + Name */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 5,
+        fontSize: 11, fontWeight: 700, letterSpacing: '0.3px',
+      }}>
+        <span style={{ fontSize: 14 }}>{track.icon}</span>
+        <span style={{
+          color: track.color.replace('0.8)', '1)'),
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+        }}>{track.label}</span>
+        {isOriginal && (
+          <span style={{
+            fontSize: 8, background: 'rgba(255,255,255,0.1)', padding: '1px 4px',
+            borderRadius: 3, color: 'rgba(255,255,255,0.5)',
+          }}>SRC</span>
+        )}
+      </div>
+
+      {/* Row 2: Volume fader */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.35)', width: 14 }}>VOL</span>
+        <input
+          type="range" min="0" max="100"
+          value={Math.round((track.volume ?? 1) * 100)}
+          onChange={(e) => { e.stopPropagation(); onVolumeChange?.(trackId, parseInt(e.target.value) / 100) }}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            flex: 1, height: 4, accentColor: track.color.replace('0.8)', '1)'),
+            cursor: 'pointer', WebkitAppearance: 'none', appearance: 'none',
+            background: `linear-gradient(to right, ${track.color} ${Math.round((track.volume ?? 1) * 100)}%, rgba(255,255,255,0.1) ${Math.round((track.volume ?? 1) * 100)}%)`,
+            borderRadius: 2, outline: 'none',
+          }}
+        />
+        <span style={{
+          fontSize: 9, color: 'rgba(255,255,255,0.5)',
+          minWidth: 26, textAlign: 'right', fontFamily: 'monospace',
+        }}>{Math.round((track.volume ?? 1) * 100)}%</span>
+      </div>
+
+      {/* Row 3: M / S buttons */}
+      {!isOriginal && (
+        <div style={{ display: 'flex', gap: 4, marginTop: 1 }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onMuteToggle?.(trackId, !track.muted) }}
+            style={{
+              width: 26, height: 18, fontSize: 10, fontWeight: 800, cursor: 'pointer',
+              background: track.muted ? '#ef4444' : 'rgba(255,255,255,0.06)',
+              color: track.muted ? '#fff' : 'rgba(255,255,255,0.4)',
+              border: `1px solid ${track.muted ? '#ef4444' : 'rgba(255,255,255,0.1)'}`,
+              borderRadius: 3, padding: 0, lineHeight: '18px',
+              transition: 'all 0.1s',
+            }}>M</button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onSoloToggle?.(trackId, !track.solo) }}
+            style={{
+              width: 26, height: 18, fontSize: 10, fontWeight: 800, cursor: 'pointer',
+              background: track.solo ? track.color.replace('0.8)', '1)') : 'rgba(255,255,255,0.06)',
+              color: track.solo ? '#fff' : 'rgba(255,255,255,0.4)',
+              border: `1px solid ${track.solo ? track.color.replace('0.8)', '0.6)') : 'rgba(255,255,255,0.1)'}`,
+              borderRadius: 3, padding: 0, lineHeight: '18px',
+              transition: 'all 0.1s',
+            }}>S</button>
+        </div>
+      )}
+    </div>
+  )
+})
+
 const FlexibleTimeline = () => {
-  const { 
-    subtitles, 
-    selectedSubtitleId, 
+  const {
+    subtitles,
+    selectedSubtitleId,
     setSelectedSubtitleId,
     updateSubtitle,
     deleteSubtitle,
@@ -16,7 +214,12 @@ const FlexibleTimeline = () => {
     setPlaybackTime,
     isPlaying: globalIsPlaying,
     setIsPlaying: setGlobalIsPlaying,
-    globalAudioRef
+    globalAudioRef,
+    audioMixer,
+    setTrackVolume,
+    setTrackMuted,
+    setTrackSolo,
+    toggleTimelineTracks,
   } = useAppStore()
 
   // Audio State
@@ -37,6 +240,7 @@ const FlexibleTimeline = () => {
   const [resizeState, setResizeState] = useState(null)
   const [editingSubtitle, setEditingSubtitle] = useState(null)
   const [editText, setEditText] = useState('')
+  const [selectedSubtitleIds, setSelectedSubtitleIds] = useState([])
   
   // Refs
   const timelineRef = useRef(null)
@@ -50,6 +254,18 @@ const FlexibleTimeline = () => {
   const MIN_SUBTITLE_WIDTH = 80 // Minimum width for very compressed view
   const MAX_COMPRESSED_WIDTH = 150 // Maximum width at 1x zoom for compressed view
   const RESIZE_HANDLE_WIDTH = 24
+
+  // Multi-track layout (when mixer active)
+  const mixerActive = audioMixer.enabled && audioMixer.showTimelineTracks
+  const sortedTrackIds = mixerActive
+    ? Object.keys(audioMixer.tracks).sort((a, b) => {
+        const ia = STEM_ORDER.indexOf(a)
+        const ib = STEM_ORDER.indexOf(b)
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+      })
+    : []
+  const trackCount = sortedTrackIds.length
+  const multiTrackHeight = trackCount * TRACK_LANE_HEIGHT
 
   // Calculate timeline dimensions - ensure we have real container width
   const maxDuration = Math.max(300, duration, ...(Array.isArray(subtitles) ? subtitles.map(s => s.end) : []))
@@ -421,6 +637,20 @@ const FlexibleTimeline = () => {
       return
     }
     
+    // Shift tuşu ile çoklu seçim
+    if (e.shiftKey) {
+      setSelectedSubtitleIds(prev => {
+        if (prev.includes(subtitle.id)) {
+          // Zaten seçili ise kaldır
+          return prev.filter(id => id !== subtitle.id)
+        } else {
+          // Seçili değilse ekle
+          return [...prev, subtitle.id]
+        }
+      })
+      return
+    }
+    
     const resizeHandle = getResizeHandle(e, subtitle)
     const rect = timelineRef.current.getBoundingClientRect()
     const startX = e.clientX - rect.left
@@ -448,7 +678,24 @@ const FlexibleTimeline = () => {
         finalEnd: subtitle.end
       })
     } else {
-      // Move mode - store initial visual position
+      // Move mode - check multi-selection
+      const subtitlesToDrag = selectedSubtitleIds.includes(subtitle.id) && selectedSubtitleIds.length > 0
+        ? selectedSubtitleIds
+        : [subtitle.id]
+      
+      // Store initial positions for all subtitles to drag
+      const initialPositions = {}
+      subtitlesToDrag.forEach(id => {
+        const sub = subtitles.find(s => s.id === id)
+        if (sub) {
+          initialPositions[id] = {
+            start: sub.start,
+            end: sub.end,
+            left: timeToPixel(sub.start)
+          }
+        }
+      })
+      
       const initialLeft = timeToPixel(subtitle.start)
       setDragState({
         subtitleId: subtitle.id,
@@ -460,13 +707,16 @@ const FlexibleTimeline = () => {
         startLeft: initialLeft,
         type: 'move',
         finalStart: subtitle.start,
-        finalEnd: subtitle.end
+        finalEnd: subtitle.end,
+        isMultiDrag: subtitlesToDrag.length > 1,
+        subtitlesToDrag,
+        initialPositions
       })
     }
     
     setIsDragging(true)
     setSelectedSubtitleId(subtitle.id)
-  }, [splitMode, pixelToTime, getResizeHandle, setSelectedSubtitleId, findWordSplitPosition, updateSubtitle, addSubtitle, duration, timeToPixel])
+  }, [splitMode, pixelToTime, getResizeHandle, setSelectedSubtitleId, findWordSplitPosition, updateSubtitle, addSubtitle, duration, timeToPixel, selectedSubtitleIds, subtitles])
 
   // Handle double click to edit subtitle text
   const handleSubtitleDoubleClick = useCallback((e, subtitle) => {
@@ -577,84 +827,148 @@ const FlexibleTimeline = () => {
         }))
       }
     } else if (dragState.type === 'move') {
-      // Move mode - prevent overlap with other subtitles
+      // Move mode - multi-drag support
       const timeDiff = currentTime - dragState.startTime
-      const newStart = Math.max(0, dragState.originalStart + timeDiff)
-      const subtitleDuration = dragState.originalEnd - dragState.originalStart
-      const newEnd = newStart + subtitleDuration
       
-      let finalStart = Math.max(0, newStart)
-      let finalEnd = finalStart + subtitleDuration
-      
-      // Ensure doesn't exceed duration
-      if (duration > 0) {
-        if (finalEnd > duration) {
+      if (dragState.isMultiDrag) {
+        // Multi-drag: tüm seçili altyazıları birlikte hareket ettir
+        const updatedPositions = {}
+        const idsToDrag = dragState.subtitlesToDrag || []
+        
+        for (const id of idsToDrag) {
+          const initialPos = dragState.initialPositions[id]
+          if (!initialPos) continue
+          
+          const subtitleDuration = initialPos.end - initialPos.start
+          let newStart = Math.max(0, initialPos.start + timeDiff)
+          let newEnd = newStart + subtitleDuration
+          
+          // Ensure doesn't exceed duration
+          if (duration > 0 && newEnd > duration) {
+            newEnd = duration
+            newStart = Math.max(0, newEnd - subtitleDuration)
+          }
+          
+          // Check for overlaps with non-dragged subtitles
+          const otherSubtitles = (Array.isArray(subtitles) ? subtitles : [])
+            .filter(s => !idsToDrag.includes(s.id))
+            .sort((a, b) => a.start - b.start)
+          
+          for (const other of otherSubtitles) {
+            if (newStart < other.end && newEnd > other.start) {
+              if (initialPos.start < other.start) {
+                newEnd = Math.min(newEnd, other.start - 0.05)
+                newStart = newEnd - subtitleDuration
+              } else {
+                newStart = Math.max(newStart, other.end + 0.05)
+                newEnd = newStart + subtitleDuration
+              }
+            }
+          }
+          
+          // Container bounds check
+          const CONTAINER_TIME_LIMIT = pixelToTime(timelineWidth - 20)
+          if (newEnd > CONTAINER_TIME_LIMIT) {
+            newEnd = CONTAINER_TIME_LIMIT
+            newStart = Math.max(0, newEnd - subtitleDuration)
+          }
+          
+          updatedPositions[id] = {
+            start: Math.max(0, newStart),
+            end: Math.max(newStart + 0.1, newEnd)
+          }
+        }
+        
+        setDragState(prevState => ({
+          ...prevState,
+          currentX,
+          currentTime,
+          updatedPositions
+        }))
+      } else {
+        // Single drag
+        const newStart = Math.max(0, dragState.originalStart + timeDiff)
+        const subtitleDuration = dragState.originalEnd - dragState.originalStart
+        const newEnd = newStart + subtitleDuration
+        
+        let finalStart = Math.max(0, newStart)
+        let finalEnd = finalStart + subtitleDuration
+        
+        // Ensure doesn't exceed duration
+        if (duration > 0) {
+          if (finalEnd > duration) {
+            finalEnd = duration
+            finalStart = Math.max(0, finalEnd - subtitleDuration)
+          }
+        }
+        
+        // Check for overlaps with all other subtitles
+        const otherSubtitles = (Array.isArray(subtitles) ? subtitles : [])
+          .filter(s => s.id !== dragState.subtitleId)
+          .sort((a, b) => a.start - b.start)
+        
+        for (const other of otherSubtitles) {
+          if (finalStart < other.end && finalEnd > other.start) {
+            if (dragState.originalStart < other.start) {
+              finalEnd = Math.min(finalEnd, other.start - 0.05)
+              finalStart = finalEnd - subtitleDuration
+            } else {
+              finalStart = Math.max(finalStart, other.end + 0.05)
+              finalEnd = finalStart + subtitleDuration
+            }
+          }
+        }
+        
+        // Final constraint: don't go below 0
+        if (finalStart < 0) {
+          finalStart = 0
+          finalEnd = subtitleDuration
+        }
+        
+        // Final duration check
+        if (duration > 0 && finalEnd > duration) {
           finalEnd = duration
           finalStart = Math.max(0, finalEnd - subtitleDuration)
         }
-      }
-      
-      // Check for overlaps with all other subtitles
-      const otherSubtitles = (Array.isArray(subtitles) ? subtitles : [])
-        .filter(s => s.id !== dragState.subtitleId)
-        .sort((a, b) => a.start - b.start)
-      
-      for (const other of otherSubtitles) {
-        // Check if there's overlap
-        if (finalStart < other.end && finalEnd > other.start) {
-          // There's an overlap - adjust position
-          if (dragState.originalStart < other.start) {
-            // Was before this subtitle, keep it before
-            finalEnd = Math.min(finalEnd, other.start - 0.05)
-            finalStart = finalEnd - subtitleDuration
-          } else {
-            // Was after this subtitle, keep it after
-            finalStart = Math.max(finalStart, other.end + 0.05)
-            finalEnd = finalStart + subtitleDuration
-          }
+        
+        // CRITICAL: Container bounds check during drag
+        const CONTAINER_TIME_LIMIT = pixelToTime(timelineWidth - 20)
+        if (finalEnd > CONTAINER_TIME_LIMIT) {
+          finalEnd = CONTAINER_TIME_LIMIT
+          finalStart = Math.max(0, finalEnd - subtitleDuration)
         }
+        
+        // Ensure we don't exceed the visible timeline width
+        if (finalStart > CONTAINER_TIME_LIMIT - 0.5) {
+          finalStart = Math.max(0, CONTAINER_TIME_LIMIT - 0.5)
+          finalEnd = finalStart + Math.min(subtitleDuration, 0.5)
+        }
+        
+        // Update drag state for visual feedback
+        setDragState(prevState => ({
+          ...prevState,
+          currentX,
+          currentTime,
+          finalStart,
+          finalEnd
+        }))
       }
-      
-      // Final constraint: don't go below 0
-      if (finalStart < 0) {
-        finalStart = 0
-        finalEnd = subtitleDuration
-      }
-      
-      // Final duration check
-      if (duration > 0 && finalEnd > duration) {
-        finalEnd = duration
-        finalStart = Math.max(0, finalEnd - subtitleDuration)
-      }
-      
-      // CRITICAL: Container bounds check during drag
-      const CONTAINER_TIME_LIMIT = pixelToTime(timelineWidth - 20) // Convert container pixel limit to time
-      if (finalEnd > CONTAINER_TIME_LIMIT) {
-        finalEnd = CONTAINER_TIME_LIMIT
-        finalStart = Math.max(0, finalEnd - subtitleDuration)
-      }
-      
-      // Ensure we don't exceed the visible timeline width
-      if (finalStart > CONTAINER_TIME_LIMIT - 0.5) {
-        finalStart = Math.max(0, CONTAINER_TIME_LIMIT - 0.5)
-        finalEnd = finalStart + Math.min(subtitleDuration, 0.5)
-      }
-      
-      // Update drag state for visual feedback
-      setDragState(prevState => ({
-        ...prevState,
-        currentX,
-        currentTime,
-        finalStart,
-        finalEnd
-      }))
     }
   }, [isDragging, dragState, resizeState, subtitles, pixelToTime, duration])
 
   const handleMouseUp = useCallback(() => {
     // Apply final updates on mouse up with additional overlap prevention
     if (isDragging && dragState) {
-      if (dragState.finalStart !== undefined && dragState.finalEnd !== undefined) {
+      if (dragState.isMultiDrag && dragState.updatedPositions) {
+        // Multi-drag: update all dragged subtitles
+        Object.entries(dragState.updatedPositions).forEach(([id, positions]) => {
+          updateSubtitle(id, {
+            start: positions.start,
+            end: positions.end
+          })
+        })
+      } else if (dragState.finalStart !== undefined && dragState.finalEnd !== undefined) {
+        // Single drag/resize
         const subtitleId = dragState.subtitleId || resizeState?.subtitleId
         if (subtitleId) {
           let finalStart = dragState.finalStart
@@ -725,7 +1039,7 @@ const FlexibleTimeline = () => {
     setIsDragging(false)
     setDragState(null)
     setResizeState(null)
-  }, [isDragging, dragState, resizeState, updateSubtitle, duration, subtitles])
+  }, [isDragging, dragState, resizeState, updateSubtitle, duration, subtitles, pixelToTime, timelineWidth])
 
   // Enhanced cursor management for better UX
   const getCursor = useCallback((subtitle, e) => {
@@ -1034,8 +1348,9 @@ const FlexibleTimeline = () => {
     }
   }
   
-  // Fixed single-row timeline height
-  const timelineHeight = TIMELINE_BASE_HEIGHT + SUBTITLE_HEIGHT + 40 // Always single row
+  // Timeline height: base waveform (or multi-track) + subtitle row
+  const waveformAreaHeight = mixerActive ? multiTrackHeight : TIMELINE_BASE_HEIGHT
+  const timelineHeight = waveformAreaHeight + SUBTITLE_HEIGHT + 40
   
   console.log('🎵 Audio-Timeline Mapped Subtitles:', {
     totalSubtitles: validSubtitles.length,
@@ -1132,6 +1447,38 @@ const FlexibleTimeline = () => {
         >
           ✂️ {splitMode ? 'Kesim Modundan Çık' : 'Kesim Modu'}
         </button>
+        
+        {/* Multi-Selection Indicator and Clear Button */}
+        {selectedSubtitleIds.length > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '6px 12px',
+            background: 'var(--accent-primary)',
+            borderRadius: '6px',
+            fontSize: '12px',
+            color: 'white',
+            fontWeight: '500'
+          }}>
+            <span>🔵 {selectedSubtitleIds.length} seçili</span>
+            <button
+              onClick={() => setSelectedSubtitleIds([])}
+              style={{
+                padding: '2px 8px',
+                borderRadius: '4px',
+                background: 'white',
+                color: 'var(--accent-primary)',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '11px',
+                fontWeight: '600'
+              }}
+            >
+              Temizle
+            </button>
+          </div>
+        )}
         
         <div style={{ width: '1px', height: '20px', background: 'var(--border-color)' }} />
         
@@ -1239,6 +1586,30 @@ const FlexibleTimeline = () => {
             🎯
           </button>
         </div>
+
+        {/* Multi-Track Toggle */}
+        {audioMixer.enabled && (
+          <>
+            <div style={{ width: '1px', height: '20px', background: 'var(--border-color)' }} />
+            <button
+              onClick={() => toggleTimelineTracks()}
+              style={{
+                padding: '6px 12px',
+                borderRadius: '6px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                background: audioMixer.showTimelineTracks ? 'var(--accent-primary)' : 'var(--bg-hover)',
+                color: 'var(--text-primary)',
+                border: `1px solid ${audioMixer.showTimelineTracks ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                fontWeight: audioMixer.showTimelineTracks ? '600' : 'normal',
+                transition: 'var(--transition-fast)'
+              }}
+              title={audioMixer.showTimelineTracks ? 'Katmanlari Gizle' : 'Katmanlari Goster'}
+            >
+              🎚️ {audioMixer.showTimelineTracks ? 'Katmanlar' : 'Katmanlar'}
+            </button>
+          </>
+        )}
       </div>
 
       {/* Unified Timeline Container - Waveform + Subtitles */}
@@ -1250,8 +1621,8 @@ const FlexibleTimeline = () => {
           width: '100%',
           height: `${timelineHeight}px`,
           background: 'var(--bg-secondary)',
-          overflowX: 'auto', // Horizontal scroll for zoom
-          overflowY: 'hidden', // Prevent vertical overflow
+          overflowX: 'auto',
+          overflowY: mixerActive ? 'auto' : 'hidden',
           border: '1px solid var(--border-color)',
           borderRadius: '8px',
           cursor: splitMode ? 'crosshair' : 'pointer',
@@ -1264,38 +1635,141 @@ const FlexibleTimeline = () => {
           width: `${timelineWidth * zoom}px`,
           height: '100%'
         }}>
-          {/* Waveform Canvas */}
-          <canvas
-            ref={canvasRef}
-            onClick={handleTimelineClick}
-            style={{
+          {/* Multi-Track Waveform Lanes (when mixer active) */}
+          {mixerActive && sortedTrackIds.map((trackId, idx) => {
+            const track = audioMixer.tracks[trackId]
+            const anySoloed = Object.values(audioMixer.tracks).some(t => t.solo)
+            const dimmed = track.muted || (anySoloed && !track.solo)
+
+            return (
+              <div key={trackId} style={{
+                position: 'absolute',
+                top: idx * TRACK_LANE_HEIGHT,
+                left: 0,
+                width: '100%',
+                height: TRACK_LANE_HEIGHT,
+                display: 'flex',
+                borderBottom: '1px solid var(--border-color)',
+                opacity: dimmed ? 0.3 : 1,
+                transition: 'opacity 0.15s',
+              }}>
+                {/* Track Header */}
+                <div style={{
+                  position: 'sticky',
+                  left: 0,
+                  width: TRACK_HEADER_WIDTH,
+                  flexShrink: 0,
+                  background: 'var(--bg-tertiary)',
+                  borderRight: `3px solid ${track.color}`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  padding: '3px 6px',
+                  zIndex: 5,
+                  gap: 1,
+                }}>
+                  {/* Track Name */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600 }}>
+                    <span>{track.icon}</span>
+                    <span style={{ color: 'var(--text-color)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.label}</span>
+                  </div>
+                  {/* Volume Slider */}
+                  <input
+                    type="range" min="0" max="100"
+                    value={Math.round(track.volume * 100)}
+                    onChange={(e) => { e.stopPropagation(); setTrackVolume(trackId, parseInt(e.target.value) / 100) }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ width: '100%', height: 3, accentColor: track.color, cursor: 'pointer' }}
+                  />
+                  {/* Mute + Solo */}
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setTrackMuted(trackId, !track.muted) }}
+                      style={{
+                        width: 22, height: 16, fontSize: 9, fontWeight: 700, cursor: 'pointer',
+                        background: track.muted ? 'rgba(239,68,68,0.8)' : 'var(--bg-primary)',
+                        color: track.muted ? '#fff' : 'var(--text-muted)',
+                        border: `1px solid ${track.muted ? 'rgba(239,68,68,0.6)' : 'var(--border-color)'}`,
+                        borderRadius: 3, padding: 0, lineHeight: '16px',
+                      }}>M</button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setTrackSolo(trackId, !track.solo) }}
+                      style={{
+                        width: 22, height: 16, fontSize: 9, fontWeight: 700, cursor: 'pointer',
+                        background: track.solo ? track.color : 'var(--bg-primary)',
+                        color: track.solo ? '#fff' : 'var(--text-muted)',
+                        border: `1px solid ${track.solo ? track.color : 'var(--border-color)'}`,
+                        borderRadius: 3, padding: 0, lineHeight: '16px',
+                      }}>S</button>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 2, lineHeight: '16px' }}>
+                      {Math.round(track.volume * 100)}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Track Waveform */}
+                <TrackWaveformCanvas
+                  waveformData={track.waveformData}
+                  color={track.color}
+                  height={TRACK_LANE_HEIGHT}
+                  width={Math.max(600, timelineWidth * zoom - TRACK_HEADER_WIDTH)}
+                  currentTime={currentTime}
+                  duration={duration}
+                />
+              </div>
+            )
+          })}
+
+          {/* Single Waveform Canvas (when mixer not active) */}
+          {!mixerActive && (
+            <canvas
+              ref={canvasRef}
+              onClick={handleTimelineClick}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                display: 'block',
+                width: '100%',
+                height: '120px',
+                background: 'var(--bg-tertiary)',
+                cursor: splitMode ? 'crosshair' : 'pointer',
+                zIndex: 1
+              }}
+            />
+          )}
+
+          {/* Global Playhead spanning all tracks */}
+          {mixerActive && duration > 0 && currentTime >= 0 && (
+            <div style={{
               position: 'absolute',
+              left: `${TRACK_HEADER_WIDTH + ((currentTime / duration) * Math.max(600, timelineWidth * zoom - TRACK_HEADER_WIDTH))}px`,
               top: 0,
-              left: 0,
-              display: 'block',
-              width: '100%',
-              height: '120px',
-              background: 'var(--bg-tertiary)',
-              cursor: splitMode ? 'crosshair' : 'pointer',
-              zIndex: 1
-            }}
-          />
-          
+              width: '2px',
+              height: `${multiTrackHeight}px`,
+              background: '#ff0000',
+              zIndex: 20,
+              pointerEvents: 'none',
+              boxShadow: '0 0 4px rgba(255,0,0,0.5)',
+            }} />
+          )}
+
           {/* Subtitles Overlay */}
           <div style={{
             position: 'absolute',
-            top: '120px',
+            top: `${waveformAreaHeight}px`,
             left: 0,
             width: '100%',
-            height: `${timelineHeight - 120}px`,
+            height: `${timelineHeight - waveformAreaHeight}px`,
             zIndex: 2,
-            pointerEvents: 'none' // Container allows pass-through, children override this
+            pointerEvents: 'none'
           }}>
             {/* Simple Subtitles */}
             {subtitlesWithPositions.map((subtitle) => {
-              const isSelected = selectedSubtitleId === subtitle.id
+              const isSelected = selectedSubtitleId === subtitle.id || selectedSubtitleIds.includes(subtitle.id)
               const isHovered = hoveredSubtitle === subtitle.id
               const isDraggingThis = isDragging && dragState?.subtitleId === subtitle.id
+              const isInMultiDrag = isDragging && dragState?.isMultiDrag && dragState?.subtitlesToDrag?.includes(subtitle.id)
               
               // Determine color based on source
               const sourceColors = {
@@ -1308,7 +1782,14 @@ const FlexibleTimeline = () => {
               let displayLeft = subtitle.left
               let displayWidth = subtitle.width
               
-              if (isDraggingThis && dragState) {
+              // Multi-drag visual feedback
+              if (isInMultiDrag && dragState?.updatedPositions && dragState.updatedPositions[subtitle.id]) {
+                const updatedPos = dragState.updatedPositions[subtitle.id]
+                displayLeft = timeToPixel(updatedPos.start)
+                const displayRight = timeToPixel(updatedPos.end)
+                displayWidth = Math.max(MIN_SUBTITLE_WIDTH, displayRight - displayLeft)
+              } else if (isDraggingThis && dragState) {
+                // Single drag
                 if (dragState.finalStart !== undefined && dragState.finalEnd !== undefined) {
                   displayLeft = timeToPixel(dragState.finalStart)
                   const displayRight = timeToPixel(dragState.finalEnd)
@@ -1364,16 +1845,17 @@ const FlexibleTimeline = () => {
                     padding: '0 6px',
                     userSelect: 'none',
                     zIndex: isSelected ? 10 : 3, // Combined zIndex logic
-                    transition: isDraggingThis ? 'none' : 'all 0.15s ease-out',
-                    opacity: isDraggingThis ? 0.8 : 1,
-                    boxShadow: isDraggingThis ? '0 4px 12px rgba(0,0,0,0.3)' : 'none'
+                    transition: (isDraggingThis || isInMultiDrag) ? 'none' : 'all 0.15s ease-out',
+                    opacity: (isDraggingThis || isInMultiDrag) ? 0.8 : 1,
+                    boxShadow: (isDraggingThis || isInMultiDrag) ? '0 4px 12px rgba(0,0,0,0.3)' : 'none'
                   }}
                   title={`${formatTime(subtitle.start)} - ${formatTime(subtitle.end)}: ${subtitle.text}
 
 Sol kenar: Başlangıç ayarla
 Sağ kenar: Bitiş ayarla
 Orta: Tüm bloğu taşı
-S + tıklama: Kelime bazında böl`}
+S + tıklama: Kelime bazında böl
+Shift + tıklama: Çoklu seçim`}
                 >
                   {/* Left Resize Handle - Invisible */}
                   <div

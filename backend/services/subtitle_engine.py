@@ -504,6 +504,139 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         
         return ass_content
     
+    # ==================== LRC Format ====================
+
+    def generate_lrc(self, subtitles: List[Dict[str, Any]], metadata: Optional[Dict] = None) -> str:
+        """
+        Generate standard LRC file with line-level timestamps.
+        Format: [mm:ss.xx] Line text
+        """
+        lines = []
+
+        # LRC metadata header
+        if metadata:
+            if "title" in metadata:
+                lines.append(f"[ti:{metadata['title']}]")
+            if "artist" in metadata:
+                lines.append(f"[ar:{metadata['artist']}]")
+            if "album" in metadata:
+                lines.append(f"[al:{metadata['album']}]")
+        lines.append("[by:SubMaker]")
+        lines.append("")
+
+        for sub in subtitles:
+            timestamp = self._format_lrc_time(sub["start"])
+            text = sub.get("text", "").strip()
+            if text:
+                lines.append(f"[{timestamp}]{text}")
+
+        return "\n".join(lines) + "\n"
+
+    def generate_enhanced_lrc(self, subtitles: List[Dict[str, Any]], metadata: Optional[Dict] = None) -> str:
+        """
+        Generate Enhanced LRC with word-level timestamps.
+        Format: [mm:ss.xx] <mm:ss.xx> word1 <mm:ss.xx> word2 ...
+        """
+        lines = []
+
+        # LRC metadata header
+        if metadata:
+            if "title" in metadata:
+                lines.append(f"[ti:{metadata['title']}]")
+            if "artist" in metadata:
+                lines.append(f"[ar:{metadata['artist']}]")
+            if "album" in metadata:
+                lines.append(f"[al:{metadata['album']}]")
+        lines.append("[by:SubMaker]")
+        lines.append("")
+
+        for sub in subtitles:
+            line_timestamp = self._format_lrc_time(sub["start"])
+
+            if "words" in sub and sub["words"]:
+                # Build word-level enhanced LRC line
+                word_parts = []
+                for word in sub["words"]:
+                    word_ts = self._format_lrc_time(word["start"])
+                    word_text = word.get("word", "").strip()
+                    if word_text:
+                        word_parts.append(f"<{word_ts}>{word_text}")
+
+                if word_parts:
+                    lines.append(f"[{line_timestamp}]{' '.join(word_parts)}")
+            else:
+                # Fallback to line-level
+                text = sub.get("text", "").strip()
+                if text:
+                    lines.append(f"[{line_timestamp}]{text}")
+
+        return "\n".join(lines) + "\n"
+
+    def generate_word_level_json(self, subtitles: List[Dict[str, Any]]) -> str:
+        """
+        Generate JSON with word-level timestamps for video automation pipeline.
+
+        Returns JSON string:
+        {
+            "words": [{"word": "hello", "start": 0.120, "end": 0.450, "probability": 0.98}, ...],
+            "lines": [{"id": 1, "start": 0.120, "end": 1.500, "text": "hello world", "words": [...]}, ...]
+        }
+        """
+        import json
+
+        all_words = []
+        all_lines = []
+
+        for i, sub in enumerate(subtitles, 1):
+            line_data = {
+                "id": i,
+                "start": sub["start"],
+                "end": sub["end"],
+                "text": sub.get("text", "").strip()
+            }
+
+            if "words" in sub and sub["words"]:
+                line_data["words"] = sub["words"]
+                all_words.extend(sub["words"])
+
+            all_lines.append(line_data)
+
+        output = {
+            "words": all_words,
+            "lines": all_lines
+        }
+
+        return json.dumps(output, ensure_ascii=False, indent=2)
+
+    def _format_lrc_time(self, seconds: float) -> str:
+        """Format time as LRC timestamp mm:ss.xx"""
+        minutes = int(seconds // 60)
+        secs = seconds % 60
+        return f"{minutes:02d}:{secs:05.2f}"
+
+    def save_lrc(self, subtitles: List[Dict[str, Any]], output_path: str, metadata: Optional[Dict] = None) -> str:
+        """Generate and save standard LRC file"""
+        content = self.generate_lrc(subtitles, metadata)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return output_path
+
+    def save_enhanced_lrc(self, subtitles: List[Dict[str, Any]], output_path: str, metadata: Optional[Dict] = None) -> str:
+        """Generate and save Enhanced LRC file with word-level timestamps"""
+        content = self.generate_enhanced_lrc(subtitles, metadata)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return output_path
+
+    def save_word_level_json(self, subtitles: List[Dict[str, Any]], output_path: str) -> str:
+        """Generate and save word-level JSON file"""
+        content = self.generate_word_level_json(subtitles)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return output_path
+
+    # ==================== Dual Language ====================
+
     def save_ass_dual(
         self,
         primary_subtitles: List[Dict[str, Any]],

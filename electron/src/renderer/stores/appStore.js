@@ -15,6 +15,22 @@ const api = axios.create({
   maxBodyLength: Infinity,
 });
 
+const isAbsolutePath = (p) => {
+  if (!p || typeof p !== 'string') return false;
+  const s = p.trim();
+  if (!s) return false;
+  if (/^\.{1,2}[\\/]/.test(s)) return false;
+  if (/[\\/]fakepath[\\/]/i.test(s)) return false;
+  return /^[a-zA-Z]:[\\/]/.test(s) || s.startsWith('\\\\') || s.startsWith('/');
+};
+
+const pickRealSourcePath = (...candidates) => {
+  for (const candidate of candidates) {
+    if (isAbsolutePath(candidate)) return candidate;
+  }
+  return null;
+};
+
 export const useAppStore = create((set, get) => ({
   // ==========================================================================
   // State
@@ -28,11 +44,32 @@ export const useAppStore = create((set, get) => ({
   
   // Audio/Video file
   mediaFile: null,
-  mediaType: null, // 'audio' or 'video'
-  mediaDuration: 0,
-  originalFileName: null, // Original filename from user
-  savedFileName: null, // Actual filename saved on server (UUID)
+  mediaFileType: null, // 'audio' or 'video'
+  originalMediaPath: null, // Add this line to store the original path
+  originalFileName: null, // Original filename before temp upload (e.g., "My Song.mp3")
+  subtitles: [],
+  history: [],
+  currentStep: 'upload', // 'upload', 'transcribe', 'edit', 'render'
   
+  // Computed properties
+  getMediaUrl: () => {
+    const { mediaFile, originalMediaPath } = get();
+    if (!mediaFile) return null;
+
+    // If we have an absolute original path, create a URL to serve it locally
+    if (originalMediaPath && (originalMediaPath.includes('/') || originalMediaPath.includes('\\'))) {
+      return `http://localhost:5000/api/media/local?path=${encodeURIComponent(originalMediaPath)}`;
+    }
+    
+    // Fallback for files uploaded to temp (legacy or web-only)
+    if (typeof mediaFile === 'string') {
+      const fileName = mediaFile.split(/[\\/]/).pop();
+      return `http://localhost:5000/api/media/temp/${encodeURIComponent(fileName)}`;
+    }
+    
+    return null;
+  },
+
   // Background settings
   background: {
     type: 'color', // 'color', 'image', 'transparent'
@@ -40,8 +77,19 @@ export const useAppStore = create((set, get) => ({
     imagePath: null,
   },
   
+  // Visualizer (Butterchurn/Milkdrop)
+  visualizer: {
+    enabled: false,
+    presetName: null,
+    opacity: 0.8,
+    autoCycle: false,
+    autoCycleInterval: 30,
+    sensitivity: 1.0,
+  },
+
   // Video format
-  videoFormat: 'horizontal', // 'horizontal', 'vertical', 'square'
+  videoFormat: 'horizontal', // 'horizontal', 'vertical', 'square' (active preview format)
+  selectedFormats: ['horizontal'], // formats to render (multi-select)
   outputFormat: 'mp4', // 'mp4', 'webm', 'mov'
   quality: 'low', // 'high', 'medium', 'low' - Default low for faster karaoke rendering
   
@@ -119,26 +167,61 @@ export const useAppStore = create((set, get) => ({
     },
   },
   
-  // Model Settings - Dil bazında model seçimi
+  // Model Settings - Dil bazında model seçimi (faster-whisper)
   modelSettings: {
     ar: 'medium',    // Arapça için büyük model
-    tr: 'small',     // Türkçe için optimal
-    en: 'base',      // İngilizce için hız odaklı
-    es: 'small',     // İspanyolca
-    fr: 'small',     // Fransızca
-    de: 'small',     // Almanca
-    it: 'small',     // İtalyanca
-    pt: 'small',     // Portekizce
-    ru: 'small',     // Rusça
+    tr: 'turbo',     // Türkçe için optimal
+    en: 'turbo',     // İngilizce
+    es: 'turbo',     // İspanyolca
+    fr: 'turbo',     // Fransızca
+    de: 'turbo',     // Almanca
+    it: 'turbo',     // İtalyanca
+    pt: 'turbo',     // Portekizce
+    ru: 'turbo',     // Rusça
     zh: 'medium',    // Çince
     ja: 'medium',    // Japonca
     ko: 'medium',    // Korece
-    auto: 'small'    // Otomatik algılama için varsayılan
+    auto: 'turbo'    // Otomatik algılama için varsayılan
   },
   
-  // Content Type Settings
-  contentType: 'speech', // 'speech', 'music', 'podcast'
-  contentGenre: null,    // For music: 'pop', 'rock', 'classical', 'rap', 'jazz'
+  // Whisper Advanced Parameters (user-tunable)
+  whisperParams: {
+    beam_size: null,                    // null = use default from content/language config
+    best_of: null,
+    patience: null,
+    no_speech_threshold: null,
+    temperature: null,                  // null = use fallback list, or scalar 0.0-1.0
+    condition_on_previous_text: null,   // null = use content-type default
+    initial_prompt: null,               // null = use language-specific auto prompt
+    suppress_blank: null,
+  },
+
+  // Vocal Isolation
+  vocalIsolation: false,
+  vocalModelId: 'mdx23c', // 'mdx23c' (fast), 'bs_roformer' (best vocal), 'demucs_ft' (4-stem)
+  vocalSelectedStems: {
+    mdx23c: ['vocals', 'instrumental'],
+    bs_roformer: ['vocals', 'instrumental'],
+    demucs_ft: ['vocals', 'drums', 'bass', 'other', 'instrumental'],
+  },
+  vocalSeparation: null,     // { stems: { vocals, instrumental, drums?, bass?, other? }, model_id, duration }
+  vocalSeparating: false,    // true while separation is running
+  vocalSeparationProgress: 0,
+  vocalSeparationMessage: '',
+  initialMediaPath: null,    // First media file absolute path selected in current project
+  originalMediaFile: null,   // Original media file path (before stem replacement)
+
+  // Audio Mixer (DAW-style multi-track)
+  audioMixer: {
+    enabled: false,
+    tracks: {},         // { vocals: { id, label, icon, color, url, filePath, volume, muted, solo }, ... }
+    masterVolume: 1.0,
+    masterMuted: false,
+  },
+
+  // Export Settings
+  exportFormats: [],              // Requested output formats: 'json', 'lrc', 'enhanced_lrc', 'id3'
+  lastExportOutputs: {},          // Last export results (paths, status)
   
   // Preview mode
   previewMode: 'docked', // 'docked' or 'floating'
@@ -167,6 +250,12 @@ export const useAppStore = create((set, get) => ({
   renderTimer: null,
   renderElapsedTime: 0,
   
+  // Batch render state
+  batchRenderActive: false,
+  batchRenderResults: [],
+  batchRenderTotal: 0,
+  batchRenderCurrent: 0,
+
   // Playback state (global for sync with FloatingPreview)
   playbackTime: 0,
   isPlaying: false,
@@ -174,7 +263,11 @@ export const useAppStore = create((set, get) => ({
   
   // Output
   outputPath: null,
-  
+
+  // Loading state
+  isLoading: false,
+  loadingMessage: '',
+
   // Errors
   error: null,
   
@@ -206,18 +299,21 @@ export const useAppStore = create((set, get) => ({
   setCurrentStep: (step) => set({ currentStep: step }),
   
   // Set media file
-  setMediaFile: async (filePath, type) => {
-    // Extract original filename from path
-    const originalFileName = filePath ? filePath.split(/[/\\\\]/).pop() : null;
-    
-    set({ 
-      mediaFile: filePath, 
-      mediaType: type,
-      originalFileName: originalFileName,
-      savedFileName: originalFileName, // For direct file access, saved = original
-      subtitles: [],
-      outputPath: null,
+  setMediaFile: (file, type, originalPath = null) => {
+    const resolvedOriginal = originalPath || (typeof file === 'string' ? file : null);
+    console.log('Setting media file:', { file, type, originalPath: resolvedOriginal });
+
+    // Preserve initialMediaPath — the very first media file the user imported
+    const prev = get().initialMediaPath;
+    set({
+      mediaFile: file,
+      mediaFileType: type,
+      originalMediaPath: resolvedOriginal,
+      originalFileName: null, // reset; re-set by uploadFile if needed
+      initialMediaPath: prev || resolvedOriginal,
       error: null,
+      subtitles: [],
+      history: []
     });
   },
   
@@ -245,8 +341,47 @@ export const useAppStore = create((set, get) => ({
     return { background: newBackground };
   }),
   
+  // Visualizer actions
+  setVisualizerEnabled: (enabled) => set((state) => ({
+    visualizer: { ...state.visualizer, enabled }
+  })),
+
+  updateVisualizer: (updates) => set((state) => ({
+    visualizer: { ...state.visualizer, ...updates }
+  })),
+
+  setVisualizerPreset: (presetName) => set((state) => ({
+    visualizer: { ...state.visualizer, presetName }
+  })),
+
+  randomizeVisualizerPreset: async () => {
+    try {
+      const { getRandomPresetName } = await import('../components/ButterchurnCanvas');
+      const name = await getRandomPresetName();
+      set((state) => ({ visualizer: { ...state.visualizer, presetName: name } }));
+    } catch (e) {
+      console.error('Failed to randomize preset:', e);
+    }
+  },
+
   // Format settings
   setVideoFormat: (format) => set({ videoFormat: format }),
+  toggleSelectedFormat: (format) => set((state) => {
+    const current = state.selectedFormats;
+    const has = current.includes(format);
+    let next;
+    if (has && current.length > 1) {
+      // Deselect (but keep at least one)
+      next = current.filter(f => f !== format);
+    } else if (!has) {
+      // Add format
+      next = [...current, format];
+    } else {
+      return {}; // Can't deselect the last one
+    }
+    // Also update preview to first selected format
+    return { selectedFormats: next, videoFormat: next[0] };
+  }),
   setOutputFormat: (format) => set({ outputFormat: format }),
   setQuality: (quality) => set({ quality }),
   
@@ -254,140 +389,248 @@ export const useAppStore = create((set, get) => ({
   setSourceLanguage: (lang) => set({ sourceLanguage: lang }),
   
   // Upload file
-  uploadFile: async (file) => {
-    const { checkBackendHealth } = get();
-    
-    const isOnline = await checkBackendHealth();
-    if (!isOnline) {
-      set({ error: 'Backend is not available' });
-      return null;
-    }
-    
-    set({ isProcessing: true, processingStep: 'Uploading file...', processingProgress: 0 });
-    
+  uploadFile: async (file, options = {}) => {
+    const { originalPath } = options;
+    console.log('uploadFile called:', { name: file.name, type: file.type, size: file.size, originalPath });
+    set({ isLoading: true, loadingMessage: 'Uploading file...', error: null });
+
     try {
+      const audioExts = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'];
+      const videoExts = ['mp4', 'mkv', 'avi', 'mov', 'webm'];
+      const extension = (file.name || '').split('.').pop().toLowerCase();
+      const fileType = audioExts.includes(extension) ? 'audio' : (videoExts.includes(extension) ? 'video' : 'unknown');
+
+      if (fileType === 'unknown') {
+        throw new Error(`Unsupported file type: .${extension}`);
+      }
+
+      // If an original absolute path is provided via Electron's dialog, use it directly.
+      if (originalPath && isAbsolutePath(originalPath)) {
+        console.log('Using original path directly:', originalPath);
+        get().setMediaFile(originalPath, fileType, originalPath);
+        set({ isLoading: false, loadingMessage: '', currentStep: 'transcribe' });
+        console.log('Media file set, step changed to transcribe');
+        return;
+      }
+
+      // For drag-and-drop without a resolved path, upload file content to backend
       const formData = new FormData();
       formData.append('file', file);
-      
-      const response = await api.post('/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 600000, // 10 min for large files
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        onUploadProgress: (progressEvent) => {
-          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          set({ processingProgress: progress });
-        },
+
+      console.log('Uploading to backend via FormData...');
+      const response = await fetch('http://localhost:5000/api/upload', {
+        method: 'POST',
+        body: formData,
       });
-      
-      const { file_path, file_type, original_name } = response.data;
-      
-      // Extract saved filename from full path for API requests
-      const savedFileName = file_path ? file_path.split(/[\\/]/).pop() : null;
-      
-      // Only set mediaFile for audio/video files, not for background images
-      if (file_type === 'audio' || file_type === 'video') {
-        set({ 
-          mediaFile: file_path,
-          mediaType: file_type,
-          originalFileName: original_name,
-          savedFileName: savedFileName,
-          isProcessing: false,
-          currentStep: 'transcribe',
-        });
-      } else {
-        // For other files (like background images), don't change media state
-        set({ 
-          isProcessing: false,
-        });
+
+      if (!response.ok) {
+        let errMsg = 'File upload failed';
+        try {
+          const errData = await response.json();
+          errMsg = errData.error || errMsg;
+        } catch (e) { /* ignore parse error */ }
+        throw new Error(errMsg);
       }
-      
-      return response.data;
+
+      const data = await response.json();
+      console.log('Upload response:', data);
+
+      // The backend returns the path where it saved the file.
+      get().setMediaFile(data.filePath, fileType, data.originalPath || data.filePath || null);
+      // Preserve original filename when file was uploaded to temp
+      if (data.original_name) {
+        set({ originalFileName: data.original_name });
+      }
+      set({ isLoading: false, loadingMessage: '', currentStep: 'transcribe' });
+      console.log('Upload complete, step changed to transcribe');
+
     } catch (error) {
-      set({ 
+      console.error('uploadFile error:', error);
+      set({
         error: error.response?.data?.error || error.message,
+        isLoading: false,
+        loadingMessage: '',
         isProcessing: false,
       });
       return null;
     }
   },
-  
+
+  // Browse file via backend native dialog (browser mode — no Electron IPC)
+  browseFile: async (fileType = 'media') => {
+    set({ isLoading: true, loadingMessage: 'Dosya seçici açılıyor...', error: null });
+
+    try {
+      const response = await api.post('/browse-file', {
+        file_type: fileType,
+        title: fileType === 'audio' ? 'Select Audio File'
+             : fileType === 'video' ? 'Select Video File'
+             : 'Select Media File',
+      });
+
+      const data = response.data;
+
+      if (data.cancelled || !data.filePath) {
+        set({ isLoading: false, loadingMessage: '' });
+        return null;
+      }
+
+      console.log('[BrowseFile] Selected:', data.filePath, 'type:', data.file_type);
+
+      get().setMediaFile(data.filePath, data.file_type, data.filePath);
+      set({ isLoading: false, loadingMessage: '', currentStep: 'transcribe' });
+      return data.filePath;
+
+    } catch (error) {
+      console.error('browseFile error:', error);
+      set({
+        error: error.response?.data?.error || error.message || 'File browse failed',
+        isLoading: false,
+        loadingMessage: '',
+      });
+      return null;
+    }
+  },
+
   // Transcribe audio with streaming progress
   transcribe: async () => {
-    const { 
-      mediaFile, 
-      sourceLanguage, 
-      modelSettings, 
-      contentType, 
-      contentGenre,
-      checkBackendHealth 
+    const {
+      mediaFile,
+      originalMediaPath,
+      sourceLanguage,
+      modelSettings,
+      checkBackendHealth,
+      audioMixer,
+      vocalIsolation,
     } = get();
-    
-    if (!mediaFile) {
+
+    // Always prefer the original imported media path for transcription
+    const sourceMedia = originalMediaPath || mediaFile;
+
+    if (!sourceMedia) {
       set({ error: 'No media file selected' });
       return null;
     }
-    
+
     const isOnline = await checkBackendHealth();
     if (!isOnline) {
       set({ error: 'Backend is not available' });
       return null;
     }
-    
-    // Show content type specific loading message
-    const contentTypeMessages = {
-      speech: 'Konuşma transkripsiyon için AI modeli yükleniyor...',
-      music: 'Müzik lirik tespiti için Large model yükleniyor...',
-      podcast: 'Podcast transkripsiyon için AI modeli yükleniyor...'
-    };
-    
-    set({ 
-      isProcessing: true, 
-      processingStep: contentTypeMessages[contentType] || contentTypeMessages['speech'], 
+
+    // If vocal isolation is enabled but stems don't exist yet, run separation first
+    const hasVocalsTrack = audioMixer.enabled && audioMixer.tracks.vocals;
+    if (vocalIsolation && !hasVocalsTrack) {
+      console.log('[Transcribe] Vocal isolation enabled — running separation first...');
+      set({
+        isProcessing: true,
+        processingStep: 'Vokal izolasyonu yapılıyor...',
+        processingProgress: 0,
+      });
+      try {
+        await get().separateVocals();
+      } catch (sepErr) {
+        console.error('[Transcribe] Vocal separation failed, continuing with original:', sepErr);
+      }
+    }
+
+    // Re-read audioMixer after potential separation
+    const currentMixer = get().audioMixer;
+    const vocalsTrack = currentMixer.enabled && currentMixer.tracks.vocals;
+    const transcriptionPath = vocalsTrack ? vocalsTrack.filePath : sourceMedia;
+    // Skip backend vocal isolation if we already have a separated vocals track
+    const skipVocalIsolation = !!vocalsTrack;
+
+    console.log('[Transcribe] sourceMedia:', sourceMedia);
+    console.log('[Transcribe] transcriptionPath:', transcriptionPath);
+    console.log('[Transcribe] originalMediaPath:', originalMediaPath);
+    console.log('[Transcribe] mediaFile:', mediaFile);
+
+    set({
+      isProcessing: true,
+      processingStep: 'Transkripsiyon için AI modeli yükleniyor...',
       processingProgress: 0,
       currentTranscriptText: '',
       error: null,
     });
-    
+
     return new Promise((resolve, reject) => {
       try {
         // Use fetch with streaming for SSE
+        console.log('[Transcribe] Sending to /api/transcribe/stream, file_path:', transcriptionPath);
         fetch('http://localhost:5000/api/transcribe/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            file_path: mediaFile,
+            file_path: transcriptionPath,
             language: sourceLanguage,
-            model_settings: modelSettings,  // Model ayarlarını backend'e gönder
-            content_type: contentType,      // İçerik türü
-            content_genre: contentGenre,    // Müzik türü (opsiyonel)
+            model_settings: modelSettings,
+            enable_vocal_isolation: skipVocalIsolation ? false : get().vocalIsolation,
+            vocal_model_id: get().vocalModelId,
+            output_formats: get().exportFormats,
+            whisper_params: Object.fromEntries(
+              Object.entries(get().whisperParams).filter(([_, v]) => v !== null)
+            ),
           }),
         }).then(response => {
+          console.log('[Transcribe] Response received:', response.status, response.headers.get('content-type'));
+          // Check HTTP status before attempting to read as SSE
+          if (!response.ok) {
+            return response.json().then(err => {
+              throw new Error(err.error || `Server error: ${response.status}`);
+            }).catch(parseErr => {
+              if (parseErr.message.startsWith('Server error:') || parseErr.message.includes('File not found')) throw parseErr;
+              throw new Error(`Server returned ${response.status}`);
+            });
+          }
+
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let buffer = '';
-          
+          let heartbeatCount = 0;
+
           function processStream() {
             reader.read().then(({ done, value }) => {
-              if (done) return;
-              
+              if (done) {
+                // Stream ended - if still processing, it means we never got a complete/error event
+                const state = get();
+                if (state.isProcessing) {
+                  console.warn('[Transcribe] Stream ended without complete event');
+                  set({
+                    error: 'Transkripsiyon bağlantısı beklenmedik şekilde kapandı',
+                    isProcessing: false,
+                  });
+                  reject(new Error('Stream ended unexpectedly'));
+                }
+                return;
+              }
+
               buffer += decoder.decode(value, { stream: true });
               const lines = buffer.split('\n');
               buffer = lines.pop() || '';
-              
+
               for (const line of lines) {
                 if (line.startsWith('data: ')) {
                   try {
                     const data = JSON.parse(line.slice(6));
-                    
-                    if (data.type === 'status') {
-                      set({ 
+
+                    if (data.type === 'heartbeat') {
+                      heartbeatCount++;
+                      // Show model loading progress during long waits
+                      set({
+                        processingStep: `AI modeli yükleniyor... (${heartbeatCount * 3}s)`,
+                      });
+                    } else if (data.type === 'status') {
+                      set({
                         processingStep: data.message,
                         processingProgress: data.progress,
                       });
                     } else if (data.type === 'progress') {
-                      set({ 
-                        processingStep: `Transkripsiyon yapılıyor... ${data.progress}%`,
+                      const stepMessage = data.current_text
+                        ? `${data.current_text}`
+                        : `İşleniyor... ${data.progress}%`;
+                      set({
+                        processingStep: stepMessage,
                         processingProgress: data.progress,
                         currentTranscriptText: data.current_text || '',
                       });
@@ -423,15 +666,23 @@ export const useAppStore = create((set, get) => ({
               }
               
               processStream();
+            }).catch(readErr => {
+              console.error('[Transcribe] Stream read error:', readErr);
+              set({
+                error: 'Bağlantı kesildi: ' + readErr.message,
+                isProcessing: false,
+              });
+              reject(readErr);
             });
           }
           
           processStream();
         }).catch(error => {
           // Fallback to regular API if streaming fails
-          console.log('Streaming failed, using regular API:', error);
+          console.log('[Transcribe] Streaming failed, using regular API:', error.message);
+          set({ processingStep: 'Alternatif API kullanılıyor...' });
           api.post('/transcribe', {
-            file_path: mediaFile,
+            file_path: transcriptionPath,
             language: sourceLanguage,
           }).then(response => {
             const { subtitles, language, duration } = response.data;
@@ -681,201 +932,250 @@ export const useAppStore = create((set, get) => ({
   renderJobId: null,
   renderPolling: null,
   
-  // Render video (async with polling)
-  render: async () => {
-    const { 
-      mediaFile, subtitles, background, videoFormat, 
+  // Internal: render a single format and return a Promise that resolves on completion
+  _renderOneFormat: (format, visualizerData, secondarySubData) => {
+    const {
+      mediaFile, originalMediaPath, subtitles, background,
       outputFormat, quality, style, animation, logos,
-      sourceLanguage, detectedLanguage, checkBackendHealth,
-      settings, secondarySubtitle
+      sourceLanguage, detectedLanguage,
+      getMixerConfigForRender,
     } = get();
-    
-    if (!mediaFile || !subtitles.length) {
+
+    const mixerConfig = getMixerConfigForRender();
+
+    // Always use the original imported media path for render.
+    // mediaFile may have been replaced by a stem URL after vocal separation.
+    const renderAudioPath = originalMediaPath || mediaFile;
+
+    return new Promise(async (resolve, reject) => {
+      try {
+        const response = await api.post('/render', {
+          audio_path: renderAudioPath,
+          original_name: get().originalFileName,
+          subtitles,
+          background,
+          video_format: format,
+          output_format: outputFormat,
+          quality,
+          style,
+          animation,
+          source_language: sourceLanguage || detectedLanguage,
+          logos: logos?.length > 0 ? logos : null,
+          secondarySubtitle: secondarySubData,
+          visualizer: visualizerData,
+          audio_mixer: mixerConfig,
+        });
+
+        if (!response.data.success || !response.data.job_id) {
+          throw new Error(response.data.error || 'Failed to start render job');
+        }
+
+        const jobId = response.data.job_id;
+        set({ renderJobId: jobId });
+
+        // Poll until completion
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusRes = await api.get(`/render/status/${jobId}`);
+            const status = statusRes.data;
+
+            set({
+              processingProgress: status.progress,
+              processingStep: status.step || 'Processing...',
+            });
+
+            if (status.status === 'completed') {
+              clearInterval(pollInterval);
+              set({ renderJobId: null, renderPolling: null });
+              resolve({ success: true, outputPath: status.output_path });
+            } else if (status.status === 'error') {
+              clearInterval(pollInterval);
+              set({ renderJobId: null, renderPolling: null });
+              reject(new Error(status.error || 'Render failed'));
+            } else if (status.status === 'cancelled') {
+              clearInterval(pollInterval);
+              set({ renderJobId: null, renderPolling: null });
+              reject(new Error('Render cancelled'));
+            }
+          } catch (err) {
+            // Don't stop polling on network errors
+            console.error('Polling error:', err);
+          }
+        }, 500);
+
+        set({ renderPolling: pollInterval });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  },
+
+  // Render video — automatically handles multi-format if multiple selected
+  render: async () => {
+    const {
+      mediaFile, originalMediaPath, savedFileName, subtitles, selectedFormats, visualizer,
+      checkBackendHealth, settings, secondarySubtitle,
+    } = get();
+
+    // Always prefer the original imported media path
+    const sourceMediaPath = originalMediaPath || mediaFile;
+
+    if (!sourceMediaPath || !subtitles.length) {
       set({ error: 'No media file or subtitles' });
       return null;
     }
-    
+
     const isOnline = await checkBackendHealth();
     if (!isOnline) {
       set({ error: 'Backend is not available' });
       return null;
     }
-    
+
+    const formats = selectedFormats.length > 0 ? selectedFormats : ['horizontal'];
+    const formatLabels = { horizontal: '16:9', vertical: '9:16', square: '1:1' };
+    const isMulti = formats.length > 1;
     const startTime = Date.now();
-    
-    set({ 
-      isProcessing: true, 
-      processingStep: 'Starting render...', 
+    const results = [];
+
+    set({
+      isProcessing: true,
+      processingStep: 'Starting render...',
       processingProgress: 0,
-      outputPath: null, // Clear previous output
+      outputPath: null,
       error: null,
       renderStartTime: startTime,
       renderElapsedTime: 0,
+      batchRenderActive: isMulti,
+      batchRenderResults: [],
+      batchRenderTotal: formats.length,
+      batchRenderCurrent: 0,
     });
-    
+
     // Start render timer
     const timer = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      set(state => ({ renderElapsedTime: elapsed }));
+      set({ renderElapsedTime: elapsed });
     }, 1000);
-    
     set({ renderTimer: timer });
-    
-    try {
-      // Prepare secondary subtitle data if enabled
-      const secondarySubData = settings.dualSubtitleEnabled && secondarySubtitle.subtitles?.length > 0
-        ? {
-            enabled: true,
-            subtitles: secondarySubtitle.subtitles,
-            style: secondarySubtitle.style,
-            targetLanguage: secondarySubtitle.targetLanguage,
-          }
-        : null;
-      
-      // Start render job
-      console.log('Starting render with data:', {
-        audio_path: mediaFile,
-        subtitles_count: subtitles.length,
-        background,
-        video_format: videoFormat,
-        output_format: outputFormat,
-        quality,
-        source_language: sourceLanguage || detectedLanguage,
-        logos_count: logos?.length || 0,
-        dual_subtitle: secondarySubData ? 'enabled' : 'disabled',
-      });
-      
-      const response = await api.post('/render', {
-        audio_path: mediaFile,
-        subtitles,
-        background,
-        video_format: videoFormat,
-        output_format: outputFormat,
-        quality,
-        style,
-        animation,
-        source_language: sourceLanguage || detectedLanguage,
-        logos: logos?.length > 0 ? logos : null,
-        secondarySubtitle: secondarySubData,
-      });
-      
-      console.log('Render started, response:', response.data);
-      
-      if (!response.data.success || !response.data.job_id) {
-        throw new Error(response.data.error || 'Failed to start render job');
-      }
-      
-      const jobId = response.data.job_id;
-      set({ renderJobId: jobId });
-      
-      // Start polling for progress
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusRes = await api.get(`/render/status/${jobId}`);
-          const status = statusRes.data;
-          
-          console.log('Render status:', status);
-          
-          set({ 
-            processingProgress: status.progress,
-            processingStep: status.step || 'Processing...',
-          });
-          
-          if (status.status === 'completed') {
-            clearInterval(pollInterval);
-            
-            const { renderTimer, renderStats, renderStartTime } = get();
-            const endTime = Date.now();
-            const duration = Math.floor((endTime - renderStartTime) / 1000);
-            
-            // Clear timer
-            if (renderTimer) {
-              clearInterval(renderTimer);
-            }
-            
-            console.log('Render completed! Output:', status.output_path);
-            console.log('Render duration:', duration, 'seconds');
-            
-            set({ 
-              outputPath: status.output_path,
-              isProcessing: false,
-              currentStep: 'render', // Keep on render step instead of 'complete'
-              renderJobId: null,
-              renderPolling: null,
-              renderTimer: null,
-              renderElapsedTime: duration,
-              renderStats: {
-                totalRenders: renderStats.totalRenders + 1,
-                lastRenderDuration: duration,
-              },
-            });
-          } else if (status.status === 'error') {
-            clearInterval(pollInterval);
-            
-            const { renderTimer } = get();
-            if (renderTimer) {
-              clearInterval(renderTimer);
-            }
-            
-            console.error('Render error:', status.error);
-            set({ 
-              error: status.error || 'Render failed',
-              isProcessing: false,
-              renderJobId: null,
-              renderPolling: null,
-              renderTimer: null,
-            });
-          } else if (status.status === 'cancelled') {
-            clearInterval(pollInterval);
-            
-            const { renderTimer } = get();
-            if (renderTimer) {
-              clearInterval(renderTimer);
-            }
-            
-            set({ 
-              isProcessing: false,
-              renderJobId: null,
-              renderPolling: null,
-              renderTimer: null,
-            });
-          }
-        } catch (err) {
-          console.error('Polling error:', err);
-          // Don't stop polling on network errors, just log
+
+    // Prepare secondary subtitle data
+    const secondarySubData = settings.dualSubtitleEnabled && secondarySubtitle.subtitles?.length > 0
+      ? {
+          enabled: true,
+          subtitles: secondarySubtitle.subtitles,
+          style: secondarySubtitle.style,
+          targetLanguage: secondarySubtitle.targetLanguage,
         }
-      }, 500); // Poll every 500ms
-      
-      set({ renderPolling: pollInterval });
-      
-      return { success: true, job_id: jobId };
+      : null;
+
+    try {
+      for (let i = 0; i < formats.length; i++) {
+        const fmt = formats[i];
+        if (!get().isProcessing) break; // cancelled
+
+        if (isMulti) {
+          set({
+            batchRenderCurrent: i + 1,
+            processingStep: `${formatLabels[fmt]} render ediliyor... (${i + 1}/${formats.length})`,
+            videoFormat: fmt,
+          });
+        }
+
+        // Pre-render visualizer for THIS format's dimensions
+        let visualizerData = visualizer.enabled ? { ...visualizer } : null;
+        if (visualizer.enabled && sourceMediaPath) {
+          try {
+            set({ processingStep: isMulti
+              ? `${formatLabels[fmt]} — Görselleştirici render ediliyor... (${i + 1}/${formats.length})`
+              : 'Görselleştirici render ediliyor...'
+            });
+            const { exportVisualizerVideo } = await import('../services/visualizerFrameExporter');
+            // Build audio URL from local or temp endpoint based on the original media path
+            const isAbsPath = (p) => /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/');
+            const isTempPath = (p) => /[\\/]temp[\\/]/i.test(p);
+            const audioFilename = savedFileName || sourceMediaPath.split(/[\\/]/).pop();
+            const baseUrl = API_URL.replace('/api', '');
+            const audioUrl = (isAbsPath(sourceMediaPath) && !isTempPath(sourceMediaPath))
+              ? `${baseUrl}/api/media/local?path=${encodeURIComponent(sourceMediaPath)}`
+              : `${baseUrl}/api/media/temp/${encodeURIComponent(audioFilename)}`;
+            const vizVideoPath = await exportVisualizerVideo({
+              audioUrl,
+              duration: get().mediaDuration || 180,
+              width: fmt === 'vertical' ? 1080 : fmt === 'square' ? 1080 : 1920,
+              height: fmt === 'vertical' ? 1920 : fmt === 'square' ? 1080 : 1080,
+              presetName: visualizer.presetName,
+              fps: 30,
+              onProgress: (p) => set({ processingProgress: Math.round(p * 0.3) }),
+            });
+            visualizerData = { ...visualizer, videoPath: vizVideoPath };
+            console.log(`Visualizer pre-rendered for ${fmt}:`, vizVideoPath);
+          } catch (vizErr) {
+            console.error('Visualizer pre-render failed:', vizErr);
+            visualizerData = null;
+          }
+        }
+
+        // Render this format
+        try {
+          const result = await get()._renderOneFormat(fmt, visualizerData, secondarySubData);
+          results.push({ format: fmt, label: formatLabels[fmt], success: true, outputPath: result.outputPath });
+          set({ outputPath: result.outputPath });
+          console.log(`Render completed for ${fmt}:`, result.outputPath);
+        } catch (err) {
+          console.error(`Render failed for ${fmt}:`, err);
+          results.push({ format: fmt, label: formatLabels[fmt], success: false, error: err.message });
+        }
+
+        if (isMulti) {
+          set({ batchRenderResults: [...results] });
+        }
+      }
+
+      // Done — finalize
+      const { renderTimer, renderStats, renderStartTime } = get();
+      const duration = Math.floor((Date.now() - renderStartTime) / 1000);
+
+      if (renderTimer) clearInterval(renderTimer);
+
+      set({
+        isProcessing: false,
+        currentStep: 'render',
+        renderJobId: null,
+        renderPolling: null,
+        renderTimer: null,
+        renderElapsedTime: duration,
+        batchRenderActive: false,
+        renderStats: {
+          totalRenders: renderStats.totalRenders + formats.length,
+          lastRenderDuration: duration,
+        },
+      });
+
+      // Restore preview to first selected format
+      set({ videoFormat: formats[0] });
+
+      return results.length === 1 ? results[0] : results;
     } catch (error) {
       const { renderTimer } = get();
-      if (renderTimer) {
-        clearInterval(renderTimer);
-      }
-      
-      set({ 
+      if (renderTimer) clearInterval(renderTimer);
+
+      set({
         error: error.response?.data?.error || error.message,
         isProcessing: false,
         renderTimer: null,
+        batchRenderActive: false,
       });
       return null;
     }
   },
-  
+
   // Cancel render
   cancelRender: async () => {
     const { renderJobId, renderPolling, renderTimer } = get();
-    
-    if (renderPolling) {
-      clearInterval(renderPolling);
-    }
-    
-    if (renderTimer) {
-      clearInterval(renderTimer);
-    }
-    
+
+    if (renderPolling) clearInterval(renderPolling);
+    if (renderTimer) clearInterval(renderTimer);
+
     if (renderJobId) {
       try {
         await api.post(`/render/cancel/${renderJobId}`);
@@ -883,20 +1183,22 @@ export const useAppStore = create((set, get) => ({
         console.error('Cancel error:', err);
       }
     }
-    
-    set({ 
+
+    set({
       isProcessing: false,
       renderJobId: null,
       renderPolling: null,
       renderTimer: null,
       processingProgress: 0,
       processingStep: '',
+      batchRenderActive: false,
     });
   },
-  
+
   // Clear error
   clearError: () => set({ error: null }),
-  
+  setError: (error) => set({ error }),
+
   // ==========================================================================
   // Model Settings Actions
   // ==========================================================================
@@ -909,43 +1211,349 @@ export const useAppStore = create((set, get) => ({
   // Get model size for a language
   getModelForLanguage: (language) => {
     const { modelSettings } = get();
-    return modelSettings[language] || modelSettings['auto'] || 'small';
+    return modelSettings[language] || modelSettings['auto'] || 'turbo';
   },
   
   // Reset model settings to defaults
   resetModelSettings: () => set({
     modelSettings: {
       ar: 'medium',
-      tr: 'small', 
-      en: 'base',
-      es: 'small',
-      fr: 'small',
-      de: 'small',
-      it: 'small', 
-      pt: 'small',
-      ru: 'small',
+      tr: 'turbo',
+      en: 'turbo',
+      es: 'turbo',
+      fr: 'turbo',
+      de: 'turbo',
+      it: 'turbo',
+      pt: 'turbo',
+      ru: 'turbo',
       zh: 'medium',
       ja: 'medium',
       ko: 'medium',
-      auto: 'small'
+      auto: 'turbo'
     }
   }),
 
-  // Content type settings
-  setContentType: (type) => set({ contentType: type }),
-  setContentGenre: (genre) => set({ contentGenre: genre }),
-  
-  // Get recommended model for content type
-  getRecommendedModel: (contentType, language) => {
-    const contentConfigs = {
-      speech: { ar: 'medium', tr: 'small', en: 'base', auto: 'small' },
-      music: { ar: 'large-v3', tr: 'large-v3', en: 'large-v3', auto: 'large-v3' },
-      podcast: { ar: 'medium', tr: 'medium', en: 'medium', auto: 'medium' }
+  // Whisper advanced params
+  setWhisperParam: (key, value) => set((state) => ({
+    whisperParams: { ...state.whisperParams, [key]: value }
+  })),
+  resetWhisperParams: () => set({
+    whisperParams: {
+      beam_size: null, best_of: null, patience: null,
+      no_speech_threshold: null, temperature: null,
+      condition_on_previous_text: null, initial_prompt: null,
+      suppress_blank: null,
+    }
+  }),
+
+  // Vocal isolation
+  setVocalIsolation: (enabled) => set({ vocalIsolation: enabled }),
+  setVocalModelId: (modelId) => set({ vocalModelId: modelId, vocalSeparation: null }),
+
+  // Toggle a stem on/off for the given model
+  toggleVocalStem: (modelId, stemName) => set((state) => {
+    const current = state.vocalSelectedStems[modelId] || [];
+    const updated = current.includes(stemName)
+      ? current.filter(s => s !== stemName)
+      : [...current, stemName];
+    // Must have at least one stem selected
+    if (updated.length === 0) return state;
+    return { vocalSelectedStems: { ...state.vocalSelectedStems, [modelId]: updated } };
+  }),
+
+  // Use a separated stem as the active media file
+  useVocalStem: (stemUrl) => {
+    const { mediaFile, originalMediaFile } = get();
+    // Save original media file on first use
+    const origFile = originalMediaFile || mediaFile;
+    set({ mediaFile: stemUrl, originalMediaFile: origFile });
+  },
+
+  // Restore original media file
+  restoreOriginalMedia: () => {
+    const { originalMediaFile } = get();
+    if (originalMediaFile) {
+      set({ mediaFile: originalMediaFile, originalMediaFile: null });
+    }
+  },
+
+  // ── Audio Mixer Actions ──────────────────────────────────────────────
+  initAudioMixer: (stems, stemUrls) => {
+    // stems: { vocals: '/abs/path', instrumental: '/abs/path', ... }
+    // stemUrls: { vocals: 'http://...', instrumental: 'http://...', ... }
+    const { mediaFile, originalMediaPath, originalMediaFile } = get();
+    const originalFilePath = originalMediaPath || originalMediaFile || mediaFile;
+
+    const STEM_META = {
+      vocals: { label: 'Vokal', icon: '🎤', color: 'rgba(168, 85, 247, 0.8)' },
+      instrumental: { label: 'Enstrümantal', icon: '🎵', color: 'rgba(59, 130, 246, 0.8)' },
+      drums: { label: 'Davul', icon: '🥁', color: 'rgba(239, 68, 68, 0.8)' },
+      bass: { label: 'Bas', icon: '🎸', color: 'rgba(34, 197, 94, 0.8)' },
+      other: { label: 'Diğer', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
     };
+
+    const tracks = {};
+
+    // Add original media as master track (always first)
+    if (originalFilePath) {
+      // Build a playable URL for the original media
+      let originalUrl = null;
+      if (originalFilePath.includes('/') || originalFilePath.includes('\\')) {
+        originalUrl = `http://localhost:5000/api/media/local?path=${encodeURIComponent(originalFilePath)}`;
+      } else {
+        const fileName = originalFilePath.split(/[\\/]/).pop();
+        originalUrl = `http://localhost:5000/api/media/temp/${encodeURIComponent(fileName)}`;
+      }
+
+      tracks['original'] = {
+        id: 'original',
+        label: '▶️ Orjinal Ses',
+        icon: '🔊',
+        color: 'rgba(100, 116, 139, 0.8)',
+        url: originalUrl,
+        filePath: originalFilePath,
+        volume: 1.0,
+        muted: true,  // Muted by default — stems provide separated audio
+        solo: false,
+        waveformData: null,
+        isOriginal: true,
+      };
+    }
+
+    // Add all stems
+    for (const [stemId, url] of Object.entries(stemUrls)) {
+      const meta = STEM_META[stemId] || { label: stemId, icon: '🔊', color: 'rgba(150,150,150,0.8)' };
+      tracks[stemId] = {
+        id: stemId,
+        label: meta.label,
+        icon: meta.icon,
+        color: meta.color,
+        url,                              // Full HTTP URL for playback
+        filePath: stems[stemId] || null,  // Absolute file path for backend render
+        volume: 1.0,
+        muted: false,
+        solo: false,
+        waveformData: null,
+      };
+    }
+
+    set({ audioMixer: { enabled: true, tracks, masterVolume: 1.0, masterMuted: false, showTimelineTracks: true } });
     
-    return contentConfigs[contentType]?.[language] || 
-           contentConfigs[contentType]?.auto || 
-           'small';
+    // Load waveforms for all tracks asynchronously
+    get().loadTrackWaveforms(tracks);
+  },
+
+  // Load waveforms for all tracks
+  loadTrackWaveforms: async (tracks) => {
+    for (const [trackId, track] of Object.entries(tracks)) {
+      if (!track.filePath) continue;
+      try {
+        // Request waveform from backend
+        const response = await fetch('http://localhost:5000/api/waveform', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_path: track.filePath }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.waveform) {
+            get().setTrackWaveform(trackId, data.waveform);
+          }
+        }
+      } catch (err) {
+        console.warn(`Failed to load waveform for ${trackId}:`, err);
+      }
+    }
+  },
+
+  setTrackVolume: (trackId, volume) => set((state) => ({
+    audioMixer: {
+      ...state.audioMixer,
+      tracks: {
+        ...state.audioMixer.tracks,
+        [trackId]: { ...state.audioMixer.tracks[trackId], volume: Math.max(0, Math.min(1, volume)) },
+      },
+    },
+  })),
+
+  setTrackMuted: (trackId, muted) => set((state) => ({
+    audioMixer: {
+      ...state.audioMixer,
+      tracks: {
+        ...state.audioMixer.tracks,
+        [trackId]: { ...state.audioMixer.tracks[trackId], muted },
+      },
+    },
+  })),
+
+  setTrackSolo: (trackId, solo) => set((state) => ({
+    audioMixer: {
+      ...state.audioMixer,
+      tracks: {
+        ...state.audioMixer.tracks,
+        [trackId]: { ...state.audioMixer.tracks[trackId], solo },
+      },
+    },
+  })),
+
+  setTrackWaveform: (trackId, waveformData) => set((state) => ({
+    audioMixer: {
+      ...state.audioMixer,
+      tracks: {
+        ...state.audioMixer.tracks,
+        [trackId]: { ...state.audioMixer.tracks[trackId], waveformData },
+      },
+    },
+  })),
+
+  toggleTimelineTracks: () => set((state) => ({
+    audioMixer: { ...state.audioMixer, showTimelineTracks: !state.audioMixer.showTimelineTracks },
+  })),
+
+  setMasterVolume: (volume) => set((state) => ({
+    audioMixer: { ...state.audioMixer, masterVolume: Math.max(0, Math.min(1, volume)) },
+  })),
+
+  setMasterMuted: (muted) => set((state) => ({
+    audioMixer: { ...state.audioMixer, masterMuted: muted },
+  })),
+
+  resetAudioMixer: () => set({
+    audioMixer: { enabled: false, tracks: {}, masterVolume: 1.0, masterMuted: false, showTimelineTracks: true },
+  }),
+
+  // Get mixer config for render (unmuted tracks with volumes)
+  getMixerConfigForRender: () => {
+    const { audioMixer } = get();
+    if (!audioMixer.enabled) return null;
+    const anySoloed = Object.values(audioMixer.tracks).some(t => t.solo);
+    const tracks = [];
+    for (const t of Object.values(audioMixer.tracks)) {
+      const isMuted = audioMixer.masterMuted || t.muted || (anySoloed && !t.solo);
+      if (isMuted || !t.filePath) continue;
+      tracks.push({ path: t.filePath, volume: t.volume * audioMixer.masterVolume });
+    }
+    if (tracks.length === 0) return null;
+    return { tracks, useMixer: true };
+  },
+
+  // Run full vocal separation for preview/listening
+  separateVocals: async () => {
+    const { mediaFile, originalMediaPath, originalMediaFile, vocalModelId, vocalSelectedStems } = get();
+    const filePath = originalMediaPath || originalMediaFile || mediaFile;
+    if (!filePath) return;
+
+    const selectedStems = vocalSelectedStems[vocalModelId] || [];
+
+    set({ vocalSeparating: true, vocalSeparationProgress: 0, vocalSeparationMessage: 'Başlatılıyor...' });
+
+    try {
+      const response = await fetch('http://localhost:5000/api/vocal-isolation/separate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_path: filePath, model_id: vocalModelId, selected_stems: selectedStems }),
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'progress') {
+              set({ vocalSeparationProgress: event.progress, vocalSeparationMessage: event.message || '' });
+            } else if (event.type === 'result' && event.success) {
+              // Convert relative URLs to full URLs
+              const stemUrls = {};
+              for (const [name, url] of Object.entries(event.stems || {})) {
+                stemUrls[name] = `http://localhost:5000${url}`;
+              }
+              // File paths for backend render
+              const stemPaths = event.stems_paths || {};
+              set({
+                vocalSeparation: {
+                  stems: stemUrls,
+                  stemPaths,
+                  model_id: event.model_id,
+                  duration: event.duration,
+                  cached: event.cached,
+                },
+                vocalSeparating: false,
+                vocalSeparationProgress: 100,
+                vocalSeparationMessage: event.cached ? 'Önbellekten yüklendi' : `Tamamlandı (${event.duration?.toFixed(1)}s)`,
+              });
+              // Initialize multi-track audio mixer
+              get().initAudioMixer(stemPaths, stemUrls);
+              return;
+            } else if (event.type === 'error') {
+              console.error('Vocal separation error:', event.error);
+              set({ vocalSeparating: false, vocalSeparationMessage: `Hata: ${event.error}` });
+              return;
+            }
+          } catch (e) { /* skip parse errors */ }
+        }
+      }
+    } catch (error) {
+      console.error('Vocal separation failed:', error);
+      set({ vocalSeparating: false, vocalSeparationMessage: `Hata: ${error.message}` });
+    }
+  },
+
+  // Export settings
+  setExportFormats: (formats) => set({ exportFormats: formats }),
+
+  // Export lyrics in various formats
+  exportLyrics: async (format) => {
+    const { subtitles, originalMediaPath, language } = get();
+    console.log('[SOURCE_PATH] exportLyrics -> real source path:', originalMediaPath);
+    console.log('[SOURCE_PATH] exportLyrics -> format:', format);
+
+    if (!subtitles || subtitles.length === 0) {
+      throw new Error("No subtitles to export.");
+    }
+    if (!originalMediaPath) {
+      throw new Error("Source media path is not available.");
+    }
+
+    set({ isLoading: true, loadingMessage: `Exporting to ${format.toUpperCase()}...` });
+
+    try {
+      const response = await fetch('http://localhost:5000/api/export/lyrics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subtitles,
+          format,
+          source_path: originalMediaPath,
+          original_name: get().originalFileName,
+          language: language,
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `Export failed with status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      set({ isLoading: false });
+      return result;
+
+    } catch (error) {
+      console.error(`Export failed: ${error.message}`);
+      set({ isLoading: false, error: `Export failed: ${error.message}` });
+      throw error;
+    }
   },
 
   // ==========================================================================
@@ -1073,6 +1681,13 @@ export const useAppStore = create((set, get) => ({
     outputPath: null,
     error: null,
     background: { type: 'color', value: '#000000', imagePath: null },
+    vocalSeparation: null,
+    vocalSeparating: false,
+    vocalSeparationProgress: 0,
+    vocalSeparationMessage: '',
+    initialMediaPath: null,
+    originalMediaFile: null,
+    audioMixer: { enabled: false, tracks: {}, masterVolume: 1.0, masterMuted: false },
     detectedLanguage: null,
     secondarySubtitle: {
       enabled: false,
@@ -1081,7 +1696,7 @@ export const useAppStore = create((set, get) => ({
       style: {
         fontName: 'Arial',
         fontSize: 72,  // Updated for 4K rendering
-        color: '#FFFF00',
+        color: '#FFFFFF', // White by default
         borderColor: '#000000',
         borderWidth: 4,      // Increased for 4K
         shadowDepth: 2,       // Increased for 4K

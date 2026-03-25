@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiTrash2, FiPlus, FiPlay, FiMic, FiRefreshCw, FiAlertCircle, FiGlobe } from 'react-icons/fi';
+import { FiTrash2, FiPlus, FiPlay, FiMic, FiRefreshCw, FiAlertCircle, FiGlobe, FiDownload, FiMusic, FiDisc } from 'react-icons/fi';
 import SimpleSunoImporter from './SimpleSunoImporter';
 
 function SubtitleEditor() {
-  const { 
-    subtitles, 
-    selectedSubtitleId, 
-    selectSubtitle, 
-    updateSubtitle, 
+  const {
+    subtitles,
+    selectedSubtitleId,
+    selectSubtitle,
+    updateSubtitle,
     deleteSubtitle,
     addSubtitle,
     transcribe,
@@ -20,10 +20,30 @@ function SubtitleEditor() {
     updateSecondarySubtitle,
     translateToSecondary,
     playbackTime,
+    exportLyrics,
+    mediaFile,
+    detectedLanguage,
+    sourceLanguage,
+    mediaDuration,
+    setPlaybackTime,
+    audioMixer,
   } = useAppStore();
-  
+
   const [showRetranscribeConfirm, setShowRetranscribeConfirm] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportStatus, setExportStatus] = useState(null);
+  const [syltStatus, setSyltStatus] = useState(null); // null | 'loading' | 'success' | 'error'
+  const [syltMessage, setSyltMessage] = useState(''); // Detailed message for SYLT embedding
+  const [mixerNotification, setMixerNotification] = useState(null); // Show when mixer is activated
   
+  // Show notification when audio mixer is enabled
+  useEffect(() => {
+    if (audioMixer.enabled && Object.keys(audioMixer.tracks).length > 0) {
+      setMixerNotification('✓ Ses katmanı çizelgesi etkinleştirildi');
+      const timer = setTimeout(() => setMixerNotification(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [audioMixer.enabled, audioMixer.tracks]);
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -59,6 +79,61 @@ function SubtitleEditor() {
 
   const handleTranslateToSecondary = async () => {
     await translateToSecondary();
+  };
+
+  const handleExport = async (format) => {
+    setShowExportMenu(false);
+    setExportStatus({ loading: true, format });
+    const result = await exportLyrics(format);
+    if (result?.success) {
+      const savedTo = result.source_copy_path || result.output_path || result.download_filename;
+      const msg = result.message || `${result.download_filename || format} kaydedildi`;
+      setExportStatus({
+        success: true,
+        format,
+        path: savedTo,
+        message: msg,
+        sourceCopy: result.source_copy_path || null,
+      });
+      setTimeout(() => setExportStatus(null), 5000);
+    } else {
+      setExportStatus({ error: result?.error || 'Export failed', format });
+      setTimeout(() => setExportStatus(null), 6000);
+    }
+  };
+
+  const isMp3 = mediaFile && mediaFile.toLowerCase().endsWith('.mp3');
+
+  const handleEmbedSYLT = async () => {
+    if (!isMp3 || subtitles.length === 0) return;
+    setSyltStatus('loading');
+    setSyltMessage("MP3'ye SYLT yazılıyor...");
+    try {
+      const result = await exportLyrics('id3', {});
+      if (result?.success && result?.sylt_written) {
+        setSyltStatus('success');
+        const count = result?.verification?.sylt_entries;
+        const location = result?.source_location || 'unknown location';
+        const message = `✓ ${count} SYLT entry gömüldü → ${location}`;
+        setSyltMessage(message);
+        console.log(`SYLT embedded: ${count} entries into ${result.source_file}`);
+        if (result.verification?.sylt_sample) {
+          console.log('SYLT sample:', result.verification.sylt_sample);
+        }
+      } else {
+        setSyltStatus('error');
+        setSyltMessage(`Hata: ${result?.error || 'SYLT gömme başarısız'}`);
+        console.error('SYLT embed failed:', result?.error || 'unknown');
+      }
+    } catch (err) {
+      setSyltStatus('error');
+      setSyltMessage(`Hata: ${err.message || 'SYLT gömme başarısız'}`);
+      console.error('SYLT embed error:', err);
+    }
+    setTimeout(() => {
+      setSyltStatus(null);
+      setSyltMessage('');
+    }, 4000);
   };
 
   if (subtitles.length === 0) {
@@ -118,7 +193,79 @@ function SubtitleEditor() {
             </button>
           )}
           
-          <button 
+          {/* SYLT Embed Button — only for MP3 files */}
+          {isMp3 && (
+            <button
+              className="btn btn-sm"
+              onClick={handleEmbedSYLT}
+              disabled={isProcessing || syltStatus === 'loading'}
+              title="MP3 dosyasına senkronize lirik (SYLT) göm"
+              style={{
+                background: syltStatus === 'success' ? 'var(--accent-success)' :
+                           syltStatus === 'error' ? 'var(--accent-error)' :
+                           'rgba(168, 85, 247, 0.9)',
+                color: '#fff',
+                fontSize: 11,
+                padding: '4px 10px',
+                gap: 4,
+                transition: 'background 0.2s',
+              }}
+            >
+              <FiDisc size={13} />
+              {syltStatus === 'loading' ? 'Gömülüyor...' :
+               syltStatus === 'success' ? 'Gömüldü!' :
+               syltStatus === 'error' ? 'Hata!' :
+               'MP3\'e Göm'}
+            </button>
+          )}
+
+          {/* Export Lyrics Dropdown */}
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              disabled={isProcessing}
+              title="Export Lyrics"
+              style={{ color: 'var(--accent-primary)' }}
+            >
+              <FiDownload size={14} />
+            </button>
+            {showExportMenu && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                right: 0,
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 8,
+                padding: 4,
+                minWidth: 180,
+                zIndex: 100,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              }}>
+                <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
+                  onClick={() => handleExport('enhanced_lrc')}>
+                  <FiMusic size={12} /> Enhanced LRC (Word-level)
+                </button>
+                <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
+                  onClick={() => handleExport('lrc')}>
+                  <FiMusic size={12} /> Standard LRC
+                </button>
+                <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
+                  onClick={() => handleExport('word_json')}>
+                  <FiDownload size={12} /> Word-Level JSON
+                </button>
+                {isMp3 && (
+                  <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12, color: 'var(--accent-success)' }}
+                    onClick={() => handleExport('id3')}>
+                    <FiMusic size={12} /> Write ID3 Synced Lyrics
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <button
             className="btn btn-ghost btn-sm"
             onClick={() => setShowRetranscribeConfirm(true)}
             disabled={isProcessing}
@@ -127,7 +274,7 @@ function SubtitleEditor() {
           >
             <FiRefreshCw size={14} />
           </button>
-          
+
           <button className="btn btn-secondary btn-sm" onClick={handleAddSubtitle}>
             <FiPlus size={14} /> Add
           </button>
@@ -174,6 +321,92 @@ function SubtitleEditor() {
         </div>
       )}
       
+      {/* Export Status Toast */}
+      {exportStatus && (
+        <div style={{
+          padding: '8px 12px',
+          marginBottom: 8,
+          borderRadius: 6,
+          fontSize: 12,
+          background: exportStatus.loading ? 'rgba(99,102,241,0.1)' :
+                     exportStatus.success ? 'rgba(16,185,129,0.1)' :
+                     'rgba(239,68,68,0.1)',
+          color: exportStatus.loading ? 'var(--accent-primary)' :
+                 exportStatus.success ? 'var(--accent-success)' :
+                 'var(--accent-error)',
+          border: `1px solid ${exportStatus.loading ? 'rgba(99,102,241,0.3)' :
+                               exportStatus.success ? 'rgba(16,185,129,0.3)' :
+                               'rgba(239,68,68,0.3)'}`,
+        }}>
+          {exportStatus.loading && `${exportStatus.format} dışa aktarılıyor...`}
+          {exportStatus.success && (
+            <span>
+              {exportStatus.message || `${exportStatus.format} başarıyla kaydedildi`}
+              {exportStatus.sourceCopy && (
+                <span style={{ display: 'block', fontSize: 10, marginTop: 2, opacity: 0.8, wordBreak: 'break-all' }}>
+                  {exportStatus.sourceCopy}
+                </span>
+              )}
+            </span>
+          )}
+          {exportStatus.error && `Hata: ${exportStatus.error}`}
+        </div>
+      )}
+
+      {/* SYLT Embed Status Toast */}
+      {syltStatus && (
+        <div style={{
+          padding: '10px 12px',
+          marginBottom: 8,
+          borderRadius: 6,
+          fontSize: 12,
+          fontWeight: 500,
+          background: syltStatus === 'loading' ? 'rgba(99,102,241,0.1)' :
+                     syltStatus === 'success' ? 'rgba(16,185,129,0.1)' :
+                     'rgba(239,68,68,0.1)',
+          color: syltStatus === 'loading' ? 'var(--accent-primary)' :
+                 syltStatus === 'success' ? 'var(--accent-success)' :
+                 'var(--accent-error)',
+          border: `1px solid ${syltStatus === 'loading' ? 'rgba(99,102,241,0.3)' :
+                               syltStatus === 'success' ? 'rgba(16,185,129,0.3)' :
+                               'rgba(239,68,68,0.3)'}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          {syltStatus === 'loading' && <span>⏳ MP3 dosyaya SYLT yazılıyor...</span>}
+          {syltStatus === 'success' && (
+            <span>
+              {syltMessage}
+              <span style={{ display: 'block', fontSize: 10, marginTop: 2, opacity: 0.8 }}>
+                ID3 tags başarıyla yazıldı
+              </span>
+            </span>
+          )}
+          {syltStatus === 'error' && <span>❌ {syltMessage || 'SYLT gömme başarısız'}</span>}
+        </div>
+      )}
+
+      {/* Mixer Notification */}
+      {mixerNotification && (
+        <div style={{
+          padding: '10px 12px',
+          marginBottom: 8,
+          borderRadius: 6,
+          fontSize: 12,
+          fontWeight: 500,
+          background: 'rgba(16,185,129,0.1)',
+          color: 'var(--accent-success)',
+          border: '1px solid rgba(16,185,129,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          animation: 'fadeIn 0.3s ease-in',
+        }}>
+          {mixerNotification}
+        </div>
+      )}
+
       {/* Subtitle List - Always visible */}
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ overflowY: 'auto', flex: 1 }}>

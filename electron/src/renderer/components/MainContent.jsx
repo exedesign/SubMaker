@@ -5,9 +5,11 @@ import SubtitleEditor from './SubtitleEditor';
 import VideoPreview from './VideoPreview';
 import RenderPanel from './RenderPanel';
 import SimpleSunoImporter from './SimpleSunoImporter';
+import useWaveformAnalyzer from '../hooks/useWaveformAnalyzer';
 
 function MainContent() {
-  const { currentStep, mediaFile } = useAppStore();
+  const { currentStep, mediaFile, subtitles } = useAppStore();
+  useWaveformAnalyzer();
   
   return (
     <main className="main-content">
@@ -75,14 +77,43 @@ function MainContent() {
           <div style={{ flex: '0 0 auto', padding: '16px', borderBottom: '1px solid var(--border-color)' }}>
             <VideoPreview />
           </div>
-          
+
           {/* Editor Area */}
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <SubtitleEditor />
           </div>
-          
-          {/* Render Panel */}
-          <RenderPanel />
+
+          {/* Edit step: show "proceed to render" button */}
+          {currentStep === 'edit' && subtitles.length > 0 && (
+            <div style={{
+              padding: 16,
+              background: 'var(--bg-secondary)',
+              borderTop: '1px solid var(--border-color)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}>
+              <div>
+                <p style={{ fontWeight: 500, marginBottom: 4 }}>
+                  {subtitles.length} altyazı düzenlemeye hazır
+                </p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Altyazıları düzenleyin, ardından video oluşturmaya geçin
+                </p>
+              </div>
+              <button
+                className="btn btn-primary"
+                onClick={() => useAppStore.getState().setCurrentStep('style')}
+                style={{ minWidth: 180, padding: '12px 24px', fontSize: '14px' }}
+              >
+                Video Oluşturmaya Geç →
+              </button>
+            </div>
+          )}
+
+          {/* Render Panel - only in style/render steps */}
+          {(currentStep === 'style' || currentStep === 'render') && <RenderPanel />}
         </div>
       )}
     </main>

@@ -28,23 +28,9 @@ from lyrics_parser import parse_suno_lyrics
 # Create Blueprint
 api = Blueprint("api", __name__)
 
-# CORS headers for all responses
-@api.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
-
-# Handle OPTIONS preflight requests
-@api.route('/<path:path>', methods=['OPTIONS'])
-@api.route('/', methods=['OPTIONS'])
-def handle_options(path=''):
-    response = jsonify({'status': 'ok'})
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+# NOTE: CORS is handled globally by flask-cors in main.py.
+# Do NOT add manual Access-Control-Allow-Origin headers here — it causes
+# duplicate "*, *" values which browsers reject.
 
 # Service instances (lazy loaded)
 _transcription_service = None
@@ -93,6 +79,23 @@ def health_check():
         "service": "SubMaker API",
         "version": "1.0.0"
     })
+
+
+# =============================================================================
+# Whisper Model Management
+# =============================================================================
+
+@api.route("/models", methods=["GET"])
+def get_whisper_models():
+    """Get available Whisper models"""
+    from services.engines import get_engine
+    language = request.args.get("language")
+    try:
+        engine = get_engine()
+        models = engine.get_available_models(language)
+        return jsonify({"models": models})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================
@@ -459,13 +462,119 @@ def serve_temp_media(filename):
     return jsonify({"error": "File not found"}), 404
 
 
+@api.route("/media/local", methods=["GET"])
+def serve_local_media():
+    """Serve absolute local media files selected via native dialog."""
+    raw_path = request.args.get("path", "")
+    if not raw_path:
+        return jsonify({"error": "path required"}), 400
+
+    try:
+        local_path = Path(raw_path).expanduser().resolve()
+    except Exception:
+        return jsonify({"error": "Invalid path"}), 400
+
+    # Only allow absolute file paths
+    if not local_path.is_absolute() or not local_path.exists() or not local_path.is_file():
+        return jsonify({"error": "File not found"}), 404
+
+    # Restrict to known media extensions
+    ext = local_path.suffix.lower()
+    allowed_exts = {
+        '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac',
+        '.mp4', '.mkv', '.avi', '.mov', '.webm'
+    }
+    if ext not in allowed_exts:
+        return jsonify({"error": "Unsupported media type"}), 400
+
+    mime_type, _ = mimetypes.guess_type(str(local_path))
+    if not mime_type:
+        mime_map = {
+            '.mp3': 'audio/mpeg',
+            '.wav': 'audio/wav',
+            '.ogg': 'audio/ogg',
+            '.m4a': 'audio/mp4',
+            '.flac': 'audio/flac',
+            '.aac': 'audio/aac',
+            '.mp4': 'video/mp4',
+            '.mkv': 'video/x-matroska',
+            '.avi': 'video/x-msvideo',
+            '.mov': 'video/quicktime',
+            '.webm': 'video/webm',
+        }
+        mime_type = mime_map.get(ext, 'application/octet-stream')
+
+    return send_file(str(local_path), mimetype=mime_type, conditional=True)
+
+
 @api.route("/media/output/<path:filename>", methods=["GET"])
 def serve_output_media(filename):
     """Serve media files from output directory"""
     file_path = OUTPUT_DIR / filename
     if file_path.exists():
-        return send_file(str(file_path))
+        return send_file(str(file_path), as_attachment=True, download_name=filename)
     return jsonify({"error": "File not found"}), 404
+
+
+# =============================================================================
+# Waveform Generation
+# =============================================================================
+
+@api.route("/waveform", methods=["POST"])
+def generate_waveform():
+    """Generate waveform visualization data from audio file"""
+    data = request.json or {}
+    file_path = data.get("file_path")
+    
+    if not file_path:
+        return jsonify({"error": "file_path required"}), 400
+    
+    try:
+        import librosa
+        import numpy as np
+        from pathlib import Path
+        
+        audio_path = Path(file_path)
+        if not audio_path.exists():
+            return jsonify({"error": f"File not found: {file_path}"}), 404
+        
+        # Load audio file
+        print(f"[Waveform] Loading: {audio_path}")
+        y, sr = librosa.load(str(audio_path), sr=None, mono=True)
+        
+        # Resample to lower sample rate for visualization (100 samples per second)
+        # This gives us reasonable granularity without excessive data
+        chunk_size = max(1, len(y) // 500)  # 500 samples max for frontend
+        
+        # Calculate RMS energy for each chunk
+        waveform = []
+        for i in range(0, len(y), chunk_size):
+            chunk = y[i:i+chunk_size]
+            rms = float(np.sqrt(np.mean(chunk ** 2)))
+            waveform.append(rms)
+        
+        # Normalize to 0-1 range
+        max_amp = max(waveform) if waveform else 1
+        if max_amp < 0.01:
+            max_amp = 0.01
+        waveform = [amp / max_amp for amp in waveform]
+        
+        print(f"[Waveform] Generated {len(waveform)} samples for visualization")
+        
+        return jsonify({
+            "success": True,
+            "waveform": waveform,
+            "duration": float(len(y) / sr),
+            "samples": len(waveform),
+        })
+    
+    except ImportError:
+        return jsonify({"error": "librosa not installed. Run: pip install librosa"}), 500
+    except Exception as e:
+        import traceback
+        print(f"[Waveform] Error: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================
@@ -534,44 +643,223 @@ def upload_file():
         return jsonify({"error": "No file provided"}), 400
     
     file = request.files["file"]
-    
-    if file.filename == "" or file.filename is None:
+    original_path = request.form.get("originalPath")
+
+    if not file.filename:
         return jsonify({"error": "No file selected"}), 400
-    
-    # Get original filename and extension
-    original_filename = file.filename
-    
-    # Extract extension safely
+
+    # If a real path is provided (from Electron), we trust it and don't save a copy.
+    if original_path and os.path.exists(original_path):
+        print(f"Using original media path: {original_path}")
+        
+        ext = original_path.rsplit(".", 1)[1].lower()
+        if ext in ALLOWED_AUDIO_EXTENSIONS:
+            file_type = "audio"
+        elif ext in ALLOWED_VIDEO_EXTENSIONS:
+            file_type = "video"
+        else:
+            file_type = "image"
+            
+        return jsonify({
+            "success": True,
+            "filePath": original_path, # Return the original path
+            "file_type": file_type,
+            "original_name": os.path.basename(original_path),
+            "originalPath": original_path,
+        })
+
+    # Fallback for web-based uploads (drag-drop from browser)
+    raw_filename = file.filename  # preserve original name with Unicode chars
+    original_filename = secure_filename(file.filename)
     if "." in original_filename:
         ext = original_filename.rsplit(".", 1)[1].lower()
     else:
         return jsonify({"error": "File must have an extension"}), 400
-    
-    # Determine file type
+
     all_allowed = ALLOWED_AUDIO_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS | ALLOWED_IMAGE_EXTENSIONS
-    
     if ext not in all_allowed:
         return jsonify({"error": f"File type '.{ext}' not allowed"}), 400
-    
-    # Create safe filename with original extension
+
     safe_filename = f"{uuid.uuid4().hex}.{ext}"
-    file_path = TEMP_DIR / safe_filename
-    file.save(str(file_path))
-    
-    # Determine type
+    temp_file_path = TEMP_DIR / safe_filename
+    file.save(str(temp_file_path))
+
     if ext in ALLOWED_AUDIO_EXTENSIONS:
         file_type = "audio"
     elif ext in ALLOWED_VIDEO_EXTENSIONS:
         file_type = "video"
     else:
         file_type = "image"
-    
+
     return jsonify({
         "success": True,
-        "file_path": str(file_path),
+        "filePath": str(temp_file_path), # Return path to temp copy
         "file_type": file_type,
-        "original_name": original_filename
+        "original_name": raw_filename,   # unsanitized name for export naming
+        "originalPath": None, # No original path in this case
     })
+
+
+# =============================================================================
+# Native File Browser (for browser mode — no Electron IPC)
+# =============================================================================
+
+@api.route("/browse-file", methods=["POST"])
+def browse_file():
+    """Open a native file dialog on the server machine and return the selected path."""
+    data = request.json or {}
+    file_type = data.get("file_type", "media")
+    title = data.get("title", "Select a file")
+    initial_dir = data.get("initial_dir")
+
+    from services.file_dialog import open_file_dialog
+
+    selected_path = open_file_dialog(
+        file_type=file_type,
+        title=title,
+        initial_dir=initial_dir,
+    )
+
+    if selected_path:
+        ext = selected_path.rsplit(".", 1)[-1].lower() if "." in selected_path else ""
+        if ext in ALLOWED_AUDIO_EXTENSIONS:
+            detected_type = "audio"
+        elif ext in ALLOWED_VIDEO_EXTENSIONS:
+            detected_type = "video"
+        elif ext in ALLOWED_IMAGE_EXTENSIONS:
+            detected_type = "image"
+        else:
+            detected_type = "unknown"
+
+        return jsonify({
+            "success": True,
+            "filePath": selected_path,
+            "file_type": detected_type,
+            "original_name": os.path.basename(selected_path),
+            "cancelled": False,
+        })
+    else:
+        return jsonify({
+            "success": True,
+            "filePath": None,
+            "file_type": None,
+            "original_name": None,
+            "cancelled": True,
+        })
+
+
+# =============================================================================
+# Vocal Isolation (standalone, SSE streaming)
+# =============================================================================
+
+@api.route("/vocal-isolation/separate", methods=["POST", "OPTIONS"])
+def vocal_isolation_separate():
+    """Full vocal separation with SSE progress streaming."""
+    from flask import Response, stream_with_context
+    import json as json_module
+
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp, 200
+
+    data = request.json
+    if not data:
+        return jsonify({"error": "Invalid request body"}), 400
+
+    file_path = data.get("file_path")
+    model_id = data.get("model_id", "mdx23c")
+    selected_stems = data.get("selected_stems")
+
+    if not file_path:
+        return jsonify({"error": "file_path required"}), 400
+
+    if not os.path.exists(file_path):
+        return jsonify({"error": f"File not found: {file_path}"}), 404
+
+    def generate():
+        import queue
+        import threading
+
+        try:
+            from services.vocal_isolator import get_vocal_isolator
+            isolator = get_vocal_isolator()
+
+            if not isolator.is_available():
+                yield f"data: {json_module.dumps({'type': 'error', 'error': 'No vocal separation engine available'})}\n\n"
+                return
+
+            progress_queue = queue.Queue()
+            result_holder = [None]
+            error_holder = [None]
+
+            def progress_callback(pct, message=""):
+                progress_queue.put(('progress', int(pct), message))
+
+            def run_separation():
+                try:
+                    result_holder[0] = isolator.separate_full(
+                        audio_path=file_path,
+                        model_id=model_id,
+                        progress_callback=progress_callback,
+                        selected_stems=selected_stems if selected_stems else None,
+                    )
+                    progress_queue.put(('done', None, None))
+                except Exception as e:
+                    error_holder[0] = str(e)
+                    progress_queue.put(('error', None, str(e)))
+
+            thread = threading.Thread(target=run_separation, daemon=True)
+            thread.start()
+
+            while True:
+                try:
+                    msg_type, val, text = progress_queue.get(timeout=30)
+                except queue.Empty:
+                    # Check if thread died without putting a result
+                    if not thread.is_alive():
+                        err = error_holder[0] or "Separation thread died unexpectedly"
+                        yield f"data: {json_module.dumps({'type': 'error', 'error': err})}\n\n"
+                        return
+                    yield f"data: {json_module.dumps({'type': 'heartbeat'})}\n\n"
+                    continue
+
+                if msg_type == 'progress':
+                    yield f"data: {json_module.dumps({'type': 'progress', 'progress': val, 'message': text})}\n\n"
+                elif msg_type == 'done':
+                    result = result_holder[0]
+                    stems = result.get("stems", {})
+                    # Build URL paths for frontend playback
+                    stem_urls = {}
+                    stem_paths = {}
+                    for stem_name, abs_path in stems.items():
+                        rel = os.path.relpath(abs_path, str(TEMP_DIR)).replace("\\", "/")
+                        stem_urls[stem_name] = f"/api/media/temp/{rel}"
+                        stem_paths[stem_name] = abs_path
+
+                    yield f"data: {json_module.dumps({'type': 'result', 'success': True, 'stems': stem_urls, 'stems_paths': stem_paths, 'model_id': model_id, 'duration': result.get('duration', 0), 'cached': result.get('cached', False)})}\n\n"
+                    return
+                elif msg_type == 'error':
+                    yield f"data: {json_module.dumps({'type': 'error', 'error': text})}\n\n"
+                    return
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type',
+        }
+    )
 
 
 # =============================================================================
@@ -582,20 +870,24 @@ def upload_file():
 def transcribe():
     """Transcribe audio/video to text with timestamps - supports content types"""
     data = request.json
+    if not data:
+        print("[Transcribe] ERROR: request.json is None (bad Content-Type or empty body)")
+        return jsonify({"error": "Invalid request body"}), 400
+
     file_path = data.get("file_path")
     language = data.get("language")  # None for auto-detect
     model_settings = data.get("model_settings", {})  # Frontend'den gelen model ayarları
-    
-    # New content-aware parameters
-    content_type = data.get("content_type", "speech")  # 'speech', 'music', 'podcast'
-    content_genre = data.get("content_genre")  # Music genre (optional)
-    
+    output_formats = data.get("output_formats", [])  # e.g. ["json", "lrc", "enhanced_lrc", "id3"]
+
+    print(f"[Transcribe] file_path='{file_path}', exists={os.path.exists(file_path) if file_path else 'N/A'}")
+
     if not file_path:
         return jsonify({"error": "file_path required"}), 400
-    
+
     if not os.path.exists(file_path):
-        return jsonify({"error": "File not found"}), 404
-    
+        print(f"[Transcribe] File NOT found: '{file_path}'")
+        return jsonify({"error": f"File not found: {file_path}"}), 404
+
     try:
         service = get_transcription_service()
         
@@ -607,33 +899,59 @@ def transcribe():
             optimal_model = service.get_optimal_model_size(language)
             print(f"Using default optimal model '{optimal_model}' for language '{language}'")
         
-        print(f"Content type: {content_type}, Genre: {content_genre}")
+        # Standard transcription
+        result = service.transcribe_to_subtitles(
+            file_path,
+            language=language
+        )
         
-        # Use content-aware transcription if content type is specified
-        if content_type != "speech" or content_genre:
-            result = service.transcribe_with_content_type_to_subtitles(
-                file_path,
-                content_type=content_type,
-                content_genre=content_genre,
-                language=language
-            )
-        else:
-            # Use standard transcription for speech
-            result = service.transcribe_to_subtitles(
-                file_path,
-                language=language
-            )
-        
+        # Generate requested output formats
+        outputs = {}
+        if output_formats and result.get("subtitles"):
+            try:
+                from services.subtitle_engine import get_subtitle_engine
+                engine = get_subtitle_engine()
+                job_id = uuid.uuid4().hex[:8]
+
+                if "json" in output_formats or "word_json" in output_formats:
+                    json_path = str(OUTPUT_DIR / f"lyrics_{job_id}.json")
+                    engine.save_word_level_json(result["subtitles"], json_path)
+                    outputs["word_level_json_path"] = json_path
+
+                if "lrc" in output_formats:
+                    lrc_path = str(OUTPUT_DIR / f"lyrics_{job_id}.lrc")
+                    engine.save_lrc(result["subtitles"], lrc_path)
+                    outputs["lrc_path"] = lrc_path
+
+                if "enhanced_lrc" in output_formats:
+                    elrc_path = str(OUTPUT_DIR / f"lyrics_{job_id}_enhanced.lrc")
+                    engine.save_enhanced_lrc(result["subtitles"], elrc_path)
+                    outputs["enhanced_lrc_path"] = elrc_path
+
+                if "id3" in output_formats and file_path.lower().endswith(".mp3"):
+                    from services.lyrics_tagger import get_lyrics_tagger
+                    tagger = get_lyrics_tagger()
+                    if tagger.is_available():
+                        id3_result = tagger.write_synced_lyrics(
+                            file_path, result["subtitles"],
+                            language=result.get("language", "en")
+                        )
+                        outputs["id3_written"] = id3_result
+                    else:
+                        outputs["id3_error"] = "mutagen not installed"
+
+            except Exception as export_err:
+                print(f"Output format generation warning: {export_err}")
+                outputs["export_error"] = str(export_err)
+
         return jsonify({
             "success": True,
             "language": result["language"],
             "duration": result["duration"],
             "subtitles": result["subtitles"],
-            "content_type": content_type,
-            "content_genre": content_genre,
             "model_used": result.get("model_used", optimal_model),
-            "preprocessing_applied": result.get("preprocessing_applied", False),
-            "performance": result.get("performance", {})
+            "performance": result.get("performance", {}),
+            "outputs": outputs
         })
     except Exception as e:
         import traceback
@@ -641,112 +959,170 @@ def transcribe():
         return jsonify({"error": str(e)}), 500
 
 
-@api.route("/transcribe/stream", methods=["POST"])
+@api.route("/transcribe/stream", methods=["POST", "OPTIONS"])
 def transcribe_stream():
     """Transcribe with streaming progress updates using SSE - supports content types"""
     from flask import Response, stream_with_context
     import json as json_module
-    
+
+    # Handle CORS preflight
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp, 200
+
     data = request.json
+    if not data:
+        print("[Transcribe Stream] ERROR: request.json is None (bad Content-Type or empty body)")
+        return jsonify({"error": "Invalid request body"}), 400
+
     file_path = data.get("file_path")
     language = data.get("language")
     model_settings = data.get("model_settings", {})  # Frontend'den gelen model ayarları
-    
-    # New content-aware parameters
-    content_type = data.get("content_type", "speech")
-    content_genre = data.get("content_genre")
-    
+
+    whisper_params = data.get("whisper_params", {})  # User fine-tune overrides
+    enable_vocal_isolation = data.get("enable_vocal_isolation", False)
+    vocal_model_id = data.get("vocal_model_id")  # e.g. "mdx23c", "bs_roformer", or "demucs_ft"
+
     if not file_path:
         return jsonify({"error": "file_path required"}), 400
-    
+
+    print(f"[Transcribe Stream] file_path='{file_path}', exists={os.path.exists(file_path)}")
+
     if not os.path.exists(file_path):
-        return jsonify({"error": "File not found"}), 404
-    
+        return jsonify({"error": f"File not found: {file_path}"}), 404
+
     def generate():
+        import queue
+        import threading
+
         try:
+            print(f"[Transcribe Stream] SSE generator started for: {file_path}")
             service = get_transcription_service()
-            
-            # Content-specific loading messages
-            content_messages = {
-                'speech': 'Loading speech transcription model...',
-                'music': 'Loading large model for music lyrics...',
-                'podcast': 'Loading podcast transcription model...'
-            }
-            
-            # Load model first with optimal size
-            yield f"data: {json_module.dumps({'type': 'status', 'message': content_messages.get(content_type, content_messages['speech']), 'progress': 5})}\n\n"
-            
-            # Model ayarlarından optimal model boyutunu belirle
-            if model_settings and language:
-                optimal_model = model_settings.get(language, model_settings.get('auto', 'small'))
-                yield f"data: {json_module.dumps({'type': 'status', 'message': f'Loading {optimal_model} model for {language} ({content_type})...', 'progress': 8})}\n\n"
-            
-            service.load_model(language)
-            
-            # Content-specific processing messages
-            processing_messages = {
-                'speech': 'Processing speech...',
-                'music': 'Analyzing music and extracting lyrics...',
-                'podcast': 'Processing podcast audio...'
-            }
-            
-            yield f"data: {json_module.dumps({'type': 'status', 'message': processing_messages.get(content_type, 'Starting transcription...'), 'progress': 10})}\n\n"
-            
-            # Use content-aware transcription
-            if content_type != "speech" or content_genre:
-                result = service.transcribe_with_content_type(
-                    file_path,
-                    content_type=content_type,
-                    content_genre=content_genre,
-                    language=language,
-                    word_timestamps=True
-                )
-            else:
-                # Custom transcription with progress for speech
-                result = service.transcribe(
-                    file_path,
-                    language=language,
-                    word_timestamps=True
-                )
-            
-            # Process segments
+            print(f"[Transcribe Stream] Transcription service loaded")
+
+            # Initial status
+            print(f"[Transcribe Stream] Yielding initial status (5%)")
+            yield f"data: {json_module.dumps({'type': 'status', 'message': 'Starting transcription pipeline...', 'progress': 5})}\n\n"
+
+            # Thread+Queue pattern for real-time progress during blocking operations
+            progress_queue = queue.Queue()
+            result_holder = [None]
+            error_holder = [None]
+
+            def progress_callback(progress_pct, message=""):
+                """Called from transcription service during long operations.
+                progress_pct: 0-100 within the service's scope
+                Maps to 10-90% in the SSE stream."""
+                mapped = 10 + int(progress_pct * 0.80)
+                progress_queue.put(('progress', mapped, message))
+
+            def run_transcription():
+                try:
+                    # Vocal isolation if enabled
+                    audio_to_transcribe = file_path
+                    if enable_vocal_isolation:
+                        try:
+                            from services.vocal_isolator import get_vocal_isolator
+                            isolator = get_vocal_isolator()
+                            if isolator.is_available():
+                                progress_callback(5, "Vokal izolasyonu yapılıyor...")
+                                audio_to_transcribe = isolator.separate_vocals(
+                                    file_path,
+                                    progress_callback=lambda p, m: progress_callback(p * 0.3, m),
+                                    model_id=vocal_model_id,
+                                )
+                            else:
+                                progress_callback(5, "Demucs yüklü değil, orijinal ses kullanılıyor...")
+                        except Exception as vi_err:
+                            print(f"Vocal isolation failed, using original: {vi_err}")
+
+                    result = service.transcribe(
+                        audio_to_transcribe,
+                        language=language,
+                        word_timestamps=True,
+                        progress_callback=progress_callback,
+                        user_params=whisper_params
+                    )
+                    result_holder[0] = result
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    error_holder[0] = e
+                finally:
+                    progress_queue.put(('done', 0, ''))
+
+            print(f"[Transcribe Stream] Yielding pipeline started (10%)")
+            yield f"data: {json_module.dumps({'type': 'status', 'message': 'Transcription pipeline started...', 'progress': 10})}\n\n"
+
+            # Run transcription in background thread
+            print(f"[Transcribe Stream] Starting transcription thread...")
+            thread = threading.Thread(target=run_transcription, daemon=True)
+            thread.start()
+
+            # Yield progress events from the queue in real-time
+            while True:
+                try:
+                    event_type, pct, msg = progress_queue.get(timeout=3)
+                    if event_type == 'done':
+                        break
+                    yield f"data: {json_module.dumps({'type': 'progress', 'progress': pct, 'current_text': msg})}\n\n"
+                except queue.Empty:
+                    # Heartbeat to keep SSE connection alive
+                    yield f"data: {json_module.dumps({'type': 'heartbeat'})}\n\n"
+
+            thread.join(timeout=10)
+
+            if error_holder[0]:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': str(error_holder[0])})}\n\n"
+                return
+
+            result = result_holder[0]
+            if not result:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': 'Transcription returned no result'})}\n\n"
+                return
+
+            # Process segments into subtitles
             subtitles = []
             subtitle_id = 1
             total_segments = len(result['segments'])
-            
+
             for i, segment in enumerate(result['segments']):
-                progress = 10 + int((i / total_segments) * 80)
-                
-                # Format subtitle
+                progress = 90 + int((i / max(total_segments, 1)) * 8)
+
+                # Format subtitle — preserve full word objects with timestamps for karaoke
                 if 'words' in segment and segment['words']:
                     words = segment['words']
-                    current_words = []
+                    current_word_objs = []
                     current_start = None
-                    
+
                     for word in words:
                         if current_start is None:
                             current_start = word['start']
-                        current_words.append(word['word'])
-                        
-                        if len(current_words) >= 8 or len(' '.join(current_words)) >= 42:
+                        current_word_objs.append(word)
+                        current_text = ' '.join(w['word'] for w in current_word_objs).strip()
+
+                        if len(current_word_objs) >= 8 or len(current_text) >= 42:
                             subtitles.append({
                                 'id': subtitle_id,
                                 'start': current_start,
                                 'end': word['end'],
-                                'text': ' '.join(current_words).strip(),
-                                'words': current_words.copy()
+                                'text': current_text,
+                                'words': [w.copy() if isinstance(w, dict) else w for w in current_word_objs]
                             })
                             subtitle_id += 1
-                            current_words = []
+                            current_word_objs = []
                             current_start = None
-                    
-                    if current_words:
+
+                    if current_word_objs:
                         subtitles.append({
                             'id': subtitle_id,
                             'start': current_start,
                             'end': words[-1]['end'],
-                            'text': ' '.join(current_words).strip(),
-                            'words': current_words
+                            'text': ' '.join(w['word'] for w in current_word_objs).strip(),
+                            'words': [w.copy() if isinstance(w, dict) else w for w in current_word_objs]
                         })
                         subtitle_id += 1
                 else:
@@ -757,24 +1133,23 @@ def transcribe_stream():
                         'text': segment['text']
                     })
                     subtitle_id += 1
-                
-                # Send progress update with current subtitle
+
                 yield f"data: {json_module.dumps({'type': 'progress', 'progress': progress, 'current_text': segment['text'][:50]})}\n\n"
-            
+
             # Apply Arabic/RTL processing if detected language is RTL
             detected_lang = result.get('language', '')
             is_rtl = detected_lang in {'ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'}
-            
+
             if is_rtl:
                 try:
                     subtitles = ArabicTextProcessor.process_subtitles(subtitles, detected_lang)
-                    yield f"data: {json_module.dumps({'type': 'status', 'message': 'RTL text işleniyor...', 'progress': 95})}\n\n"
+                    yield f"data: {json_module.dumps({'type': 'status', 'message': 'RTL text işleniyor...', 'progress': 99})}\n\n"
                 except Exception as rtl_err:
                     print(f"RTL processing warning: {rtl_err}")
-            
+
             # Send final result
             yield f"data: {json_module.dumps({'type': 'complete', 'progress': 100, 'language': result['language'], 'duration': result['duration'], 'subtitles': subtitles, 'is_rtl': is_rtl})}\n\n"
-            
+
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -785,8 +1160,9 @@ def transcribe_stream():
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no'
+            'X-Accel-Buffering': 'no',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type',
         }
     )
 
@@ -919,52 +1295,89 @@ def generate_subtitles():
     style = data.get("style", {})
     animation = data.get("animation", {})
     video_format = data.get("video_format", "horizontal")
-    
+    secondary_subtitle = data.get("secondary_subtitle")
+
     if not subtitles:
-        return jsonify({"error": "subtitles required"}), 400
-    
+        return jsonify({"error": "subtitles data required"}), 400
+
     try:
         engine = get_subtitle_engine()
-        engine.set_resolution_from_format(video_format)
         
-        # Create style from dict
-        sub_style = SubtitleStyle(
-            font_name=style.get("font_name", "Arial"),
-            font_size=style.get("font_size", 48),
-            primary_color=style.get("color", "#FFFFFF"),
-            border_color=style.get("border_color", "#000000"),
-            border_width=style.get("border_width", 2),
-            shadow_depth=style.get("shadow_depth", 1),
+        # Create SubtitleStyle object
+        style_obj = SubtitleStyle(
+            font_name=style.get("fontName", "Arial"),
+            font_size=style.get("fontSize", 24),
+            primary_color=style.get("primaryColor", "&H00FFFFFF"),
+            secondary_color=style.get("secondaryColor", "&H000000FF"),
+            outline_color=style.get("outlineColor", "&H00000000"),
+            back_color=style.get("backColor", "&H80000000"),
             bold=style.get("bold", False),
             italic=style.get("italic", False),
+            underline=style.get("underline", False),
+            strikeout=style.get("strikeout", False),
+            spacing=style.get("spacing", 0),
+            angle=style.get("angle", 0),
+            border_style=style.get("borderStyle", 1),
+            outline=style.get("outline", 1),
+            shadow=style.get("shadow", 1),
             alignment=style.get("alignment", 2),
-            margin_vertical=style.get("margin_vertical", 30)
+            margin_l=style.get("marginL", 10),
+            margin_r=style.get("marginR", 10),
+            margin_v=style.get("marginV", 10),
+            encoding=style.get("encoding", 1),
+            karaoke_style=style.get("karaokeStyle", "fill"),
+            karaoke_color=style.get("karaokeColor", "&H0000FF00"),
+            blur=style.get("blur", 0),
+            text_opacity=style.get("textOpacity", 1.0),
+            border_opacity=style.get("borderOpacity", 1.0),
+            background_opacity=style.get("backgroundOpacity", 0.5),
+            shadow_opacity=style.get("shadowOpacity", 0.5),
+            shadow_x=style.get("shadowX", 1),
+            shadow_y=style.get("shadowY", 1),
+            font_family_override=style.get("fontFamilyOverride"),
         )
         
-        # Create animation config
+        # Create AnimationConfig object
         anim_config = AnimationConfig(
-            type=animation.get("type", "none"),
-            fade_in=animation.get("fade_in", 200),
-            fade_out=animation.get("fade_out", 200),
-            karaoke_type=animation.get("karaoke_type", "sweep"),
-            highlight_color=animation.get("highlight_color", "#FFFF00")
+            mode=animation.get("mode", "none"),
+            scope=animation.get("scope", "line"),
+            style=animation.get("style", "fade"),
+            speed=animation.get("speed", 200),
+            delay=animation.get("delay", 50),
+            color_mode=animation.get("colorMode", "custom"),
+            start_color=animation.get("startColor"),
+            end_color=animation.get("endColor"),
+            mid_color=animation.get("midColor"),
+            gradient_angle=animation.get("gradientAngle", 0),
+            use_sub_timing=animation.get("useSubTiming", True),
         )
-        
-        # Generate file
-        output_filename = f"subtitles_{uuid.uuid4().hex[:8]}.{format}"
-        output_path = str(TEMP_DIR / output_filename)
-        
-        if format == "ass":
-            engine.save_ass(subtitles, output_path, sub_style, anim_config)
+
+        if format.lower() == "ass":
+            content = engine.generate_ass(
+                subtitles,
+                style_obj,
+                video_format,
+                anim_config,
+                secondary_subtitle
+            )
+            mimetype = "text/plain"
+            filename = "subtitles.ass"
+        elif format.lower() == "srt":
+            content = engine.generate_srt(subtitles)
+            mimetype = "application/x-subrip"
+            filename = "subtitles.srt"
         else:
-            engine.save_srt(subtitles, output_path)
-        
-        return jsonify({
-            "success": True,
-            "subtitle_path": output_path,
-            "format": format
-        })
+            return jsonify({"error": "Unsupported format"}), 400
+
+        return Response(
+            content,
+            mimetype=mimetype,
+            headers={"Content-Disposition": f"attachment;filename={filename}"}
+        )
+
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -1033,15 +1446,19 @@ def detect_rtl_from_subtitles(subtitles):
             return True
     return False
 
-def run_render_job(job_id, audio_path, subtitles, background, video_format, 
-                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None):
+def run_render_job(job_id, audio_path, subtitles, background, video_format,
+                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None):
     """Background render job"""
     global _render_jobs
-    
+
     print(f"[Render Job {job_id}] Starting...")
     print(f"[Render Job {job_id}] Logos count: {len(logos) if logos else 0}")
     print(f"[Render Job {job_id}] Secondary subtitle enabled: {secondary_subtitle is not None}")
-    
+    print(f"[Render Job {job_id}] Audio mixer: {audio_mixer is not None}")
+
+    mixed_audio_path = None  # temp file for multi-track mix
+    original_audio_path = audio_path  # preserve original path before mixer may replace it
+
     try:
         _render_jobs[job_id] = {
             "status": "processing",
@@ -1134,9 +1551,57 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         else:
             engine.save_ass(subtitles, subtitle_path, sub_style, anim_config)
         
+        _render_jobs[job_id]["progress"] = 25
+        _render_jobs[job_id]["step"] = "Ses hazırlanıyor..."
+
+        # Step 1.5: Mix audio tracks if mixer config provided
+        if audio_mixer and audio_mixer.get("useMixer") and audio_mixer.get("tracks"):
+            tracks = audio_mixer["tracks"]
+            print(f"[Render Job {job_id}] Mixing {len(tracks)} audio tracks...")
+
+            # Validate all track files exist
+            for t in tracks:
+                if not os.path.exists(t["path"]):
+                    raise FileNotFoundError(f"Mixer track not found: {t['path']}")
+
+            mixed_audio_path = str(TEMP_DIR / f"mix_{job_id}.wav")
+
+            if len(tracks) == 1:
+                # Single track — just apply volume
+                t = tracks[0]
+                mix_cmd = [
+                    "ffmpeg", "-y", "-i", t["path"],
+                    "-af", f"volume={t['volume']}",
+                    "-ar", "44100", "-ac", "2",
+                    mixed_audio_path
+                ]
+            else:
+                # Multi-track amix
+                mix_cmd = ["ffmpeg", "-y"]
+                for t in tracks:
+                    mix_cmd.extend(["-i", t["path"]])
+
+                filters = []
+                for i, t in enumerate(tracks):
+                    filters.append(f"[{i}]volume={t['volume']}[a{i}]")
+                mix_inputs = "".join(f"[a{i}]" for i in range(len(tracks)))
+                filters.append(f"{mix_inputs}amix=inputs={len(tracks)}:duration=longest:normalize=0[out]")
+
+                mix_cmd.extend(["-filter_complex", ";".join(filters)])
+                mix_cmd.extend(["-map", "[out]", "-ar", "44100", "-ac", "2", mixed_audio_path])
+
+            print(f"[Render Job {job_id}] FFmpeg mix command: {' '.join(mix_cmd)}")
+            import subprocess as sp
+            mix_result = sp.run(mix_cmd, capture_output=True, text=True)
+            if mix_result.returncode != 0:
+                raise RuntimeError(f"Audio mix failed: {mix_result.stderr[-500:]}")
+
+            audio_path = mixed_audio_path
+            print(f"[Render Job {job_id}] Mixed audio saved to: {mixed_audio_path}")
+
         _render_jobs[job_id]["progress"] = 30
         _render_jobs[job_id]["step"] = "Video oluşturuluyor..."
-        
+
         # Step 2: Generate video with subtitles
         print(f"[Render Job {job_id}] Getting video generator...")
         generator = get_video_generator()
@@ -1151,9 +1616,27 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
                 print(f"[Render Job {job_id}] Progress: {scaled}% - {step}")
         
         print(f"[Render Job {job_id}] Generating video: audio={audio_path}, bg={background.get('type')}, logos={len(logos) if logos else 0}")
+        # Visualizer video path (pre-rendered by frontend)
+        visualizer_video_path = None
+        if visualizer and isinstance(visualizer, dict):
+            visualizer_video_path = visualizer.get("videoPath")
+
+        # Derive output path from original media location (not mixed temp path)
+        source_dir = os.path.dirname(original_audio_path)
+        source_stem = Path(original_audio_path).stem
+
+        # If source is in temp dir, redirect output to OUTPUT_DIR with original filename
+        if str(TEMP_DIR) in str(Path(original_audio_path).resolve()):
+            source_dir = str(OUTPUT_DIR)
+            if original_name:
+                source_stem = Path(original_name).stem
+
+        render_output_path = os.path.join(source_dir, f"{source_stem}_{video_format}.{output_format}")
+
         result = generator.generate_video_with_subtitles(
             audio_path=audio_path,
             subtitle_path=subtitle_path,
+            output_path=render_output_path,
             background_type=background.get("type", "color"),
             background_value=background.get("value", "#000000"),
             background_image=background.get("imagePath"),
@@ -1162,17 +1645,24 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             quality=quality,
             logo=logo,
             logos=logos,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            visualizer_video_path=visualizer_video_path,
+            visualizer_opacity=visualizer.get("opacity", 0.8) if visualizer else 0.8,
         )
         
         _render_jobs[job_id]["progress"] = 98
         _render_jobs[job_id]["step"] = "Temizlik yapılıyor..."
         
-        # Clean up temp subtitle file
+        # Clean up temp files
         try:
             os.remove(subtitle_path)
         except:
             pass
+        if mixed_audio_path:
+            try:
+                os.remove(mixed_audio_path)
+            except:
+                pass
         
         _render_jobs[job_id]["progress"] = 100
         _render_jobs[job_id]["status"] = "completed"
@@ -1240,14 +1730,23 @@ def render_video():
         
         # Secondary subtitle (dual language) settings
         secondary_subtitle = data.get("secondarySubtitle")
-        
-        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}")
-        
+
+        # Visualizer settings
+        visualizer = data.get("visualizer")
+
+        # Audio mixer settings (multi-track stem mixing)
+        audio_mixer = data.get("audio_mixer")
+
+        # Original filename for correct output naming when source is temp
+        original_name = data.get("original_name")
+
+        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}")
+
         # Start background thread
         thread = threading.Thread(
             target=run_render_job,
             args=(job_id, audio_path, subtitles, background, video_format,
-                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle)
+                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name)
         )
         thread.daemon = True
         thread.start()
@@ -1255,7 +1754,7 @@ def render_video():
         return jsonify({
             "success": True,
             "job_id": job_id,
-            "status": "started"
+            "message": "Video rendering job started"
         })
         
     except Exception as e:
@@ -1265,7 +1764,7 @@ def render_video():
 
 
 @api.route("/render/status/<job_id>", methods=["GET"])
-def render_status(job_id):
+def get_render_status(job_id):
     """Get render job status"""
     if job_id not in _render_jobs:
         return jsonify({"error": "Job not found"}), 404
@@ -1441,6 +1940,104 @@ def preview_lyrics():
             "preview": preview_info,
             "sample_subtitles": parsed_subtitles[:5]  # İlk 5 örnek
         })
-        
+
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# Lyrics Export
+# =============================================================================
+
+@api.route("/export/lyrics", methods=["POST"])
+def export_lyrics():
+    """Export subtitles to various formats (LRC, ID3, etc.)"""
+    data = request.json
+    subtitles = data.get("subtitles")
+    format_type = data.get("format")
+    source_file_path = data.get("source_path") # The original media file path
+    language = data.get("language", "en")
+    original_name = data.get("original_name")  # Original filename before temp upload
+
+    if not all([subtitles, format_type, source_file_path]):
+        return jsonify({"error": "subtitles, format, and source_path are required"}), 400
+
+    # Security check: ensure the source path is a real, absolute file
+    if not os.path.isabs(source_file_path) or not os.path.exists(source_file_path):
+        return jsonify({"error": f"Kaynak dosya bulunamadı: {source_file_path}"}), 404
+
+    try:
+        engine = get_subtitle_engine()
+        job_id = uuid.uuid4().hex[:8]
+        output_path = None
+
+        # Derive output directory from source file location
+        source_dir = os.path.dirname(source_file_path)
+        source_stem = Path(source_file_path).stem
+
+        # If source is in temp dir, redirect output to OUTPUT_DIR with original filename
+        if str(TEMP_DIR) in str(Path(source_file_path).resolve()):
+            source_dir = str(OUTPUT_DIR)
+            if original_name:
+                source_stem = Path(original_name).stem
+
+        if format_type == "lrc":
+            output_path = os.path.join(source_dir, f"{source_stem}.lrc")
+            engine.save_lrc(subtitles, output_path)
+        elif format_type == "enhanced_lrc":
+            output_path = os.path.join(source_dir, f"{source_stem}_enhanced.lrc")
+            engine.save_enhanced_lrc(subtitles, output_path)
+        elif format_type == "word_json":
+            output_path = os.path.join(source_dir, f"{source_stem}.json")
+            engine.save_word_level_json(subtitles, output_path)
+        elif format_type == "id3":
+            if not source_file_path.lower().endswith(".mp3"):
+                return jsonify({"error": "ID3 tags can only be written to MP3 files"}), 400
+
+            from services.lyrics_tagger import get_lyrics_tagger
+            tagger = get_lyrics_tagger()
+            if not tagger.is_available():
+                return jsonify({"error": "mutagen library not installed"}), 500
+
+            # Determine the target file for SYLT embed
+            is_temp = str(TEMP_DIR) in str(Path(source_file_path).resolve())
+
+            if is_temp:
+                # Source is a temp upload — copy to OUTPUT_DIR with original name, then embed
+                target_name = original_name if original_name else (source_stem + ".mp3")
+                target_name = target_name.replace('/', '_').replace('\\', '_').replace(':', '_')
+                target_file = os.path.join(str(OUTPUT_DIR), target_name)
+                import shutil
+                shutil.copy2(source_file_path, target_file)
+                print(f"[Export ID3] Temp source → copied to: {target_file}")
+            else:
+                # Source is the REAL original file — embed directly into it
+                target_file = source_file_path
+                print(f"[Export ID3] Writing SYLT directly to original: {target_file}")
+
+            result = tagger.write_synced_lyrics(target_file, subtitles, language=language)
+            return jsonify({
+                "success": True,
+                "sylt_written": result.get("sylt", False),
+                "uslt_written": result.get("uslt", False),
+                "source_file": target_file,
+                "source_location": os.path.dirname(target_file),
+                "is_original": not is_temp,
+                "verification": {
+                    "sylt_entries": len(subtitles),
+                },
+                "message": f"ID3v2.4 SYLT embedded into {'original file' if not is_temp else 'output copy'}"
+            })
+        else:
+            return jsonify({"error": f"Unsupported format: {format_type}"}), 400
+
+        return jsonify({
+            "success": True,
+            "format": format_type,
+            "output_path": output_path
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500

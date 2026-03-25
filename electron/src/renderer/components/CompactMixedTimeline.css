@@ -1,0 +1,133 @@
+/* CompactMixedTimeline.css */
+
+.compact-mixed-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: linear-gradient(135deg, rgba(20, 25, 35, 0.3) 0%, rgba(10, 15, 25, 0.3) 100%);
+  border-radius: 8px;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  overflow: hidden;
+}
+
+.compact-mixed-timeline-header {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.compact-mixed-timeline-tracks {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.compact-mixed-timeline-track {
+  display: flex;
+  align-items: center;
+  height: 60px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.compact-mixed-timeline-track.muted {
+  background: rgba(0, 0, 0, 0.2);
+  opacity: 0.6;
+}
+
+.compact-mixed-timeline-track-label {
+  flex: 0 0 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.compact-mixed-timeline-track-name {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-mixed-timeline-track-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+}
+
+.compact-mixed-timeline-track-mute-btn {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(100, 100, 100, 0.3);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.compact-mixed-timeline-track-mute-btn:hover {
+  background: rgba(100, 100, 100, 0.5);
+}
+
+.compact-mixed-timeline-track-mute-btn.muted {
+  background: rgba(239, 68, 68, 0.7);
+}
+
+.compact-mixed-timeline-track-volume {
+  height: 3px;
+  flex: 1;
+  cursor: pointer;
+}
+
+.compact-mixed-timeline-track-volume-label {
+  font-size: 9px;
+  width: 24px;
+  text-align: right;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.compact-mixed-timeline-track-canvas {
+  flex: 1;
+  height: 100%;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.compact-mixed-timeline-footer {
+  padding: 8px 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* Scrollbar styling */
+.compact-mixed-timeline-tracks::-webkit-scrollbar {
+  width: 6px;
+}
+
+.compact-mixed-timeline-tracks::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.compact-mixed-timeline-tracks::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.compact-mixed-timeline-tracks::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}

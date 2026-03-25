@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { 
-  FiEye, FiEyeOff, FiMinimize2, FiMaximize2, FiMove, 
-  FiExternalLink, FiSidebar, FiX, FiMoreVertical 
+import {
+  FiEye, FiEyeOff, FiMinimize2, FiMaximize2, FiMove,
+  FiExternalLink, FiSidebar, FiX, FiMoreVertical, FiMaximize
 } from 'react-icons/fi';
 import LogoOverlay from './LogoOverlay';
+import ButterchurnCanvas from './ButterchurnCanvas';
 
 // Utility function to convert backend file paths to HTTP URLs
 const getImageUrl = (imagePath) => {
@@ -52,12 +53,15 @@ function PreviewPanel() {
     logo,
     settings,
     secondarySubtitle,
+    visualizer,
+    globalAudioRef,
   } = useAppStore();
 
   const [isMinimized, setIsMinimized] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(300); // Docked panel genişliği
-  
+
   // Floating mode boyutları
   const [floatingSize, setFloatingSize] = useState({ width: 300, height: 400 });
   
@@ -253,6 +257,21 @@ function PreviewPanel() {
     };
   }, [previewMode]);
 
+  // Fullscreen toggle
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(prev => !prev);
+  }, []);
+
+  // Escape key to exit fullscreen
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
   // Format bilgileri
   const formatInfo = useMemo(() => ({
     width: videoFormat === 'vertical' ? 1080 : videoFormat === 'square' ? 1080 : 1920,
@@ -285,7 +304,25 @@ function PreviewPanel() {
     return { width: baseWidth, height, scaleFactor };
   }, [previewMode, panelWidth, floatingSize.width, videoFormat, formatInfo]);
 
+  // Fullscreen dimensions - fill entire screen maintaining aspect ratio
+  const fullscreenDimensions = useMemo(() => {
+    const screenW = window.innerWidth;
+    const screenH = window.innerHeight;
+    const videoAspect = formatInfo.width / formatInfo.height;
+    let w, h;
+    if (screenW / screenH > videoAspect) {
+      h = screenH;
+      w = h * videoAspect;
+    } else {
+      w = screenW;
+      h = w / videoAspect;
+    }
+    const sf = w / formatInfo.width;
+    return { width: w, height: h, scaleFactor: sf };
+  }, [formatInfo]);
+
   const { width: previewWidth, height: previewHeight, scaleFactor } = previewDimensions;
+  const { width: fsWidth, height: fsHeight, scaleFactor: fsScaleFactor } = fullscreenDimensions;
 
   // Ölçeklenmiş stil
   const getScaledStyle = useMemo(() => ({
@@ -426,6 +463,22 @@ function PreviewPanel() {
     return null; // Aktif altyazı yoksa null döndür
   }, [activeSubtitle]);
 
+  // Fullscreen scaled style (must be before any early returns to maintain hooks order)
+  const fsScaledStyle = useMemo(() => ({
+    fontFamily: style.fontName,
+    fontSize: Math.max(6, style.fontSize * fsScaleFactor),
+    color: style.color,
+    fontWeight: style.bold ? 'bold' : 'normal',
+    fontStyle: style.italic ? 'italic' : 'normal',
+    textShadow: `${Math.max(0.5, style.shadowDepth * fsScaleFactor)}px ${Math.max(0.5, style.shadowDepth * fsScaleFactor)}px ${Math.max(1, style.shadowDepth * 2 * fsScaleFactor)}px rgba(0,0,0,0.9)`,
+    WebkitTextStroke: `${Math.max(0.2, style.borderWidth * fsScaleFactor)}px ${style.borderColor}`,
+    paintOrder: 'stroke fill',
+    textAlign: style.alignment % 3 === 1 ? 'left' : style.alignment % 3 === 0 ? 'right' : 'center',
+    lineHeight: 1.2,
+    maxWidth: '90%',
+    wordWrap: 'break-word',
+  }), [style, fsScaleFactor]);
+
   // Don't show preview panel until media is loaded
   if (!mediaFile || currentStep === 'upload') {
     return null;
@@ -448,10 +501,12 @@ function PreviewPanel() {
   const previewContent = (
     <>
       {/* Video Frame */}
-      <div 
+      <div
         ref={previewFrameRef}
         className="preview-frame"
+        onDoubleClick={toggleFullscreen}
         style={{
+          cursor: isFullscreen ? 'zoom-out' : 'zoom-in',
           width: previewWidth,
           height: previewHeight,
           backgroundColor: background.type === 'color' ? background.value : 
@@ -467,9 +522,28 @@ function PreviewPanel() {
           position: 'relative',
         }}
       >
+        {/* Butterchurn Visualizer Overlay */}
+        {visualizer.enabled && (
+          <div style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            opacity: visualizer.opacity,
+            zIndex: 1,
+            pointerEvents: 'none',
+          }}>
+            <ButterchurnCanvas
+              width={previewWidth}
+              height={previewHeight}
+              audioElement={globalAudioRef?.current ?? null}
+              presetName={visualizer.presetName}
+              sensitivity={visualizer.sensitivity}
+            />
+          </div>
+        )}
+
         <div className="frame-format-badge">{formatInfo.aspectRatio}</div>
         <div className="frame-safe-area" />
-        
+
         {/* Logo Overlay */}
         <LogoOverlay containerRef={previewFrameRef} scaleFactor={scaleFactor} />
         
@@ -585,6 +659,128 @@ function PreviewPanel() {
     </>
   );
 
+  // FULLSCREEN OVERLAY - pure output, no UI chrome
+  if (isFullscreen) {
+    return (
+      <div
+        className="preview-fullscreen-overlay"
+        onDoubleClick={() => setIsFullscreen(false)}
+      >
+        {/* Close button - auto-hides */}
+        <button
+          className="preview-fullscreen-close"
+          onClick={() => setIsFullscreen(false)}
+          title="Kapat (ESC)"
+        >
+          <FiX size={18} />
+        </button>
+
+        {/* Pure video frame - fills screen */}
+        <div
+          className="preview-frame fullscreen-frame"
+          style={{
+            width: fsWidth,
+            height: fsHeight,
+            backgroundColor: background.type === 'color' ? background.value :
+                            background.type === 'transparent' ? '#000' : '#000',
+            backgroundImage: background.type === 'image' && background.imagePath
+              ? `url(${getImageUrl(background.imagePath)})`
+              : background.type === 'transparent'
+              ? 'repeating-conic-gradient(#808080 0% 25%, #404040 0% 50%)'
+              : 'none',
+            backgroundSize: background.type === 'image' || background.type === 'transparent' ? 'cover' : 'auto',
+            backgroundPosition: background.type === 'image' || background.type === 'transparent' ? 'center' : 'initial',
+            backgroundRepeat: background.type === 'transparent' ? 'repeat' : 'no-repeat',
+            position: 'relative',
+            cursor: 'default',
+          }}
+        >
+          {/* Visualizer — reuse singleton, CSS scaled */}
+          {visualizer.enabled && (
+            <div style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0, bottom: 0,
+              opacity: visualizer.opacity,
+              zIndex: 1,
+              pointerEvents: 'none',
+              background: `var(--visualizer-bg, transparent)`,
+            }}>
+              <ButterchurnCanvas
+                width={Math.round(fsWidth)}
+                height={Math.round(fsHeight)}
+                audioElement={globalAudioRef?.current ?? null}
+                presetName={visualizer.presetName}
+                sensitivity={visualizer.sensitivity}
+              />
+            </div>
+          )}
+
+          {/* Logo */}
+          <LogoOverlay containerRef={previewFrameRef} scaleFactor={fsScaleFactor} />
+
+          {/* Subtitle */}
+          {displayText && (
+            <div
+              className={`frame-subtitle ${animation.type}-mode`}
+              style={{
+                top: style.alignment >= 7 ? '8%' : style.alignment >= 4 ? '42%' : 'auto',
+                bottom: style.alignment <= 3 ? `${Math.max(4, style.marginVertical * fsScaleFactor)}px` : 'auto',
+                left: '5%',
+                right: '5%',
+                justifyContent: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '2px',
+                ...getSubtitleAnimationStyle(),
+              }}
+            >
+              <span style={fsScaledStyle}>
+                {renderAnimatedText(displayText)}
+              </span>
+            </div>
+          )}
+
+          {/* Secondary subtitle */}
+          {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (
+            <div
+              className="frame-subtitle secondary-subtitle"
+              style={{
+                top: (secondarySubtitle?.style?.alignment || 5) >= 7 ?
+                  `${8 + (secondarySubtitle?.style?.offsetY || 0) * 0.5}%` :
+                  (secondarySubtitle?.style?.alignment || 5) >= 4 ?
+                  `${42 + (secondarySubtitle?.style?.offsetY || 0) * 0.5}%` : 'auto',
+                bottom: (secondarySubtitle?.style?.alignment || 5) <= 3 ?
+                  `${Math.max(4, (secondarySubtitle?.style?.marginVertical || 120) * fsScaleFactor) - (secondarySubtitle?.style?.offsetY || 0) * 2}px` : 'auto',
+                left: `${5 + (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
+                right: `${5 - (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
+                justifyContent: ((secondarySubtitle?.style?.alignment || 5) % 3) === 1 ? 'flex-start' :
+                               ((secondarySubtitle?.style?.alignment || 5) % 3) === 0 ? 'flex-end' : 'center',
+                alignItems: 'center',
+                display: 'flex',
+              }}
+            >
+              <span style={{
+                fontFamily: secondarySubtitle?.style?.fontName || 'Arial',
+                fontSize: Math.max(5, (secondarySubtitle?.style?.fontSize || 36) * fsScaleFactor * 0.8),
+                color: secondarySubtitle?.style?.color || '#FFFF00',
+                fontWeight: secondarySubtitle?.style?.bold ? 'bold' : 'normal',
+                fontStyle: secondarySubtitle?.style?.italic ? 'italic' : 'normal',
+                textShadow: `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * fsScaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * fsScaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth || 1) * 2 * fsScaleFactor)}px rgba(0,0,0,0.9)`,
+                WebkitTextStroke: `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth || 2) * fsScaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`,
+                paintOrder: 'stroke fill',
+                textAlign: 'center',
+                lineHeight: 1.2,
+                maxWidth: '90%',
+              }}>
+                {activeSecondarySubtitle.translatedText}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // DOCKED MODE
   if (previewMode === 'docked') {
     return (
@@ -607,7 +803,13 @@ function PreviewPanel() {
             Canlı Önizleme
           </span>
           <div className="preview-actions">
-            <button 
+            <button
+              onClick={toggleFullscreen}
+              title="Tam ekran"
+            >
+              <FiMaximize size={12} />
+            </button>
+            <button
               onClick={() => setPreviewMode('floating')}
               title="Taşınabilir moda geç"
             >
@@ -654,13 +856,19 @@ function PreviewPanel() {
           >
             {isMinimized ? <FiMaximize2 size={10} /> : <FiMinimize2 size={10} />}
           </button>
-          <button 
+          <button
+            onClick={toggleFullscreen}
+            title="Tam ekran"
+          >
+            <FiMaximize size={10} />
+          </button>
+          <button
             onClick={() => setPreviewMode('docked')}
             title="Panele sabitle"
           >
             <FiSidebar size={12} />
           </button>
-          <button 
+          <button
             onClick={() => setIsVisible(false)}
             title="Gizle"
           >

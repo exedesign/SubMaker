@@ -2,34 +2,33 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useAppStore } from '../stores/appStore';
 import { FiPlay, FiPause, FiVolume2, FiVolumeX, FiMaximize, FiSkipBack, FiSkipForward } from 'react-icons/fi';
 import SubtitleTimeline from './SubtitleTimeline';
+import useAudioMixer from '../hooks/useAudioMixer';
 
 const API_URL = 'http://localhost:5000/api';
 
 function VideoPreview() {
-  const { 
-    mediaFile, 
+  const {
+    mediaFile,
     originalFileName,
     savedFileName,
     mediaType,
-    videoFormat, 
-    subtitles, 
-    style, 
+    videoFormat,
+    subtitles,
+    style,
     background,
     setPlaybackTime,
     setIsPlaying: setGlobalIsPlaying,
     setGlobalAudioRef,
     settings,
     secondarySubtitle,
+    audioMixer: audioMixerState,
   } = useAppStore();
+
+  const mixerEnabled = audioMixerState.enabled;
+  const mixer = useAudioMixer();
   
   // Convert local file path to API URL for browser access
-  const mediaUrl = useMemo(() => {
-    if (!mediaFile) return null;
-    // Use savedFileName (UUID) for API requests, fallback to extracting from path
-    const filename = savedFileName || mediaFile.split(/[\\/]/).pop();
-    const url = `${API_URL}/media/temp/${encodeURIComponent(filename)}`;
-    return url;
-  }, [mediaFile, savedFileName]);
+  const mediaUrl = useAppStore.getState().getMediaUrl();
   
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -39,13 +38,31 @@ function VideoPreview() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const audioRef = useRef(null);
+
+  // Keep local isPlaying in sync with global store when mixer is active
+  const globalIsPlaying = useAppStore(s => s.isPlaying);
+  useEffect(() => {
+    if (mixerEnabled) {
+      setIsPlaying(globalIsPlaying);
+    }
+  }, [mixerEnabled, globalIsPlaying]);
   
   // Register global audio ref in store for other components to use
+  // When mixer is active, use the mixer's proxy ref for cross-component compat
   useEffect(() => {
-    setGlobalAudioRef(audioRef);
-    return () => setGlobalAudioRef(null); // Cleanup
-  }, [setGlobalAudioRef]);
+    if (mixerEnabled) {
+      setGlobalAudioRef(mixer.audioRefProxy);
+    } else {
+      setGlobalAudioRef(audioRef);
+    }
+    return () => setGlobalAudioRef(null);
+  }, [setGlobalAudioRef, mixerEnabled]);
   
+  // Effective loaded/duration/time — mixer overrides when active
+  const effectiveIsLoaded = mixerEnabled ? mixer.isLoaded : isLoaded;
+  const effectiveDuration = mixerEnabled ? mixer.duration : duration;
+  const effectiveCurrentTime = mixerEnabled ? mixer.currentTime : currentTime;
+
   // Reset state when media changes
   useEffect(() => {
     setCurrentTime(0);
@@ -54,13 +71,13 @@ function VideoPreview() {
     setIsLoaded(false);
     setLoadError(null);
   }, [mediaUrl]);
-  
+
   // Find active subtitle - end dahil değil, çakışma önlenir
   const activeSubtitle = useMemo(() => {
     return subtitles.find(
-      sub => currentTime >= sub.start && currentTime < sub.end
+      sub => effectiveCurrentTime >= sub.start && effectiveCurrentTime < sub.end
     );
-  }, [subtitles, currentTime]);
+  }, [subtitles, effectiveCurrentTime]);
 
   // Aktif subtitle'ın index'i
   const activeSubtitleIndex = useMemo(() => {
@@ -74,20 +91,28 @@ function VideoPreview() {
     if (!secondarySubtitle?.subtitles?.length) return null;
     
     // Current time'a göre aktif ikincil altyazıyı bul
-    const translation = secondarySubtitle.subtitles.find(sub => 
-      currentTime >= sub.start && currentTime < sub.end
+    const translation = secondarySubtitle.subtitles.find(sub =>
+      effectiveCurrentTime >= sub.start && effectiveCurrentTime < sub.end
     );
     
     return translation?.translatedText || null;
-  }, [settings?.dualSubtitleEnabled, secondarySubtitle?.subtitles, currentTime]);
+  }, [settings?.dualSubtitleEnabled, secondarySubtitle?.subtitles, effectiveCurrentTime]);
   
   // Handle play/pause
   const togglePlay = useCallback(async () => {
+    if (mixerEnabled) {
+      if (!mixer.isLoaded) return;
+      if (isPlaying) {
+        mixer.pause();
+      } else {
+        await mixer.play();
+      }
+      return;
+    }
     if (!audioRef.current || !isLoaded) {
       console.log('Audio not ready yet');
       return;
     }
-    
     try {
       if (isPlaying) {
         audioRef.current.pause();
@@ -100,16 +125,21 @@ function VideoPreview() {
       console.log('Playback error:', error.message);
       setLoadError(error.message);
     }
-  }, [isPlaying, isLoaded]);
+  }, [isPlaying, isLoaded, mixerEnabled, mixer]);
   
   // Skip forward/backward
   const skip = useCallback((seconds) => {
+    if (mixerEnabled) {
+      const newTime = Math.max(0, Math.min(effectiveDuration, mixer.currentTime + seconds));
+      mixer.seek(newTime);
+      return;
+    }
     if (audioRef.current) {
       const newTime = Math.max(0, Math.min(duration, audioRef.current.currentTime + seconds));
       audioRef.current.currentTime = newTime;
       setCurrentTime(newTime);
     }
-  }, [duration]);
+  }, [duration, mixerEnabled, effectiveDuration, mixer]);
   
   // Toggle mute
   const toggleMute = useCallback(() => {
@@ -182,11 +212,12 @@ function VideoPreview() {
           margin: '0 auto',
         }}
       >
-        {/* Hidden audio element */}
-        {mediaUrl && (
+        {/* Hidden audio element — disabled when mixer is active */}
+        {mediaUrl && !mixerEnabled && (
           <audio
             ref={audioRef}
             src={mediaUrl}
+            crossOrigin="anonymous"
             preload="auto"
             onTimeUpdate={(e) => {
               const time = e.target.currentTime;
@@ -349,78 +380,88 @@ function VideoPreview() {
         borderRadius: 8,
       }}>
         {/* Skip back */}
-        <button 
-          className="btn btn-ghost btn-icon" 
+        <button
+          className="btn btn-ghost btn-icon"
           onClick={() => skip(-5)}
           title="5 saniye geri"
-          disabled={!isLoaded}
+          disabled={!effectiveIsLoaded}
         >
           <FiSkipBack size={16} />
         </button>
-        
+
         {/* Play/Pause */}
-        <button 
-          className="btn btn-ghost btn-icon" 
+        <button
+          className="btn btn-ghost btn-icon"
           onClick={togglePlay}
-          disabled={!isLoaded}
-          style={{ opacity: isLoaded ? 1 : 0.5 }}
+          disabled={!effectiveIsLoaded}
+          style={{ opacity: effectiveIsLoaded ? 1 : 0.5 }}
         >
           {isPlaying ? <FiPause size={18} /> : <FiPlay size={18} />}
         </button>
-        
+
         {/* Skip forward */}
-        <button 
-          className="btn btn-ghost btn-icon" 
+        <button
+          className="btn btn-ghost btn-icon"
           onClick={() => skip(5)}
           title="5 saniye ileri"
-          disabled={!isLoaded}
+          disabled={!effectiveIsLoaded}
         >
           <FiSkipForward size={16} />
         </button>
-        
+
         {/* Time display */}
         <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 75, fontFamily: 'monospace' }}>
-          {formatTime(currentTime)} / {formatTime(duration)}
+          {formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}
         </span>
-        
+
         {/* Progress slider */}
         <input
           type="range"
           className="slider"
           min={0}
-          max={duration || 100}
+          max={effectiveDuration || 100}
           step={0.1}
-          value={currentTime}
-          disabled={!isLoaded}
+          value={effectiveCurrentTime}
+          disabled={!effectiveIsLoaded}
           onChange={(e) => {
             const time = parseFloat(e.target.value);
-            setCurrentTime(time);
-            if (audioRef.current) {
-              audioRef.current.currentTime = time;
+            if (mixerEnabled) {
+              mixer.seek(time);
+            } else {
+              setCurrentTime(time);
+              if (audioRef.current) {
+                audioRef.current.currentTime = time;
+              }
             }
           }}
           style={{ flex: 1 }}
         />
-        
-        {/* Volume */}
-        <button 
-          className="btn btn-ghost btn-icon" 
-          onClick={toggleMute}
-          title={isMuted ? 'Sesi aç' : 'Sesi kapat'}
-        >
-          {isMuted ? <FiVolumeX size={16} /> : <FiVolume2 size={16} />}
-        </button>
+
+        {/* Volume — hide individual volume when mixer is active (use mixer panel instead) */}
+        {!mixerEnabled && (
+          <button
+            className="btn btn-ghost btn-icon"
+            onClick={toggleMute}
+            title={isMuted ? 'Sesi aç' : 'Sesi kapat'}
+          >
+            {isMuted ? <FiVolumeX size={16} /> : <FiVolume2 size={16} />}
+          </button>
+        )}
       </div>
       
       {/* Subtitle Timeline */}
       {subtitles.length > 0 && (
-        <SubtitleTimeline 
-          currentTime={currentTime}
-          duration={duration}
+        <SubtitleTimeline
+          currentTime={effectiveCurrentTime}
+          duration={effectiveDuration}
           onSeek={(time) => {
-            setCurrentTime(time);
-            if (audioRef.current) {
-              audioRef.current.currentTime = time;
+            if (mixerEnabled) {
+              mixer.seek(time);
+            } else {
+              setCurrentTime(time);
+              if (audioRef.current) {
+                audioRef.current.currentTime = time;
+              }
             }
           }}
         />
