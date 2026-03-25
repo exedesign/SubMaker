@@ -29,6 +29,80 @@ logger = logging.getLogger(__name__)
 _vocal_isolator_instance = None
 
 
+def _preload_torch_cudnn():
+    """Preload cuDNN DLLs from PyTorch's lib directory to prevent version conflicts.
+
+    Other pip packages (e.g. nvidia-cudnn-cu12) may ship incompatible cuDNN DLLs.
+    Loading PyTorch's bundled DLLs first ensures the correct version is used and
+    avoids 'Could not load symbol cudnnGetLibConfig' errors.
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return
+
+        # On Windows, ensure PyTorch's cuDNN DLLs are in the DLL search path
+        # before any other package can load conflicting versions
+        if os.name == "nt":
+            torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+            if os.path.isdir(torch_lib):
+                os.add_dll_directory(torch_lib)
+                logger.debug(f"Added PyTorch DLL directory: {torch_lib}")
+
+        # Check for conflicting nvidia-cudnn-cu12 package
+        nvidia_cudnn_dir = os.path.normpath(os.path.join(
+            os.path.dirname(torch.__file__), "..", "nvidia", "cudnn", "bin"
+        ))
+        if os.path.isdir(nvidia_cudnn_dir):
+            logger.warning(
+                f"Conflicting nvidia-cudnn-cu12 package detected at {nvidia_cudnn_dir}. "
+                f"This can cause 'cudnnGetLibConfig' errors. "
+                f"Run: pip uninstall nvidia-cudnn-cu12"
+            )
+    except Exception as e:
+        logger.debug(f"cuDNN preload skipped: {e}")
+
+
+def _verify_gpu_setup():
+    """Verify GPU/CUDA/cuDNN setup and log diagnostics. Called once at startup."""
+    info = {"gpu": False, "cudnn": False, "device": "cpu"}
+    try:
+        import torch
+        if torch.cuda.is_available():
+            info["gpu"] = True
+            info["device"] = "cuda"
+            info["gpu_name"] = torch.cuda.get_device_name(0)
+            info["cuda_version"] = torch.version.cuda
+            info["cudnn_version"] = torch.backends.cudnn.version()
+            info["cudnn"] = torch.backends.cudnn.enabled
+            logger.info(
+                f"GPU OK: {info['gpu_name']}, CUDA {info['cuda_version']}, "
+                f"cuDNN {info['cudnn_version']} (enabled={info['cudnn']})"
+            )
+        else:
+            logger.warning("CUDA not available — vocal separation will use CPU (slower)")
+    except Exception as e:
+        logger.warning(f"GPU check failed: {e}")
+    try:
+        import onnxruntime
+        providers = onnxruntime.get_available_providers()
+        info["onnx_providers"] = providers
+        has_cuda = "CUDAExecutionProvider" in providers
+        logger.info(f"ONNX Runtime {onnxruntime.__version__}: providers={providers}")
+        if not has_cuda and info["gpu"]:
+            logger.warning(
+                "ONNX Runtime has no CUDAExecutionProvider. "
+                "Install onnxruntime-gpu: pip install onnxruntime-gpu"
+            )
+    except ImportError:
+        pass
+    return info
+
+
+_preload_torch_cudnn()
+_gpu_info = _verify_gpu_setup()
+
+
 def get_vocal_isolator():
     """Get or create singleton VocalIsolator instance"""
     global _vocal_isolator_instance
@@ -140,8 +214,18 @@ class VocalIsolator:
             status["cuda_available"] = torch.cuda.is_available()
             if torch.cuda.is_available():
                 status["gpu_name"] = torch.cuda.get_device_name(0)
+                status["cuda_version"] = torch.version.cuda
+                status["cudnn_version"] = torch.backends.cudnn.version()
+                status["cudnn_enabled"] = torch.backends.cudnn.enabled
+                mem = torch.cuda.get_device_properties(0).total_memory
+                status["gpu_memory_gb"] = round(mem / 1024**3, 1)
         except ImportError:
             status["cuda_available"] = False
+        try:
+            import onnxruntime
+            status["onnx_providers"] = onnxruntime.get_available_providers()
+        except ImportError:
+            pass
         return status
 
     def _get_available_models_info(self) -> list:
@@ -316,6 +400,30 @@ class VocalIsolator:
             self._separator = None
             self._separator_model = None
             raise RuntimeError(f"Ayrıştırma başarısız (sys.exit): {e}")
+        except RuntimeError as e:
+            err_msg = str(e).lower()
+            if "cudnn" in err_msg or "cudnngetlibconfig" in err_msg:
+                logger.warning(
+                    f"cuDNN error detected, retrying with cuDNN disabled: {e}"
+                )
+                import torch
+                torch.backends.cudnn.enabled = False
+                try:
+                    # Force reload model without cuDNN
+                    self._separator = None
+                    self._separator_model = None
+                    sep = self._get_separator(model_name)
+                    output_files = sep.separate(audio_path)
+                    logger.info("Separation succeeded with cuDNN disabled")
+                except Exception as retry_err:
+                    torch.backends.cudnn.enabled = True
+                    raise RuntimeError(
+                        f"Ayrıştırma cuDNN devre dışıyken de başarısız: {retry_err}"
+                    )
+                finally:
+                    torch.backends.cudnn.enabled = True
+            else:
+                raise
         except Exception as e:
             # Invalidate cached separator on any failure to allow clean retry
             self._separator = None
