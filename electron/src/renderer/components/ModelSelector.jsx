@@ -543,7 +543,7 @@ function ModelSelector() {
                         {Object.keys(vocalSeparation.stems).length} stem ayrıştırıldı
                       </span>
                       <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '2px 0 0' }}>
-                        Audio Mixer panelinden kontrol edin
+                        Ses katmanları zaman çizelgesinde görüntüleniyor
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../stores/appStore'
 import SmartAudioAnalyzer from './SmartAudioAnalyzer'
-import InteractiveTimeline from './InteractiveTimeline'
+
 
 const AdvancedLyricsImporter = () => {
   const { importLyrics, subtitles } = useAppStore()
@@ -474,10 +474,7 @@ The main hook of the song...`}
         </div>
       )}
 
-      {/* Timeline Tab */}
-      {activeTab === 'timeline' && (
-        <InteractiveTimeline />
-      )}
+
 
       {/* Action Buttons */}
       <div style={{ 

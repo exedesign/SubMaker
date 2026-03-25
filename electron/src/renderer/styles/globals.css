@@ -1617,31 +1617,14 @@ body.dragging-preview * {
   bottom: 0;
   width: 6px;
   cursor: ew-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: transparent;
   z-index: 10;
-  transition: background 0.2s ease;
+  transition: background 150ms ease;
 }
 
-.preview-resize-handle:hover {
-  background: var(--primary-color);
-}
-
+.preview-resize-handle:hover,
 .preview-resize-handle:active {
-  background: var(--primary-color);
-}
-
-.preview-resize-handle svg {
-  opacity: 0;
-  color: var(--text-muted);
-  transition: opacity 0.2s ease;
-}
-
-.preview-resize-handle:hover svg {
-  opacity: 1;
-  color: white;
+  background: var(--accent-primary);
 }
 
 .preview-panel.docked.empty {

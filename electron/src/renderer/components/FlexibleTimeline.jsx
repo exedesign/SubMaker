@@ -527,7 +527,6 @@ const FlexibleTimeline = () => {
     
     const seekTime = Math.max(0, Math.min(duration, time))
     const audioElement = globalAudioRef.current
-    console.log('FlexibleTimeline seek - using global audio ref:', seekTime)
     
     audioElement.currentTime = seekTime
     setCurrentTime(seekTime)
@@ -550,13 +549,10 @@ const FlexibleTimeline = () => {
     const clickX = e.clientX - rect.left + scrollLeft
     const clickTime = pixelToTime(clickX)
     
-    console.log('Timeline clicked:', { clickX, clickTime, duration, scrollLeft, zoom })
-    
     // Seek to clicked position using global state
     if (duration > 0) {
       const seekTime = Math.max(0, Math.min(duration, clickTime))
       seek(seekTime)
-      console.log('Seeking to:', seekTime)
     }
   }, [isDragging, pixelToTime, duration, seek, zoom])
 
@@ -594,8 +590,6 @@ const FlexibleTimeline = () => {
     e.preventDefault()
     e.stopPropagation()
     
-    console.log('📱 Subtitle mouse down:', { subtitleId: subtitle.id, text: subtitle.text?.substring(0, 20) + '...' })
-    
     if (splitMode) {
       // In split mode, instantly split the subtitle at click position
       const rect = timelineRef.current?.getBoundingClientRect()
@@ -604,8 +598,6 @@ const FlexibleTimeline = () => {
       const scrollLeft = timelineRef.current?.scrollLeft || 0
       const clickX = e.clientX - rect.left + scrollLeft
       const clickTime = pixelToTime(clickX)
-      
-      console.log('✂️ Split mode click:', { clickX, clickTime, scrollLeft })
       
       if (subtitle.text.trim().split(/\s+/).length > 1) {
         const wordSplit = findWordSplitPosition(subtitle, clickTime)
@@ -722,8 +714,6 @@ const FlexibleTimeline = () => {
   const handleSubtitleDoubleClick = useCallback((e, subtitle) => {
     e.preventDefault()
     e.stopPropagation()
-    
-    console.log('✏️ Double click edit:', { subtitleId: subtitle.id, text: subtitle.text?.substring(0, 30) + '...' })
     
     setEditingSubtitle(subtitle.id)
     setEditText(subtitle.text)
@@ -1096,11 +1086,8 @@ const FlexibleTimeline = () => {
 
   // Simplified media file handling - only for waveform data and duration
   useEffect(() => {
-    console.log('FlexibleTimeline - Media file changed:', { mediaFile, mediaType })
-    
     if (mediaFile) {
       const fileName = originalFileName || mediaFile.split(/[\\/]/).pop()
-      console.log('Setting audioFile for waveform:', { name: fileName, path: mediaFile })
       setAudioFile({ name: fileName, path: mediaFile })
       
       // Use global audio element for duration if available
@@ -1109,7 +1096,6 @@ const FlexibleTimeline = () => {
         
         const handleLoadedMetadata = () => {
           const audioDuration = audioElement.duration
-          console.log('Duration from global audio element:', audioDuration)
           if (audioDuration && audioDuration > 0) {
             setDuration(audioDuration)
             generateSimpleWaveform(audioDuration)
@@ -1142,7 +1128,6 @@ const FlexibleTimeline = () => {
         generateSimpleWaveform(180)
       }
     } else {
-      console.log('No mediaFile - resetting audio state')
       setAudioFile(null)
       setDuration(0)
       setWaveformData([])
@@ -1159,7 +1144,6 @@ const FlexibleTimeline = () => {
       return Math.abs(base + noise) * envelope + 0.1
     })
     setWaveformData(simpleWaveform)
-    console.log('Generated waveform:', simpleWaveform.length, 'samples for', duration.toFixed(1), 'seconds')
   }, [])
 
   useEffect(() => {
@@ -1197,14 +1181,9 @@ const FlexibleTimeline = () => {
   }, [])
 
   // Initial store check - component mount olduğunda store'u kontrol et
-  useEffect(() => {
-    console.log('FlexibleTimeline mounted - Initial store check:', { mediaFile, mediaType, audioFile })
-  }, [])
-
   // Sync with global playbackTime from main media player
   useEffect(() => {
     if (playbackTime !== currentTime) {
-      console.log('Syncing FlexibleTimeline currentTime with global playbackTime:', { playbackTime, currentTime })
       setCurrentTime(playbackTime)
     }
   }, [playbackTime, currentTime])
@@ -1274,7 +1253,7 @@ const FlexibleTimeline = () => {
   const CONTAINER_MARGIN = 20
   const availableWidth = timelineWidth - (CONTAINER_MARGIN * 2)
   
-  // Define totalAudioDuration outside if block for console.log access
+  // Define totalAudioDuration outside if block
   const totalAudioDuration = Math.max(duration, maxDuration, 300) // Use real audio duration
   
   if (sortedSubtitles.length === 0) {
@@ -1351,20 +1330,6 @@ const FlexibleTimeline = () => {
   // Timeline height: base waveform (or multi-track) + subtitle row
   const waveformAreaHeight = mixerActive ? multiTrackHeight : TIMELINE_BASE_HEIGHT
   const timelineHeight = waveformAreaHeight + SUBTITLE_HEIGHT + 40
-  
-  console.log('🎵 Audio-Timeline Mapped Subtitles:', {
-    totalSubtitles: validSubtitles.length,
-    positionedSubtitles: subtitlesWithPositions.length,
-    audioSpan: `0s to ${(totalAudioDuration || 0).toFixed(1)}s`,
-    subtitleSpan: subtitlesWithPositions.length > 0 
-      ? `${subtitlesWithPositions[0].start?.toFixed(1)}s to ${subtitlesWithPositions[subtitlesWithPositions.length-1]?.end?.toFixed(1)}s`
-      : 'No subtitles',
-    coverageRatio: subtitlesWithPositions.length > 0 && totalAudioDuration > 0
-      ? `${((subtitlesWithPositions[subtitlesWithPositions.length-1]?.end || 0) / totalAudioDuration * 100).toFixed(1)}%`
-      : '0%',
-    timelineAccurate: 'Using full audio duration for positioning',
-    zoom: `${(zoom * 100).toFixed(0)}%`
-  })
   
   // Show timeline even without subtitles
   const showEmptyTimeline = validSubtitles.length === 0
