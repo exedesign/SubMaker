@@ -335,8 +335,7 @@ class VocalIsolator:
             mdxc_params={
                 "segment_size": self.mdx_segment_size,
                 "batch_size": self.mdx_batch_size,
-                "overlap": 0.25,
-                "enable_denoise": False,
+                "overlap": 8,
                 "pitch_shift": 0,
             },
             mdx_params={
@@ -345,11 +344,6 @@ class VocalIsolator:
                 "overlap": 0.25,
                 "batch_size": self.mdx_batch_size,
                 "enable_denoise": False,
-            },
-            roformer_params={
-                "segment_size": self.mdx_segment_size,
-                "batch_size": self.mdx_batch_size,
-                "overlap": 1,
             },
         )
 
