@@ -50,6 +50,14 @@ export default function useAudioMixer() {
   const tracks = audioMixer.tracks;
   const { masterVolume, masterMuted } = audioMixer;
 
+  // Stable key that changes when track URLs change (detects model switches)
+  const trackUrlsKey = JSON.stringify(
+    Object.entries(tracks)
+      .filter(([_, t]) => t.url)
+      .map(([k, t]) => [k, t.url])
+      .sort(([a], [b]) => a.localeCompare(b))
+  );
+
   // ── Create / destroy audio nodes when tracks change ────────────────
   useEffect(() => {
     if (!audioMixer.enabled) return;
@@ -61,9 +69,9 @@ export default function useAudioMixer() {
     ctxRef.current = ctx;
     const existingNodes = nodesRef.current;
 
-    // Remove nodes for tracks that no longer exist
+    // Remove nodes for tracks that no longer exist OR whose URL changed
     for (const id of Object.keys(existingNodes)) {
-      if (!tracks[id]) {
+      if (!tracks[id] || existingNodes[id].audio.src !== tracks[id]?.url) {
         try {
           existingNodes[id].gain.disconnect();
           existingNodes[id].source.disconnect();
@@ -82,13 +90,21 @@ export default function useAudioMixer() {
 
     if (totalTracks === 0) return;
 
+    // Reset loaded state when rebuilding nodes
+    setIsLoaded(false);
+
     for (const id of playableIds) {
       if (existingNodes[id]) {
-        // Track already exists — just update src if changed
-        if (existingNodes[id].audio.src !== tracks[id].url) {
-          existingNodes[id].audio.src = tracks[id].url;
-        }
+        // Node exists with same URL — already loaded
         loadCount++;
+        if (loadCount >= totalTracks) {
+          setIsLoaded(true);
+          const primary = existingNodes.vocals?.audio || existingNodes[playableIds[0]]?.audio;
+          if (primary) {
+            setDuration(primary.duration || 0);
+            primaryRef.current = primary;
+          }
+        }
         continue;
       }
 
@@ -110,7 +126,7 @@ export default function useAudioMixer() {
         if (loadCount >= totalTracks) {
           setIsLoaded(true);
           // Use the first track (vocals preferred) as primary for duration
-          const primary = existingNodes.vocals?.audio || existingNodes[trackIds[0]]?.audio;
+          const primary = existingNodes.vocals?.audio || existingNodes[playableIds[0]]?.audio;
           if (primary) {
             setDuration(primary.duration || 0);
             primaryRef.current = primary;
@@ -132,7 +148,7 @@ export default function useAudioMixer() {
       // Don't destroy on re-render — only on full unmount
       // The cleanup will be handled by the separate unmount effect
     };
-  }, [audioMixer.enabled, JSON.stringify(Object.keys(tracks))]);
+  }, [audioMixer.enabled, trackUrlsKey]);
 
   // ── Cleanup on full unmount ────────────────────────────────────────
   useEffect(() => {
@@ -207,7 +223,7 @@ export default function useAudioMixer() {
       primary.removeEventListener('play', onPlay);
       primary.removeEventListener('pause', onPause);
     };
-  }, [primaryRef.current, setPlaybackTime, setIsPlaying]);
+  }, [primaryRef.current, trackUrlsKey, setPlaybackTime, setIsPlaying]);
 
   // ── Drift correction: resync elements that drift >50ms ─────────────
   useEffect(() => {
@@ -227,7 +243,7 @@ export default function useAudioMixer() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [audioMixer.enabled, primaryRef.current]);
+  }, [audioMixer.enabled, primaryRef.current, trackUrlsKey]);
 
   // ── Playback controls ──────────────────────────────────────────────
   const play = useCallback(async () => {

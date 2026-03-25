@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useAppStore } from '../stores/appStore'
 
 // ── Sony ACID-style DAW Track Constants ──────────────────────────────────────
-const STEM_ORDER = ['vocals', 'instrumental', 'drums', 'bass', 'other']
+const STEM_ORDER = ['original', 'vocals', 'instrumental', 'drums', 'bass', 'other']
 const TRACK_LANE_HEIGHT = 80   // Taller lanes like professional DAWs
 const TRACK_HEADER_WIDTH = 150 // Wider header for controls
 

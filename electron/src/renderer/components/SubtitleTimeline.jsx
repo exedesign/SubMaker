@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
 
 // Stem track constants
-const STEM_ORDER = ['vocals', 'instrumental', 'drums', 'bass', 'other'];
+const STEM_ORDER = ['original', 'vocals', 'instrumental', 'drums', 'bass', 'other'];
 const STEM_TRACK_HEIGHT = 48;
 const STEM_HEADER_WIDTH = 110;
 
@@ -158,7 +158,6 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
   const sortedTracks = mixerEnabled
     ? Object.entries(audioMixer.tracks)
         .map(([id, track]) => ({ id, ...track }))
-        .filter(t => !t.isOriginal) // Exclude 'original' track, show only stems
         .sort((a, b) => {
           const ia = STEM_ORDER.indexOf(a.id);
           const ib = STEM_ORDER.indexOf(b.id);

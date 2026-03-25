@@ -1338,7 +1338,7 @@ export const useAppStore = create((set, get) => ({
       };
     }
 
-    set({ audioMixer: { enabled: true, tracks, masterVolume: 1.0, masterMuted: false, showTimelineTracks: true } });
+    set({ audioMixer: { enabled: true, tracks, masterVolume: 1.0, masterMuted: false, showTimelineTracks: true }, isPlaying: false });
     
     // Load waveforms for all tracks asynchronously
     get().loadTrackWaveforms(tracks);
