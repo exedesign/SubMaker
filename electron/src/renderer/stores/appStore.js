@@ -1278,11 +1278,12 @@ export const useAppStore = create((set, get) => ({
   },
 
   // ── Audio Mixer Actions ──────────────────────────────────────────────
-  initAudioMixer: (stems, stemUrls) => {
+  initAudioMixer: (stems, stemUrls, backendOriginalPath) => {
     // stems: { vocals: '/abs/path', instrumental: '/abs/path', ... }
     // stemUrls: { vocals: 'http://...', instrumental: 'http://...', ... }
+    // backendOriginalPath: original file path from backend response (guaranteed)
     const { mediaFile, originalMediaPath, originalMediaFile } = get();
-    const originalFilePath = originalMediaPath || originalMediaFile || mediaFile;
+    const originalFilePath = originalMediaPath || originalMediaFile || backendOriginalPath || mediaFile;
 
     const STEM_META = {
       vocals: { label: 'Vokal', icon: '🎤', color: 'rgba(168, 85, 247, 0.8)' },
@@ -1492,8 +1493,8 @@ export const useAppStore = create((set, get) => ({
                 vocalSeparationProgress: 100,
                 vocalSeparationMessage: event.cached ? 'Önbellekten yüklendi' : `Tamamlandı (${event.duration?.toFixed(1)}s)`,
               });
-              // Initialize multi-track audio mixer
-              get().initAudioMixer(stemPaths, stemUrls);
+              // Initialize multi-track audio mixer (pass original path from backend as fallback)
+              get().initAudioMixer(stemPaths, stemUrls, event.original_path);
               return;
             } else if (event.type === 'error') {
               console.error('Vocal separation error:', event.error);

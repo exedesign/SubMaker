@@ -839,7 +839,7 @@ def vocal_isolation_separate():
                         stem_urls[stem_name] = f"/api/media/temp/{rel}"
                         stem_paths[stem_name] = abs_path
 
-                    yield f"data: {json_module.dumps({'type': 'result', 'success': True, 'stems': stem_urls, 'stems_paths': stem_paths, 'model_id': model_id, 'duration': result.get('duration', 0), 'cached': result.get('cached', False)})}\n\n"
+                    yield f"data: {json_module.dumps({'type': 'result', 'success': True, 'stems': stem_urls, 'stems_paths': stem_paths, 'original_path': file_path, 'model_id': model_id, 'duration': result.get('duration', 0), 'cached': result.get('cached', False)})}\n\n"
                     return
                 elif msg_type == 'error':
                     yield f"data: {json_module.dumps({'type': 'error', 'error': text})}\n\n"

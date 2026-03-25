@@ -491,7 +491,7 @@ function ModelSelector() {
                       }}
                     >
                       <FiMusic size={12} />
-                      {vocalSeparating ? 'Ayrıştırılıyor...' : 'Ayrıştır ve Dinle'}
+                      {vocalSeparating ? 'Ayrıştırılıyor...' : 'Ayrıştır'}
                     </button>
 
                     {/* Progress bar */}
