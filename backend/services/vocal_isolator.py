@@ -222,12 +222,18 @@ class VocalIsolator:
             logger.info(f"Reusing cached model: {model_name}")
             return self._separator
 
-        # Log GPU status for debugging
+        # Check CUDA availability and configure environment for GPU compatibility
+        use_cuda = False
         gpu_info = "CPU"
         try:
             import torch
             if torch.cuda.is_available():
+                use_cuda = True
                 gpu_info = f"CUDA ({torch.cuda.get_device_name(0)})"
+                # LAZY loading avoids 'Could not load symbol cudnnGetLibConfig' errors
+                # caused by cuDNN version mismatches with ONNX Runtime
+                if "CUDA_MODULE_LOADING" not in os.environ:
+                    os.environ["CUDA_MODULE_LOADING"] = "LAZY"
         except ImportError:
             pass
 
@@ -241,7 +247,26 @@ class VocalIsolator:
             output_dir=str(self.cache_dir),
             output_format="wav",
             model_file_dir=model_cache_dir,
-            use_autocast=True,  # Mixed-precision for faster GPU inference
+            use_autocast=use_cuda,  # Mixed-precision only when CUDA is available
+            mdxc_params={
+                "segment_size": self.mdx_segment_size,
+                "batch_size": self.mdx_batch_size,
+                "overlap": 0.25,
+                "enable_denoise": False,
+                "pitch_shift": 0,
+            },
+            mdx_params={
+                "hop_length": 1024,
+                "segment_size": self.mdx_segment_size,
+                "overlap": 0.25,
+                "batch_size": self.mdx_batch_size,
+                "enable_denoise": False,
+            },
+            roformer_params={
+                "segment_size": self.mdx_segment_size,
+                "batch_size": self.mdx_batch_size,
+                "overlap": 1,
+            },
         )
 
         logger.info(f"Downloading/loading model: {model_name} (model_dir={model_cache_dir})")
@@ -287,7 +312,20 @@ class VocalIsolator:
         try:
             output_files = sep.separate(audio_path)
         except SystemExit as e:
+            # Invalidate cached separator so next call gets a fresh instance
+            self._separator = None
+            self._separator_model = None
             raise RuntimeError(f"Ayrıştırma başarısız (sys.exit): {e}")
+        except Exception as e:
+            # Invalidate cached separator on any failure to allow clean retry
+            self._separator = None
+            self._separator_model = None
+            error_str = str(e).lower()
+            if any(kw in error_str for kw in ("cuda", "cudnn", "gpu", "onnxruntime", "provider")):
+                raise RuntimeError(
+                    f"GPU ayrıştırma başarısız (CUDA/cuDNN uyumsuzluğu olabilir): {e}"
+                ) from e
+            raise RuntimeError(f"Ayrıştırma başarısız: {e}") from e
         logger.info(f"Separation complete, output files: {output_files}")
 
         if progress_callback:
