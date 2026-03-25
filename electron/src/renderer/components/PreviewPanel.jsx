@@ -656,6 +656,30 @@ function PreviewPanel() {
           </div>
         )}
       </div>
+
+      {/* Video Oluşturmaya Geç — edit adımında altyazılar varken */}
+      {currentStep === 'edit' && subtitles.length > 0 && (
+        <div style={{
+          padding: '8px 10px',
+          background: 'var(--bg-tertiary)',
+          borderRadius: 6,
+          border: '1px solid var(--border-color)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+        }}>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+            {subtitles.length} altyazı hazır
+          </p>
+          <button
+            className="btn btn-primary"
+            onClick={() => useAppStore.getState().setCurrentStep('style')}
+            style={{ width: '100%', padding: '8px 12px', fontSize: 13 }}
+          >
+            Video Oluşturmaya Geç →
+          </button>
+        </div>
+      )}
     </>
   );
 

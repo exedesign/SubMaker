@@ -83,35 +83,6 @@ function MainContent() {
             <SubtitleEditor />
           </div>
 
-          {/* Edit step: show "proceed to render" button */}
-          {currentStep === 'edit' && subtitles.length > 0 && (
-            <div style={{
-              padding: 16,
-              background: 'var(--bg-secondary)',
-              borderTop: '1px solid var(--border-color)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}>
-              <div>
-                <p style={{ fontWeight: 500, marginBottom: 4 }}>
-                  {subtitles.length} altyazı düzenlemeye hazır
-                </p>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  Altyazıları düzenleyin, ardından video oluşturmaya geçin
-                </p>
-              </div>
-              <button
-                className="btn btn-primary"
-                onClick={() => useAppStore.getState().setCurrentStep('style')}
-                style={{ minWidth: 180, padding: '12px 24px', fontSize: '14px' }}
-              >
-                Video Oluşturmaya Geç →
-              </button>
-            </div>
-          )}
-
           {/* Render Panel - only in style/render steps */}
           {(currentStep === 'style' || currentStep === 'render') && <RenderPanel />}
         </div>

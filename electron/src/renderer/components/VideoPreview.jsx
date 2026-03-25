@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiPlay, FiPause, FiVolume2, FiVolumeX, FiMaximize, FiSkipBack, FiSkipForward } from 'react-icons/fi';
+import { FiPlay, FiPause, FiVolume2, FiVolumeX, FiMaximize, FiSkipBack, FiSkipForward, FiChevronDown, FiChevronUp } from 'react-icons/fi';
 import SubtitleTimeline from './SubtitleTimeline';
 import useAudioMixer from '../hooks/useAudioMixer';
 
@@ -37,6 +37,7 @@ function VideoPreview() {
   const [isMuted, setIsMuted] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
   const audioRef = useRef(null);
 
   // Keep local isPlaying in sync with global store when mixer is active
@@ -370,47 +371,16 @@ function VideoPreview() {
         )}
       </div>
       
-      {/* Controls */}
+      {/* Compact seek bar */}
       <div style={{ 
         display: 'flex', 
         alignItems: 'center', 
-        gap: 8,
-        padding: '8px 12px',
+        gap: 6,
+        padding: '4px 8px',
         background: 'var(--bg-secondary)',
-        borderRadius: 8,
+        borderRadius: 6,
       }}>
-        {/* Skip back */}
-        <button
-          className="btn btn-ghost btn-icon"
-          onClick={() => skip(-5)}
-          title="5 saniye geri"
-          disabled={!effectiveIsLoaded}
-        >
-          <FiSkipBack size={16} />
-        </button>
-
-        {/* Play/Pause */}
-        <button
-          className="btn btn-ghost btn-icon"
-          onClick={togglePlay}
-          disabled={!effectiveIsLoaded}
-          style={{ opacity: effectiveIsLoaded ? 1 : 0.5 }}
-        >
-          {isPlaying ? <FiPause size={18} /> : <FiPlay size={18} />}
-        </button>
-
-        {/* Skip forward */}
-        <button
-          className="btn btn-ghost btn-icon"
-          onClick={() => skip(5)}
-          title="5 saniye ileri"
-          disabled={!effectiveIsLoaded}
-        >
-          <FiSkipForward size={16} />
-        </button>
-
-        {/* Time display */}
-        <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 75, fontFamily: 'monospace' }}>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 60, fontFamily: 'monospace' }}>
           {formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}
         </span>
 
@@ -436,35 +406,48 @@ function VideoPreview() {
           }}
           style={{ flex: 1 }}
         />
-
-        {/* Volume — hide individual volume when mixer is active (use mixer panel instead) */}
-        {!mixerEnabled && (
-          <button
-            className="btn btn-ghost btn-icon"
-            onClick={toggleMute}
-            title={isMuted ? 'Sesi aç' : 'Sesi kapat'}
-          >
-            {isMuted ? <FiVolumeX size={16} /> : <FiVolume2 size={16} />}
-          </button>
-        )}
       </div>
       
-      {/* Subtitle Timeline */}
+      {/* Subtitle Timeline — collapsible */}
       {subtitles.length > 0 && (
-        <SubtitleTimeline
-          currentTime={effectiveCurrentTime}
-          duration={effectiveDuration}
-          onSeek={(time) => {
-            if (mixerEnabled) {
-              mixer.seek(time);
-            } else {
-              setCurrentTime(time);
-              if (audioRef.current) {
-                audioRef.current.currentTime = time;
-              }
-            }
-          }}
-        />
+        <div>
+          <button
+            onClick={() => setTimelineCollapsed(!timelineCollapsed)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '4px 10px',
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: timelineCollapsed ? 6 : '6px 6px 0 0',
+              color: 'var(--text-secondary)',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            <span>Altyazı Zaman Çizelgesi</span>
+            {timelineCollapsed ? <FiChevronDown size={14} /> : <FiChevronUp size={14} />}
+          </button>
+          {!timelineCollapsed && (
+            <SubtitleTimeline
+              currentTime={effectiveCurrentTime}
+              duration={effectiveDuration}
+              onSeek={(time) => {
+                if (mixerEnabled) {
+                  mixer.seek(time);
+                } else {
+                  setCurrentTime(time);
+                  if (audioRef.current) {
+                    audioRef.current.currentTime = time;
+                  }
+                }
+              }}
+            />
+          )}
+        </div>
       )}
     </div>
   );

@@ -171,11 +171,11 @@ function SubtitleEditor() {
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center',
-        marginBottom: 16,
-        paddingBottom: 12,
+        marginBottom: 8,
+        paddingBottom: 8,
         borderBottom: '1px solid var(--border-color)',
       }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>
           Subtitles ({subtitles.length})
         </h3>
         
@@ -454,7 +454,7 @@ function SubtitleEditor() {
                       className="subtitle-text-input"
                       value={subtitle.text}
                       onChange={(e) => updateSubtitle(subtitle.id, { text: e.target.value })}
-                      rows={2}
+                      rows={1}
                       onClick={(e) => e.stopPropagation()}
                     />
                     
@@ -475,7 +475,7 @@ function SubtitleEditor() {
                           className="subtitle-text-input"
                           value={translatedSub.translatedText || ''}
                           onChange={(e) => updateSecondarySubtitle(subtitle.id, e.target.value)}
-                          rows={2}
+                          rows={1}
                           onClick={(e) => e.stopPropagation()}
                           style={{
                             background: 'rgba(99, 102, 241, 0.1)',
