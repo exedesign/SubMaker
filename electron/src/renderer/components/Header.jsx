@@ -6,7 +6,7 @@ function Header() {
   const [showSettings, setShowSettings] = useState(false);
   const {
     settings, setSettings, setDualSubtitleEnabled, secondarySubtitle, updateAudioVisualization,
-    mediaFile, originalFileName, mediaType, setMediaFile, uploadFile,
+    mediaFile, originalFileName, mediaType, uploadFile,
     isPlaying, playbackTime, globalAudioRef, mediaDuration,
     currentStep, subtitles,
   } = useAppStore();
@@ -36,9 +36,12 @@ function Header() {
           // DEBUG: Log the exact path being set
           console.log('[SELECT AUDIO] Full file path:', filePath);
           console.log('[SELECT AUDIO] File type:', fileType);
-          
-          setMediaFile(filePath, fileType);
-          useAppStore.getState().setCurrentStep('transcribe');
+
+          const fileName = window.electronAPI.getBasename
+            ? await window.electronAPI.getBasename(filePath)
+            : filePath.split(/[\\/]/).pop();
+          const file = new File([], fileName);
+          await uploadFile(file, { originalPath: filePath });
         }
         return;
       }
@@ -48,7 +51,7 @@ function Header() {
     } catch (err) {
       console.error('File change error:', err);
     }
-  }, [setMediaFile, uploadFile]);
+  }, [uploadFile]);
 
   const displayName = originalFileName
     ? (originalFileName.length > 25 ? originalFileName.substring(0, 22) + '...' : originalFileName)

@@ -14,6 +14,7 @@ const { spawn } = require('child_process');
 // The GPU sandbox interacts badly with certain NVIDIA drivers in Electron 28.
 app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess');
 
 // Use a separate user data dir in dev to avoid profile lock with other instances
 if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
@@ -31,6 +32,11 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
  * Create the main application window
  */
 function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.focus();
+    return;
+  }
+
   console.log('🔧 [MAIN] Creating main window...');
   console.log('🔧 [MAIN] Preload path:', path.join(__dirname, 'preload.js'));
   console.log('🔧 [MAIN] __dirname:', __dirname);
@@ -54,13 +60,17 @@ function createWindow() {
   // Load the app
   if (isDev) {
     const devPort = process.env.VITE_DEV_PORT || '5173';
-    console.log(`🔧 [MAIN] Loading dev URL: http://127.0.0.1:${devPort}`);
-    mainWindow.loadURL(`http://127.0.0.1:${devPort}`);
-    mainWindow.webContents.openDevTools();
+    const devHost = process.env.VITE_DEV_HOST || 'localhost';
+    console.log(`🔧 [MAIN] Loading dev URL: http://${devHost}:${devPort}`);
+    mainWindow.loadURL(`http://${devHost}:${devPort}`);
   } else {
     console.log('🔧 [MAIN] Loading production file');
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
+
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error('💥 [MAIN] Page failed to load:', { errorCode, errorDescription, validatedURL });
+  });
 
   // F12 to toggle devtools in production
   mainWindow.webContents.on('before-input-event', (event, input) => {
@@ -74,6 +84,14 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     console.log('🔧 [MAIN] Window ready to show');
     mainWindow.show();
+
+    if (isDev) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.openDevTools({ mode: 'detach' });
+        }
+      }, 1500);
+    }
   });
 
   // Notify renderer about maximize/unmaximize state changes
@@ -113,7 +131,8 @@ function createWindow() {
           if (mainWindow && !mainWindow.isDestroyed()) {
             if (isDev) {
               const devPort = process.env.VITE_DEV_PORT || '5173';
-              mainWindow.loadURL(`http://127.0.0.1:${devPort}?crash_recovery=1`);
+              const devHost = process.env.VITE_DEV_HOST || 'localhost';
+              mainWindow.loadURL(`http://${devHost}:${devPort}?crash_recovery=1`);
             } else {
               mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'), {
                 query: { crash_recovery: '1' }

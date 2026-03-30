@@ -4,6 +4,7 @@
  */
 import { create } from 'zustand';
 import axios from 'axios';
+import { fetchJson, streamJsonEvents } from '../services/electronTransport';
 
 const API_URL = window.API_URL || 'http://localhost:5000/api';
 
@@ -49,7 +50,6 @@ export const useAppStore = create((set, get) => ({
   originalFileName: null, // Original filename before temp upload (e.g., "My Song.mp3")
   subtitles: [],
   history: [],
-  currentStep: 'upload', // 'upload', 'transcribe', 'edit', 'render'
   
   // Computed properties
   getMediaUrl: () => {
@@ -312,8 +312,21 @@ export const useAppStore = create((set, get) => ({
       originalFileName: null, // reset; re-set by uploadFile if needed
       initialMediaPath: prev || resolvedOriginal,
       error: null,
+      currentStep: 'transcribe',
       subtitles: [],
-      history: []
+      history: [],
+      selectedSubtitleId: null,
+      playbackTime: 0,
+      isPlaying: false,
+      globalAudioRef: null,
+      mediaDuration: 0,
+      currentTranscriptText: '',
+      outputPath: null,
+      vocalSeparation: null,
+      vocalSeparating: false,
+      vocalSeparationProgress: 0,
+      vocalSeparationMessage: '',
+      audioMixer: { enabled: false, tracks: {}, masterVolume: 1.0, masterMuted: false, showTimelineTracks: true },
     });
   },
   
@@ -408,7 +421,7 @@ export const useAppStore = create((set, get) => ({
       if (originalPath && isAbsolutePath(originalPath)) {
         console.log('Using original path directly:', originalPath);
         get().setMediaFile(originalPath, fileType, originalPath);
-        set({ isLoading: false, loadingMessage: '', currentStep: 'transcribe' });
+        set({ isLoading: false, loadingMessage: '', originalFileName: file.name || null });
         console.log('Media file set, step changed to transcribe');
         return;
       }
@@ -441,7 +454,7 @@ export const useAppStore = create((set, get) => ({
       if (data.original_name) {
         set({ originalFileName: data.original_name });
       }
-      set({ isLoading: false, loadingMessage: '', currentStep: 'transcribe' });
+      set({ isLoading: false, loadingMessage: '' });
       console.log('Upload complete, step changed to transcribe');
 
     } catch (error) {
@@ -478,7 +491,7 @@ export const useAppStore = create((set, get) => ({
       console.log('[BrowseFile] Selected:', data.filePath, 'type:', data.file_type);
 
       get().setMediaFile(data.filePath, data.file_type, data.filePath);
-      set({ isLoading: false, loadingMessage: '', currentStep: 'transcribe' });
+      set({ isLoading: false, loadingMessage: '', originalFileName: data.filePath.split(/[\\/]/).pop() });
       return data.filePath;
 
     } catch (error) {
@@ -554,169 +567,129 @@ export const useAppStore = create((set, get) => ({
       error: null,
     });
 
+    const requestBody = {
+      file_path: transcriptionPath,
+      language: sourceLanguage,
+      model_settings: modelSettings,
+      enable_vocal_isolation: skipVocalIsolation ? false : get().vocalIsolation,
+      vocal_model_id: get().vocalModelId,
+      output_formats: get().exportFormats,
+      whisper_params: Object.fromEntries(
+        Object.entries(get().whisperParams).filter(([_, value]) => value !== null)
+      ),
+    };
+
     return new Promise((resolve, reject) => {
-      try {
-        // Use fetch with streaming for SSE
-        console.log('[Transcribe] Sending to /api/transcribe/stream, file_path:', transcriptionPath);
-        fetch('http://localhost:5000/api/transcribe/stream', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            file_path: transcriptionPath,
-            language: sourceLanguage,
-            model_settings: modelSettings,
-            enable_vocal_isolation: skipVocalIsolation ? false : get().vocalIsolation,
-            vocal_model_id: get().vocalModelId,
-            output_formats: get().exportFormats,
-            whisper_params: Object.fromEntries(
-              Object.entries(get().whisperParams).filter(([_, v]) => v !== null)
-            ),
-          }),
-        }).then(response => {
-          console.log('[Transcribe] Response received:', response.status, response.headers.get('content-type'));
-          // Check HTTP status before attempting to read as SSE
-          if (!response.ok) {
-            return response.json().then(err => {
-              throw new Error(err.error || `Server error: ${response.status}`);
-            }).catch(parseErr => {
-              if (parseErr.message.startsWith('Server error:') || parseErr.message.includes('File not found')) throw parseErr;
-              throw new Error(`Server returned ${response.status}`);
-            });
-          }
+      let streamSettled = false;
+      let heartbeatCount = 0;
 
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let heartbeatCount = 0;
-
-          function processStream() {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                // Stream ended - if still processing, it means we never got a complete/error event
-                const state = get();
-                if (state.isProcessing) {
-                  console.warn('[Transcribe] Stream ended without complete event');
-                  set({
-                    error: 'Transkripsiyon bağlantısı beklenmedik şekilde kapandı',
-                    isProcessing: false,
-                  });
-                  reject(new Error('Stream ended unexpectedly'));
-                }
-                return;
-              }
-
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || '';
-
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  try {
-                    const data = JSON.parse(line.slice(6));
-
-                    if (data.type === 'heartbeat') {
-                      heartbeatCount++;
-                      // Show model loading progress during long waits
-                      set({
-                        processingStep: `AI modeli yükleniyor... (${heartbeatCount * 3}s)`,
-                      });
-                    } else if (data.type === 'status') {
-                      set({
-                        processingStep: data.message,
-                        processingProgress: data.progress,
-                      });
-                    } else if (data.type === 'progress') {
-                      const stepMessage = data.current_text
-                        ? `${data.current_text}`
-                        : `İşleniyor... ${data.progress}%`;
-                      set({
-                        processingStep: stepMessage,
-                        processingProgress: data.progress,
-                        currentTranscriptText: data.current_text || '',
-                      });
-                    } else if (data.type === 'complete') {
-                      // Mark transcribed subtitles with source
-                      const transcribedSubtitles = data.subtitles.map(sub => ({
-                        ...sub,
-                        source: 'transcript',
-                        type: sub.type || 'speech'
-                      }));
-                      
-                      set({ 
-                        subtitles: transcribedSubtitles,
-                        detectedLanguage: data.language,
-                        mediaDuration: data.duration,
-                        isProcessing: false,
-                        currentStep: 'edit',
-                        currentTranscriptText: '',
-                      });
-                      resolve(data);
-                    } else if (data.type === 'error') {
-                      set({ 
-                        error: data.error,
-                        isProcessing: false,
-                        currentTranscriptText: '',
-                      });
-                      reject(new Error(data.error));
-                    }
-                  } catch (e) {
-                    console.log('Parse error:', e);
-                  }
-                }
-              }
-              
-              processStream();
-            }).catch(readErr => {
-              console.error('[Transcribe] Stream read error:', readErr);
-              set({
-                error: 'Bağlantı kesildi: ' + readErr.message,
-                isProcessing: false,
-              });
-              reject(readErr);
-            });
-          }
-          
-          processStream();
-        }).catch(error => {
-          // Fallback to regular API if streaming fails
-          console.log('[Transcribe] Streaming failed, using regular API:', error.message);
-          set({ processingStep: 'Alternatif API kullanılıyor...' });
-          api.post('/transcribe', {
-            file_path: transcriptionPath,
-            language: sourceLanguage,
-          }).then(response => {
-            const { subtitles, language, duration } = response.data;
-            
-            // Mark transcribed subtitles with source
-            const transcribedSubtitles = subtitles.map(sub => ({
-              ...sub,
-              source: 'transcript',
-              type: sub.type || 'speech'
-            }));
-            
-            set({ 
-              subtitles: transcribedSubtitles,
-              detectedLanguage: language,
-              mediaDuration: duration,
-              isProcessing: false,
-              currentStep: 'edit',
-            });
-            resolve(response.data);
-          }).catch(err => {
-            set({ 
-              error: err.response?.data?.error || err.message,
-              isProcessing: false,
-            });
-            reject(err);
+      const handleStreamEvent = (data) => {
+        if (data.type === 'heartbeat') {
+          heartbeatCount++;
+          set({
+            processingStep: `AI modeli yükleniyor... (${heartbeatCount * 3}s)`,
           });
-        });
-      } catch (error) {
-        set({ 
-          error: error.message,
+          return;
+        }
+
+        if (data.type === 'status') {
+          set({
+            processingStep: data.message,
+            processingProgress: data.progress,
+          });
+          return;
+        }
+
+        if (data.type === 'progress') {
+          const stepMessage = data.current_text
+            ? `${data.current_text}`
+            : `İşleniyor... ${data.progress}%`;
+          set({
+            processingStep: stepMessage,
+            processingProgress: data.progress,
+            currentTranscriptText: data.current_text || '',
+          });
+          return;
+        }
+
+        if (data.type === 'complete') {
+          streamSettled = true;
+          const transcribedSubtitles = data.subtitles.map((sub) => ({
+            ...sub,
+            source: 'transcript',
+            type: sub.type || 'speech',
+          }));
+
+          set({
+            subtitles: transcribedSubtitles,
+            detectedLanguage: data.language,
+            mediaDuration: data.duration,
+            isProcessing: false,
+            currentStep: 'edit',
+            currentTranscriptText: '',
+          });
+          resolve(data);
+          return;
+        }
+
+        if (data.type === 'error') {
+          streamSettled = true;
+          set({
+            error: data.error,
+            isProcessing: false,
+            currentTranscriptText: '',
+          });
+          reject(new Error(data.error));
+        }
+      };
+
+      console.log('[Transcribe] Sending to /api/transcribe/stream, file_path:', transcriptionPath);
+      streamJsonEvents(`${API_URL}/transcribe/stream`, requestBody, handleStreamEvent).then(() => {
+        if (streamSettled) return;
+
+        set({
+          error: 'Transkripsiyon bağlantısı beklenmedik şekilde kapandı',
           isProcessing: false,
         });
-        reject(error);
-      }
+        reject(new Error('Stream ended unexpectedly'));
+      }).catch((error) => {
+        if (streamSettled) return;
+
+        console.log('[Transcribe] Streaming failed, using regular API:', error.message);
+        set({ processingStep: 'Alternatif API kullanılıyor...' });
+
+        fetchJson(`${API_URL}/transcribe`, {
+          method: 'POST',
+          body: {
+            file_path: transcriptionPath,
+            language: sourceLanguage,
+          },
+        }).then((data) => {
+          const { subtitles, language, duration } = data;
+          const transcribedSubtitles = subtitles.map((sub) => ({
+            ...sub,
+            source: 'transcript',
+            type: sub.type || 'speech',
+          }));
+
+          set({
+            subtitles: transcribedSubtitles,
+            detectedLanguage: language,
+            mediaDuration: duration,
+            isProcessing: false,
+            currentStep: 'edit',
+            currentTranscriptText: '',
+          });
+          resolve(data);
+        }).catch((fallbackError) => {
+          set({
+            error: fallbackError.payload?.error || fallbackError.message,
+            isProcessing: false,
+            currentTranscriptText: '',
+          });
+          reject(fallbackError);
+        });
+      });
     });
   },
   
@@ -1349,17 +1322,13 @@ export const useAppStore = create((set, get) => ({
     for (const [trackId, track] of Object.entries(tracks)) {
       if (!track.filePath) continue;
       try {
-        // Request waveform from backend
-        const response = await fetch('http://localhost:5000/api/waveform', {
+        const data = await fetchJson(`${API_URL}/waveform`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_path: track.filePath }),
+          body: { file_path: track.filePath },
         });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.waveform) {
-            get().setTrackWaveform(trackId, data.waveform);
-          }
+
+        if (data.waveform) {
+          get().setTrackWaveform(trackId, data.waveform);
         }
       } catch (err) {
         console.warn(`Failed to load waveform for ${trackId}:`, err);
@@ -1449,60 +1418,57 @@ export const useAppStore = create((set, get) => ({
     set({ vocalSeparating: true, vocalSeparationProgress: 0, vocalSeparationMessage: 'Başlatılıyor...' });
 
     try {
-      const response = await fetch('http://localhost:5000/api/vocal-isolation/separate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_path: filePath, model_id: vocalModelId, selected_stems: selectedStems }),
+      let separationSettled = false;
+      let separationError = null;
+
+      await streamJsonEvents(`${API_URL}/vocal-isolation/separate`, {
+        file_path: filePath,
+        model_id: vocalModelId,
+        selected_stems: selectedStems,
+      }, (event) => {
+        if (event.type === 'progress') {
+          set({ vocalSeparationProgress: event.progress, vocalSeparationMessage: event.message || '' });
+          return;
+        }
+
+        if (event.type === 'result' && event.success) {
+          separationSettled = true;
+          const stemUrls = {};
+          for (const [name, url] of Object.entries(event.stems || {})) {
+            stemUrls[name] = `http://localhost:5000${url}`;
+          }
+
+          const stemPaths = event.stems_paths || {};
+          set({
+            vocalSeparation: {
+              stems: stemUrls,
+              stemPaths,
+              model_id: event.model_id,
+              duration: event.duration,
+              cached: event.cached,
+            },
+            vocalSeparating: false,
+            vocalSeparationProgress: 100,
+            vocalSeparationMessage: event.cached ? 'Önbellekten yüklendi' : `Tamamlandı (${event.duration?.toFixed(1)}s)`,
+          });
+          get().initAudioMixer(stemPaths, stemUrls, event.original_path);
+          return;
+        }
+
+        if (event.type === 'error') {
+          separationSettled = true;
+          console.error('Vocal separation error:', event.error);
+          set({ vocalSeparating: false, vocalSeparationMessage: `Hata: ${event.error}` });
+          separationError = new Error(event.error);
+        }
       });
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      if (separationError) {
+        throw separationError;
+      }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            if (event.type === 'progress') {
-              set({ vocalSeparationProgress: event.progress, vocalSeparationMessage: event.message || '' });
-            } else if (event.type === 'result' && event.success) {
-              // Convert relative URLs to full URLs
-              const stemUrls = {};
-              for (const [name, url] of Object.entries(event.stems || {})) {
-                stemUrls[name] = `http://localhost:5000${url}`;
-              }
-              // File paths for backend render
-              const stemPaths = event.stems_paths || {};
-              set({
-                vocalSeparation: {
-                  stems: stemUrls,
-                  stemPaths,
-                  model_id: event.model_id,
-                  duration: event.duration,
-                  cached: event.cached,
-                },
-                vocalSeparating: false,
-                vocalSeparationProgress: 100,
-                vocalSeparationMessage: event.cached ? 'Önbellekten yüklendi' : `Tamamlandı (${event.duration?.toFixed(1)}s)`,
-              });
-              // Initialize multi-track audio mixer (pass original path from backend as fallback)
-              get().initAudioMixer(stemPaths, stemUrls, event.original_path);
-              return;
-            } else if (event.type === 'error') {
-              console.error('Vocal separation error:', event.error);
-              set({ vocalSeparating: false, vocalSeparationMessage: `Hata: ${event.error}` });
-              return;
-            }
-          } catch (e) { /* skip parse errors */ }
-        }
+      if (!separationSettled) {
+        throw new Error('Vocal separation stream ended unexpectedly');
       }
     } catch (error) {
       console.error('Vocal separation failed:', error);
@@ -1529,24 +1495,17 @@ export const useAppStore = create((set, get) => ({
     set({ isLoading: true, loadingMessage: `Exporting to ${format.toUpperCase()}...` });
 
     try {
-      const response = await fetch('http://localhost:5000/api/export/lyrics', {
+      const result = await fetchJson(`${API_URL}/export/lyrics`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           subtitles,
           format,
           source_path: originalMediaPath,
           original_name: get().originalFileName,
           language: language,
-        }),
+        },
       });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `Export failed with status: ${response.status}`);
-      }
-
-      const result = await response.json();
       set({ isLoading: false });
       return result;
 

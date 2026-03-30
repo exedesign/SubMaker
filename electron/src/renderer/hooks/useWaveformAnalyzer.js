@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { fetchArrayBuffer } from '../services/electronTransport';
 
 const WAVEFORM_SAMPLES = 500;
 
@@ -28,8 +29,7 @@ export default function useWaveformAnalyzer() {
       (async () => {
         let audioCtx = null;
         try {
-          const response = await fetch(track.url);
-          const arrayBuffer = await response.arrayBuffer();
+          const arrayBuffer = await fetchArrayBuffer(track.url);
           audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 

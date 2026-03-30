@@ -479,8 +479,8 @@ function PreviewPanel() {
     wordWrap: 'break-word',
   }), [style, fsScaleFactor]);
 
-  // Don't show preview panel until media is loaded
-  if (!mediaFile || currentStep === 'upload') {
+  // Only show live preview once the app has moved beyond transcription.
+  if (!mediaFile || !['edit', 'style', 'render'].includes(currentStep)) {
     return null;
   }
 

@@ -56,7 +56,54 @@ if (document.readyState === 'loading') {
   window.addEventListener('DOMContentLoaded', setupFilePathCaptureListeners, { once: true });
 } else {
   setupFilePathCaptureListeners();
-  }
+}
+
+function streamViaMain(request, onEvent) {
+  const id = `sse-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const eventChannel = `sse:event:${id}`;
+  const endChannel = `sse:end:${id}`;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      ipcRenderer.removeListener(eventChannel, handleEvent);
+      ipcRenderer.removeListener(endChannel, handleEnd);
+    };
+
+    const handleEvent = (_event, payload) => {
+      if (typeof onEvent === 'function') {
+        try {
+          onEvent(payload);
+        } catch (error) {
+          console.error('[PRELOAD] SSE event callback failed:', error);
+        }
+      }
+    };
+
+    const handleEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({ ok: true });
+    };
+
+    ipcRenderer.on(eventChannel, handleEvent);
+    ipcRenderer.once(endChannel, handleEnd);
+
+    ipcRenderer.invoke('sse:request', { id, ...request }).then((result) => {
+      if (settled || result?.ok !== false) return;
+      settled = true;
+      cleanup();
+      reject(new Error('SSE request failed'));
+    }).catch((error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    });
+  });
+}
 
 // ─── Expose APIs to renderer ──────────────────────────────────────────
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -77,6 +124,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Backend control
   getBackendStatus: () => ipcRenderer.invoke('backend:status'),
   restartBackend: () => ipcRenderer.invoke('backend:restart'),
+
+  // Network proxies
+  fetchViaMain: (request) => ipcRenderer.invoke('ipc:fetch', request),
+  streamViaMain,
 
   // Platform info
   platform: process.platform,

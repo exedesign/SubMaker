@@ -1,10 +1,16 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { fetchJson } from '../services/electronTransport';
 
 // Stem track constants
 const STEM_ORDER = ['original', 'vocals', 'instrumental', 'drums', 'bass', 'other'];
 const STEM_TRACK_HEIGHT = 48;
 const STEM_HEADER_WIDTH = 110;
+
+const isAbsolutePath = (value) => {
+  if (!value || typeof value !== 'string') return false;
+  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
+};
 
 // Memoized stem track row component
 const StemTrackRow = React.memo(({
@@ -133,6 +139,9 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
     updateSubtitle,
     settings,
     mediaFile,
+    originalMediaPath,
+    originalMediaFile,
+    initialMediaPath,
     originalFileName,
     savedFileName,
     audioMixer,
@@ -180,59 +189,38 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
   // Simple waveform analysis
   const analyzeAudio = useCallback(async () => {
     if (!mediaFile || !settings.audioVisualization.showWaveform) return;
-    
+
     setIsAnalyzing(true);
-    let audioContext = null;
     try {
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const waveformSourcePath = [mediaFile, originalMediaFile, originalMediaPath, initialMediaPath]
+        .find((value) => isAbsolutePath(value));
 
-      const isAbsolutePath = (p) => /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/');
-      const isTempPath = (p) => /[\\/]temp[\\/]/i.test(p);
-
-      const mediaUrl = (isAbsolutePath(mediaFile) && !isTempPath(mediaFile))
-        ? `http://localhost:5000/api/media/local?path=${encodeURIComponent(mediaFile)}`
-        : `http://localhost:5000/api/media/temp/${encodeURIComponent(savedFileName || mediaFile.split(/[\\/]/).pop())}`;
-
-      const response = await fetch(mediaUrl);
-      const arrayBuffer = await response.arrayBuffer();
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      
-      const channelData = audioBuffer.getChannelData(0);
-      const samples = 800;
-      const blockSize = Math.floor(channelData.length / samples);
-      const waveformPoints = [];
-      
-      for (let i = 0; i < samples; i++) {
-        const start = i * blockSize;
-        let sum = 0;
-        let maxVal = 0;
-        
-        for (let j = 0; j < blockSize; j++) {
-          const val = Math.abs(channelData[start + j] || 0);
-          sum += val;
-          maxVal = Math.max(maxVal, val);
-        }
-        
-        waveformPoints.push({
-          average: sum / blockSize,
-          peak: maxVal,
-          position: (i / samples) * 100
-        });
+      if (!waveformSourcePath) {
+        setWaveformData(null);
+        return;
       }
-      
+
+      const response = await fetchJson('http://localhost:5000/api/waveform', {
+        method: 'POST',
+        body: { file_path: waveformSourcePath },
+      });
+
+      const rawWaveform = Array.isArray(response?.waveform) ? response.waveform : [];
+      const samples = rawWaveform.length;
+      const waveformPoints = rawWaveform.map((amplitude, index) => ({
+        average: amplitude,
+        peak: amplitude,
+        position: samples > 1 ? (index / (samples - 1)) * 100 : 0,
+      }));
+
       setWaveformData(waveformPoints);
-      
+
     } catch (error) {
       console.error('Audio analysis failed:', error);
     } finally {
-      if (audioContext) {
-        try {
-          await audioContext.close();
-        } catch {}
-      }
       setIsAnalyzing(false);
     }
-  }, [mediaFile, settings.audioVisualization]);
+  }, [initialMediaPath, mediaFile, originalMediaFile, originalMediaPath, settings.audioVisualization.showWaveform]);
   
   
   // Simple waveform drawing
