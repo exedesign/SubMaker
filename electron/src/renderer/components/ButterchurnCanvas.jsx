@@ -96,9 +96,9 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
           }
         }
 
-        // Fallback to standalone context (no audio)
+        // Skip startup initialization until a real audio element exists.
         if (!ctx) {
-          ctx = new (window.AudioContext || window.webkitAudioContext)();
+          return;
         }
 
         // Re-use existing visualizer if same canvas and context
@@ -117,11 +117,17 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
         // Cleanup any previous singleton
         cleanupSingleton();
 
-        const gl = canvas.getContext('webgl2', {
-          alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true,
-        }) || canvas.getContext('webgl', {
-          alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true,
-        });
+        let gl = null;
+        try {
+          gl = canvas.getContext('webgl2', {
+            alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true,
+          }) || canvas.getContext('webgl', {
+            alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true,
+          });
+        } catch (error) {
+          console.error('Butterchurn: WebGL context creation failed:', error);
+          return;
+        }
 
         if (!gl) {
           console.error('WebGL not available for Butterchurn');

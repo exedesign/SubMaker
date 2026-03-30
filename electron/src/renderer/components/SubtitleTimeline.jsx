@@ -182,8 +182,9 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
     if (!mediaFile || !settings.audioVisualization.showWaveform) return;
     
     setIsAnalyzing(true);
+    let audioContext = null;
     try {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
       const isAbsolutePath = (p) => /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/');
       const isTempPath = (p) => /[\\/]temp[\\/]/i.test(p);
@@ -224,6 +225,11 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
     } catch (error) {
       console.error('Audio analysis failed:', error);
     } finally {
+      if (audioContext) {
+        try {
+          await audioContext.close();
+        } catch {}
+      }
       setIsAnalyzing(false);
     }
   }, [mediaFile, settings.audioVisualization]);

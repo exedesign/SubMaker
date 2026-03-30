@@ -12,37 +12,51 @@ console.log('[PRELOAD] Script loaded successfully');
 // privileged context even when the renderer cannot see it.
 let _lastDroppedPaths = [];
 
-document.addEventListener('drop', (event) => {
-  const files = event.dataTransfer?.files;
-  if (files && files.length > 0) {
-    _lastDroppedPaths = [];
-    for (let i = 0; i < files.length; i++) {
-      const p = files[i].path;
-      if (p && p.length > 0 && p !== files[i].name) {
-        _lastDroppedPaths.push(p);
-      }
-    }
-    if (_lastDroppedPaths.length > 0) {
-      console.log('[PRELOAD] Captured drop paths:', _lastDroppedPaths);
-    }
-  }
-}, true); // capture phase — fires before react-dropzone's handler
+function capturePaths(fileList, sourceLabel) {
+  _lastDroppedPaths = [];
 
-// Also capture from <input type="file"> change events (for click-to-select)
-document.addEventListener('change', (event) => {
-  if (event.target?.type === 'file' && event.target.files?.length > 0) {
-    _lastDroppedPaths = [];
-    for (let i = 0; i < event.target.files.length; i++) {
-      const p = event.target.files[i].path;
-      if (p && p.length > 0 && p !== event.target.files[i].name) {
-        _lastDroppedPaths.push(p);
-      }
-    }
-    if (_lastDroppedPaths.length > 0) {
-      console.log('[PRELOAD] Captured input paths:', _lastDroppedPaths);
+  for (let i = 0; i < fileList.length; i++) {
+    const file = fileList[i];
+    const p = file?.path;
+    if (p && p.length > 0 && p !== file.name) {
+      _lastDroppedPaths.push(p);
     }
   }
-}, true);
+
+  if (_lastDroppedPaths.length > 0) {
+    console.log(`[PRELOAD] Captured ${sourceLabel} paths:`, _lastDroppedPaths);
+  }
+}
+
+function setupFilePathCaptureListeners() {
+  document.addEventListener('drop', (event) => {
+    try {
+      const files = event.dataTransfer?.files;
+      if (files && files.length > 0) {
+        capturePaths(files, 'drop');
+      }
+    } catch (error) {
+      console.error('[PRELOAD] Drop path capture failed:', error);
+    }
+  }, true); // capture phase — fires before react-dropzone's handler
+
+  // Also capture from <input type="file"> change events (for click-to-select)
+  document.addEventListener('change', (event) => {
+    try {
+      if (event.target?.type === 'file' && event.target.files?.length > 0) {
+        capturePaths(event.target.files, 'input');
+      }
+    } catch (error) {
+      console.error('[PRELOAD] Input path capture failed:', error);
+    }
+  }, true);
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', setupFilePathCaptureListeners, { once: true });
+} else {
+  setupFilePathCaptureListeners();
+  }
 
 // ─── Expose APIs to renderer ──────────────────────────────────────────
 contextBridge.exposeInMainWorld('electronAPI', {

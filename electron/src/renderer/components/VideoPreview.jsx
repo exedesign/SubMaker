@@ -219,7 +219,7 @@ function VideoPreview() {
             ref={audioRef}
             src={mediaUrl}
             crossOrigin="anonymous"
-            preload="auto"
+            preload="metadata"
             onTimeUpdate={(e) => {
               const time = e.target.currentTime;
               setCurrentTime(time);

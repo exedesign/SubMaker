@@ -26,10 +26,11 @@ export default function useWaveformAnalyzer() {
       analyzedRef.current.add(track.url);
 
       (async () => {
+        let audioCtx = null;
         try {
           const response = await fetch(track.url);
           const arrayBuffer = await response.arrayBuffer();
-          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
           const channelData = audioBuffer.getChannelData(0);
@@ -47,9 +48,14 @@ export default function useWaveformAnalyzer() {
           }
 
           setTrackWaveform(trackId, waveform);
-          audioCtx.close();
         } catch (err) {
           console.error(`Waveform analysis failed for ${trackId}:`, err);
+        } finally {
+          if (audioCtx) {
+            try {
+              await audioCtx.close();
+            } catch {}
+          }
         }
       })();
     }
