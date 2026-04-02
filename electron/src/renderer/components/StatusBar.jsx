@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAppStore } from '../stores/appStore';
+import { fetchJson } from '../services/electronTransport';
 import { 
   FiFolder, FiClock, FiMusic, FiEdit3, FiVideo, FiCheck, 
   FiLoader, FiMic, FiFilm, FiX 
@@ -41,10 +42,7 @@ function StatusBar() {
           : 'D:\\AI\\SubMaker\\output';
         
         // Backend'e klasör açma isteği gönder
-        const response = await fetch(`http://localhost:5000/api/open-folder?path=${encodeURIComponent(folderPath)}`);
-        if (!response.ok) {
-          console.error('Failed to open folder');
-        }
+        await fetchJson(`http://localhost:5000/api/open-folder?path=${encodeURIComponent(folderPath)}`);
       }
     } catch (error) {
       console.error('Error opening output folder:', error);

@@ -4,11 +4,12 @@
  */
 import { create } from 'zustand';
 import axios from 'axios';
-import { fetchJson, streamJsonEvents } from '../services/electronTransport';
+import { fetchJson, fetchFormData, streamJsonEvents } from '../services/electronTransport';
 
 const API_URL = window.API_URL || 'http://localhost:5000/api';
 
-// Create axios instance
+// Create axios instance — uses regular XMLHttpRequest just like Chrome.
+// No IPC proxy: Electron's Chromium network stack is identical to Chrome's.
 const api = axios.create({
   baseURL: API_URL,
   timeout: 600000, // 10 min timeout for long operations
@@ -198,11 +199,10 @@ export const useAppStore = create((set, get) => ({
 
   // Vocal Isolation
   vocalIsolation: false,
-  vocalModelId: 'mdx23c', // 'mdx23c' (fast), 'bs_roformer' (best vocal), 'demucs_ft' (4-stem)
+  vocalModelId: 'vocal_ep317', // 'vocal_ep317' (temiz vokal), 'instrumental_resurrection' (temiz müzik)
   vocalSelectedStems: {
-    mdx23c: ['vocals', 'instrumental'],
-    bs_roformer: ['vocals', 'instrumental'],
-    demucs_ft: ['vocals', 'drums', 'bass', 'other', 'instrumental'],
+    vocal_ep317: ['vocals', 'instrumental'],
+    instrumental_resurrection: ['vocals', 'instrumental'],
   },
   vocalSeparation: null,     // { stems: { vocals, instrumental, drums?, bass?, other? }, model_id, duration }
   vocalSeparating: false,    // true while separation is running
@@ -431,21 +431,7 @@ export const useAppStore = create((set, get) => ({
       formData.append('file', file);
 
       console.log('Uploading to backend via FormData...');
-      const response = await fetch('http://localhost:5000/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        let errMsg = 'File upload failed';
-        try {
-          const errData = await response.json();
-          errMsg = errData.error || errMsg;
-        } catch (e) { /* ignore parse error */ }
-        throw new Error(errMsg);
-      }
-
-      const data = await response.json();
+      const data = await fetchFormData(`${API_URL}/upload`, formData);
       console.log('Upload response:', data);
 
       // The backend returns the path where it saved the file.
@@ -904,6 +890,7 @@ export const useAppStore = create((set, get) => ({
   // Active render job
   renderJobId: null,
   renderPolling: null,
+  renderThumbnailUrl: null,
   
   // Internal: render a single format and return a Promise that resolves on completion
   _renderOneFormat: (format, visualizerData, secondarySubData) => {
@@ -955,19 +942,20 @@ export const useAppStore = create((set, get) => ({
             set({
               processingProgress: status.progress,
               processingStep: status.step || 'Processing...',
+              renderThumbnailUrl: status.thumbnail_url || null,
             });
 
             if (status.status === 'completed') {
               clearInterval(pollInterval);
-              set({ renderJobId: null, renderPolling: null });
+              set({ renderJobId: null, renderPolling: null, renderThumbnailUrl: status.thumbnail_url || null });
               resolve({ success: true, outputPath: status.output_path });
             } else if (status.status === 'error') {
               clearInterval(pollInterval);
-              set({ renderJobId: null, renderPolling: null });
+              set({ renderJobId: null, renderPolling: null, renderThumbnailUrl: null });
               reject(new Error(status.error || 'Render failed'));
             } else if (status.status === 'cancelled') {
               clearInterval(pollInterval);
-              set({ renderJobId: null, renderPolling: null });
+              set({ renderJobId: null, renderPolling: null, renderThumbnailUrl: null });
               reject(new Error('Render cancelled'));
             }
           } catch (err) {
@@ -1018,6 +1006,7 @@ export const useAppStore = create((set, get) => ({
       error: null,
       renderStartTime: startTime,
       renderElapsedTime: 0,
+      renderThumbnailUrl: null,
       batchRenderActive: isMulti,
       batchRenderResults: [],
       batchRenderTotal: formats.length,
@@ -1059,8 +1048,8 @@ export const useAppStore = create((set, get) => ({
         if (visualizer.enabled && sourceMediaPath) {
           try {
             set({ processingStep: isMulti
-              ? `${formatLabels[fmt]} — Görselleştirici render ediliyor... (${i + 1}/${formats.length})`
-              : 'Görselleştirici render ediliyor...'
+              ? `${formatLabels[fmt]} — Render ediliyor... (${i + 1}/${formats.length})`
+              : 'Render ediliyor...'
             });
             const { exportVisualizerVideo } = await import('../services/visualizerFrameExporter');
             // Build audio URL from local or temp endpoint based on the original media path
@@ -1071,12 +1060,23 @@ export const useAppStore = create((set, get) => ({
             const audioUrl = (isAbsPath(sourceMediaPath) && !isTempPath(sourceMediaPath))
               ? `${baseUrl}/api/media/local?path=${encodeURIComponent(sourceMediaPath)}`
               : `${baseUrl}/api/media/temp/${encodeURIComponent(audioFilename)}`;
+            // Ensure presetName is set — auto-select random if null
+            let renderPresetName = visualizer.presetName;
+            if (!renderPresetName) {
+              try {
+                const { getRandomPresetName } = await import('../components/ButterchurnCanvas');
+                renderPresetName = await getRandomPresetName();
+                console.log(`[Render] Auto-selected visualizer preset: ${renderPresetName}`);
+              } catch (e) {
+                console.warn('[Render] Could not auto-select preset:', e);
+              }
+            }
             const vizVideoPath = await exportVisualizerVideo({
               audioUrl,
               duration: get().mediaDuration || 180,
               width: fmt === 'vertical' ? 1080 : fmt === 'square' ? 1080 : 1920,
               height: fmt === 'vertical' ? 1920 : fmt === 'square' ? 1080 : 1080,
-              presetName: visualizer.presetName,
+              presetName: renderPresetName,
               fps: 30,
               onProgress: (p) => set({ processingProgress: Math.round(p * 0.3) }),
             });
@@ -1084,6 +1084,7 @@ export const useAppStore = create((set, get) => ({
             console.log(`Visualizer pre-rendered for ${fmt}:`, vizVideoPath);
           } catch (vizErr) {
             console.error('Visualizer pre-render failed:', vizErr);
+            console.warn('[Render] Visualizer export failed, rendering without visualizer');
             visualizerData = null;
           }
         }
@@ -1162,6 +1163,7 @@ export const useAppStore = create((set, get) => ({
       renderJobId: null,
       renderPolling: null,
       renderTimer: null,
+      renderThumbnailUrl: null,
       processingProgress: 0,
       processingStep: '',
       batchRenderActive: false,

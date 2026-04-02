@@ -371,43 +371,6 @@ function VideoPreview() {
         )}
       </div>
       
-      {/* Compact seek bar */}
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: 6,
-        padding: '4px 8px',
-        background: 'var(--bg-secondary)',
-        borderRadius: 6,
-      }}>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 60, fontFamily: 'monospace' }}>
-          {formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}
-        </span>
-
-        {/* Progress slider */}
-        <input
-          type="range"
-          className="slider"
-          min={0}
-          max={effectiveDuration || 100}
-          step={0.1}
-          value={effectiveCurrentTime}
-          disabled={!effectiveIsLoaded}
-          onChange={(e) => {
-            const time = parseFloat(e.target.value);
-            if (mixerEnabled) {
-              mixer.seek(time);
-            } else {
-              setCurrentTime(time);
-              if (audioRef.current) {
-                audioRef.current.currentTime = time;
-              }
-            }
-          }}
-          style={{ flex: 1 }}
-        />
-      </div>
-      
       {/* Subtitle Timeline — collapsible */}
       {subtitles.length > 0 && (
         <div>

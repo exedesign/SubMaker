@@ -1,18 +1,16 @@
 """
-Vocal Isolation Service — multi-engine, multi-model support
+Vocal Isolation Service — dual specialized BS-Roformer models
 
-Engines:
-  audio-separator (MDX23C, BS-Roformer — via ONNX/PyTorch) — fast/quality 2-stem
-  Demucs (PyTorch) — high quality, 4-stem (vocals, drums, bass, other)
+Engine:
+  audio-separator (BS-Roformer — via PyTorch) — high quality 2-stem
 
 Models:
-  MDX23C:       Fast 2-stem separation (~120MB, auto-download)
-  BS-Roformer:  Best vocal quality SDR 12.97 (~500MB, auto-download)
-  Demucs FT:    4-stem separation (vocals, drums, bass, other)
+  HyperACE v2 (Vocal):        Best vocal extraction, minimal instrumental leakage
+  Resurrection UNWA (Inst):    Best instrumental extraction, minimal vocal leakage
 
 Outputs:
   - Whisper format: mono 16kHz WAV for transcription
-  - Full quality: original sample rate WAV for listening (vocals + instrumental/stems)
+  - Full quality: original sample rate WAV for listening (vocals + instrumental)
 """
 import hashlib
 import logging
@@ -113,36 +111,28 @@ def get_vocal_isolator():
 
 # Available models configuration
 AVAILABLE_MODELS = {
-    "mdx23c": {
-        "engine": "mdx",
-        "model_file": "MDX23C-8KFFT-InstVoc_HQ.ckpt",
-        "label": "MDX23C",
-        "description": "Gelişmiş MDX mimarisi, hızlı 2-stem ayrıştırma. İlk kullanımda indirir (~120MB).",
-        "stems": ["vocals", "instrumental"],
-        "speed": "fast",
-    },
-    "bs_roformer": {
+    "vocal_ep317": {
         "engine": "mdx",
         "model_file": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-        "label": "BS-Roformer",
-        "description": "SDR 12.97 — en yüksek vokal kalitesi, minimal sızıntı. İlk kullanımda indirir (~500MB).",
+        "label": "BS-Roformer EP317 (Vokal)",
+        "description": "Yüksek kalite vokal ayırma — SDR 12.97, BS-Roformer. 8GB VRAM uyumlu.",
         "stems": ["vocals", "instrumental"],
         "speed": "medium",
     },
-    "demucs_ft": {
-        "engine": "demucs",
-        "model_file": "htdemucs_ft",
-        "label": "Demucs Fine-Tuned",
-        "description": "En yüksek kalite, 4 stem ayrımı (vokal, davul, bas, diğer). GPU önerilir.",
-        "stems": ["vocals", "drums", "bass", "other"],
-        "speed": "slow",
+    "instrumental_resurrection": {
+        "engine": "mdx",
+        "model_file": "bs_roformer_instrumental_resurrection_unwa.ckpt",
+        "label": "Resurrection UNWA (Müzik)",
+        "description": "En temiz enstrümantal çıkışı — vokal sızıntısı minimal. BS-Roformer dim=256, 8GB VRAM uyumlu.",
+        "stems": ["vocals", "instrumental"],
+        "speed": "medium",
     },
 }
 
 
 class VocalIsolator:
     """
-    Separates vocals from music using audio-separator (MDX23C/BS-Roformer) or Demucs.
+    Separates vocals from music using audio-separator (BS-Roformer models).
 
     Features:
     - Multi-model support with model selection
@@ -157,7 +147,7 @@ class VocalIsolator:
         from config import (
             VOCAL_ENGINE, VOCAL_MDX_MODEL, VOCAL_MDX_SEGMENT_SIZE,
             VOCAL_MDX_BATCH_SIZE, DEMUCS_MODEL, DEMUCS_DEVICE,
-            VOCAL_CACHE_DIR, VOCAL_CACHE_ENABLED,
+            VOCAL_CACHE_DIR, VOCAL_CACHE_ENABLED, MODELS_DIR,
         )
         self.engine = VOCAL_ENGINE
         self.mdx_model_name = VOCAL_MDX_MODEL
@@ -167,6 +157,7 @@ class VocalIsolator:
         self.demucs_device = DEMUCS_DEVICE
         self.cache_dir = Path(VOCAL_CACHE_DIR)
         self.cache_enabled = VOCAL_CACHE_ENABLED
+        self.models_dir = MODELS_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Model cache — keep loaded models in memory to avoid reloading
@@ -290,7 +281,7 @@ class VocalIsolator:
         return None
 
     # ------------------------------------------------------------------
-    # audio-separator engine (MDX23C, BS-Roformer)
+    # audio-separator engine (BS-Roformer)
     # ------------------------------------------------------------------
 
     def _get_separator(self, model_name: str):
@@ -323,8 +314,8 @@ class VocalIsolator:
 
         logger.info(f"Loading model: {model_name} ({gpu_info})")
 
-        # Use a proper model cache directory (not /tmp/ which is problematic on Windows)
-        model_cache_dir = str(self.cache_dir / "models")
+        # Model files are stored in resources/models/audio-separator/
+        model_cache_dir = str(self.models_dir / "audio-separator")
         os.makedirs(model_cache_dir, exist_ok=True)
 
         sep = Separator(
@@ -358,7 +349,7 @@ class VocalIsolator:
     def _separate_mdx(self, audio_path: str, model_name: str = None,
                       progress_callback=None, keep_full_quality=False) -> dict:
         """
-        Separate vocals using audio-separator (MDX23C, BS-Roformer, etc.).
+        Separate vocals using audio-separator (BS-Roformer).
         Returns dict with 'whisper_path' and optionally 'stems' for full quality outputs.
         """
         model_name = model_name or self.mdx_model_name
@@ -694,7 +685,7 @@ class VocalIsolator:
         Separate vocals from audio for Whisper transcription.
         Returns path to mono 16kHz WAV file ready for Whisper.
         """
-        effective_model = model_id or ("mdx23c" if self.engine == "mdx" else "demucs_ft")
+        effective_model = model_id or "vocal_ep317"
 
         # Check cache
         cached = self._get_cached(audio_path, effective_model)
@@ -710,7 +701,7 @@ class VocalIsolator:
         model_info = AVAILABLE_MODELS.get(effective_model)
         if not model_info:
             logger.warning(f"Unknown model_id '{effective_model}', using default")
-            model_info = AVAILABLE_MODELS["mdx23c"]
+            model_info = AVAILABLE_MODELS["vocal_ep317"]
 
         engine = model_info["engine"]
         model_file = model_info["model_file"]
@@ -753,7 +744,7 @@ class VocalIsolator:
     def separate_full(
         self,
         audio_path: str,
-        model_id: str = "mdx23c",
+        model_id: str = "vocal_ep317",
         progress_callback: Optional[Callable] = None,
         selected_stems: Optional[List[str]] = None,
     ) -> Dict:
@@ -770,12 +761,9 @@ class VocalIsolator:
             "stems": {
                 "vocals": "path/to/vocals_hq.wav",
                 "instrumental": "path/to/instrumental_hq.wav",
-                "drums": "...",  # Demucs only
-                "bass": "...",   # Demucs only
-                "other": "...",  # Demucs only
             },
             "duration": 12.3,
-            "model_id": "mdx23c",
+            "model_id": "vocal_ep317",
         }
         """
         # Check full cache

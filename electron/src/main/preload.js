@@ -2,7 +2,7 @@
  * Preload script for Electron
  * Exposes safe APIs to the renderer process
  */
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 console.log('[PRELOAD] Script loaded successfully');
 
@@ -17,7 +17,8 @@ function capturePaths(fileList, sourceLabel) {
 
   for (let i = 0; i < fileList.length; i++) {
     const file = fileList[i];
-    const p = file?.path;
+    // Electron 32+ removed File.path; use webUtils.getPathForFile instead
+    const p = webUtils.getPathForFile(file);
     if (p && p.length > 0 && p !== file.name) {
       _lastDroppedPaths.push(p);
     }
@@ -124,6 +125,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Backend control
   getBackendStatus: () => ipcRenderer.invoke('backend:status'),
   restartBackend: () => ipcRenderer.invoke('backend:restart'),
+
+  // GPU / SwiftShader status
+  getGpuStatus: () => ipcRenderer.invoke('gpu:status'),
+  clearGpuCrashMarker: () => ipcRenderer.invoke('gpu:clearCrashMarker'),
 
   // Network proxies
   fetchViaMain: (request) => ipcRenderer.invoke('ipc:fetch', request),

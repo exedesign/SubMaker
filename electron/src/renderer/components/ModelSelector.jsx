@@ -1,12 +1,12 @@
 /**
  * ModelSelector Component
- * Whisper model seçimi, Beam Size ayarı, Vokal İzolasyonu model seçimi ve ayrım önizleme
+ * Altyazı model seçimi, Beam Size ayarı, Vokal İzolasyonu model seçimi ve ayrım önizleme
  */
 import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
 import {
-  FiCpu, FiChevronDown, FiChevronUp, FiSliders, FiSave, FiTrash2,
-  FiVolume2, FiMusic, FiZap, FiAward,
+  FiSliders,
+  FiVolume2, FiMusic, FiMic,
 } from 'react-icons/fi';
 
 // Faster-Whisper model listeleri
@@ -56,31 +56,22 @@ const SUPPORTED_LANGUAGES = [
 // Vocal isolation models
 const VOCAL_MODELS = [
   {
-    id: 'mdx23c',
-    label: 'MDX23C (Hızlı)',
-    description: 'Gelişmiş MDX mimarisi, 2 stem (vokal + enstrümantal). ~120MB model.',
-    icon: FiZap,
+    id: 'vocal_ep317',
+    label: 'BS-Roformer EP317 (Vokal)',
+    description: 'Yüksek kalite vokal ayırma — SDR 12.97. 8GB VRAM uyumlu.',
+    icon: FiMic,
     stems: ['vocals', 'instrumental'],
-    badge: 'Hızlı',
-    badgeColor: 'rgba(59, 130, 246, 0.8)',
-  },
-  {
-    id: 'bs_roformer',
-    label: 'BS-Roformer (En İyi Vokal)',
-    description: 'SDR 12.97 — en yüksek vokal kalitesi, minimal sızıntı. ~500MB model.',
-    icon: FiAward,
-    stems: ['vocals', 'instrumental'],
-    badge: 'Kalite',
+    badge: 'Vokal',
     badgeColor: 'rgba(168, 85, 247, 0.8)',
   },
   {
-    id: 'demucs_ft',
-    label: 'Demucs FT (4 Stem)',
-    description: '4 stem ayrımı (vokal, davul, bas, diğer). GPU önerilir.',
+    id: 'instrumental_resurrection',
+    label: 'Resurrection UNWA (Müzik)',
+    description: 'En temiz enstrümantal çıkışı — vokal sızıntısı minimal. 8GB VRAM uyumlu.',
     icon: FiMusic,
-    stems: ['vocals', 'drums', 'bass', 'other', 'instrumental'],
-    badge: '4 Stem',
-    badgeColor: 'rgba(34, 197, 94, 0.8)',
+    stems: ['vocals', 'instrumental'],
+    badge: 'Müzik',
+    badgeColor: 'rgba(59, 130, 246, 0.8)',
   },
 ];
 
@@ -92,20 +83,6 @@ const STEM_LABELS = {
   bass: { label: 'Bas', icon: '🎸', color: 'rgba(34, 197, 94, 0.8)' },
   other: { label: 'Diğer', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
 };
-
-// LocalStorage key for user presets
-const PRESETS_STORAGE_KEY = 'submaker_beam_presets';
-
-function loadPresets() {
-  try {
-    const raw = localStorage.getItem(PRESETS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function savePresetsToStorage(presets) {
-  localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
-}
 
 function ModelSelector() {
   const {
@@ -130,11 +107,7 @@ function ModelSelector() {
     mediaFile,
   } = useAppStore();
 
-  const [isExpanded, setIsExpanded] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState('auto');
-  const [presets, setPresets] = useState(loadPresets);
-  const [newPresetName, setNewPresetName] = useState('');
-  const [showPresetSave, setShowPresetSave] = useState(false);
 
   const handleModelChange = (language, modelSize) => {
     setModelForLanguage(language, modelSize);
@@ -153,113 +126,57 @@ function ModelSelector() {
   const currentBeamSize = whisperParams.beam_size ?? 5;
   const selectedVocalModel = VOCAL_MODELS.find(m => m.id === vocalModelId) || VOCAL_MODELS[0];
 
-  // Preset management
-  const handleSavePreset = () => {
-    const name = newPresetName.trim();
-    if (!name) return;
-    const updated = [...presets.filter(p => p.name !== name), { name, beam_size: currentBeamSize }];
-    setPresets(updated);
-    savePresetsToStorage(updated);
-    setNewPresetName('');
-    setShowPresetSave(false);
-  };
-
-  const handleDeletePreset = (name) => {
-    const updated = presets.filter(p => p.name !== name);
-    setPresets(updated);
-    savePresetsToStorage(updated);
-  };
-
-  const handleApplyPreset = (preset) => {
-    setWhisperParam('beam_size', preset.beam_size);
-  };
-
   return (
-    <div style={{
-      background: 'var(--bg-secondary)',
-      borderRadius: 8,
-      marginBottom: 12,
-      overflow: 'hidden',
-      border: '1px solid rgba(99, 102, 241, 0.3)',
-    }}>
-      {/* Header */}
-      <div
-        style={{
-          padding: '12px 16px',
-          background: 'rgba(99, 102, 241, 0.1)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          cursor: 'pointer',
-        }}
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <FiCpu size={16} style={{ color: 'var(--primary-color)' }} />
-          <span style={{ fontWeight: 600, fontSize: 13 }}>Whisper</span>
-          <span style={{
-            background: 'rgba(99, 102, 241, 0.2)',
-            padding: '2px 8px',
-            borderRadius: 12,
-            fontSize: 10,
-          }}>
-            Beam: {currentBeamSize}
-          </span>
-        </div>
-        {isExpanded ? <FiChevronUp size={16} /> : <FiChevronDown size={16} />}
+    <div>
+      {/* Language Selection */}
+      <div className="form-group">
+        <label className="label">Dil Seçin</label>
+        <select
+          className="select"
+          value={selectedLanguage}
+          onChange={(e) => setSelectedLanguage(e.target.value)}
+        >
+          {SUPPORTED_LANGUAGES.map((lang) => (
+            <option key={lang.code} value={lang.code}>{lang.name}</option>
+          ))}
+        </select>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>
+          {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.description}
+        </p>
       </div>
 
-      {isExpanded && (
-        <div style={{ padding: 16 }}>
-          {/* Language Selection */}
-          <div className="form-group">
-            <label className="label">Dil Seçin</label>
-            <select
-              className="select"
-              value={selectedLanguage}
-              onChange={(e) => setSelectedLanguage(e.target.value)}
-            >
-              {SUPPORTED_LANGUAGES.map((lang) => (
-                <option key={lang.code} value={lang.code}>{lang.name}</option>
-              ))}
-            </select>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>
-              {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.description}
-            </p>
-          </div>
+      {/* Model Selection */}
+      <div className="form-group">
+        <label className="label">
+          Model - {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}
+        </label>
+        <select
+          className="select"
+          value={currentModel}
+          onChange={(e) => handleModelChange(selectedLanguage, e.target.value)}
+        >
+          {availableModels.map((model) => (
+            <option key={model.value} value={model.value}>
+              {model.recommended ? '⭐ ' : ''}{model.label}
+            </option>
+          ))}
+        </select>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+          {modelInfo.description}
+        </p>
+      </div>
 
-          {/* Model Selection */}
-          <div className="form-group">
-            <label className="label">
-              Whisper Model - {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}
-            </label>
-            <select
-              className="select"
-              value={currentModel}
-              onChange={(e) => handleModelChange(selectedLanguage, e.target.value)}
-            >
-              {availableModels.map((model) => (
-                <option key={model.value} value={model.value}>
-                  {model.recommended ? '⭐ ' : ''}{model.label}
-                </option>
-              ))}
-            </select>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-              {modelInfo.description}
-            </p>
-          </div>
-
-          {/* Beam Size */}
-          <div style={{
-            marginTop: 12,
-            border: '1px solid var(--border-color)',
-            borderRadius: 6,
-            padding: 12,
-            background: 'rgba(139, 92, 246, 0.05)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <FiSliders size={13} style={{ color: 'rgb(139, 92, 246)' }} />
-              <span style={{ fontWeight: 600, fontSize: 12 }}>Beam Size</span>
+      {/* Beam Size */}
+      <div style={{
+        marginTop: 12,
+        border: '1px solid var(--border-color)',
+        borderRadius: 6,
+        padding: 12,
+        background: 'rgba(139, 92, 246, 0.05)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <FiSliders size={13} style={{ color: 'rgb(139, 92, 246)' }} />
+          <span style={{ fontWeight: 600, fontSize: 12 }}>Beam Size</span>
               <span style={{
                 marginLeft: 'auto',
                 background: 'rgba(139, 92, 246, 0.2)',
@@ -282,85 +199,6 @@ function ModelSelector() {
               <span>1 (hızlı)</span>
               <span>5 (varsayılan)</span>
               <span>20 (maksimum doğruluk)</span>
-            </div>
-
-            {/* User Presets */}
-            <div style={{ marginTop: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>Kayıtlı Preset'ler</span>
-                <button
-                  className="btn btn-ghost"
-                  style={{ fontSize: 10, padding: '2px 8px' }}
-                  onClick={() => setShowPresetSave(!showPresetSave)}
-                >
-                  <FiSave size={10} /> Kaydet
-                </button>
-              </div>
-
-              {/* Save new preset form */}
-              {showPresetSave && (
-                <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-                  <input
-                    type="text"
-                    placeholder="Preset adı (ör: Müzik, Podcast)"
-                    value={newPresetName}
-                    onChange={(e) => setNewPresetName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSavePreset()}
-                    style={{
-                      flex: 1,
-                      padding: '4px 8px',
-                      fontSize: 11,
-                      background: 'var(--bg-primary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 4,
-                      color: 'var(--text-primary)',
-                    }}
-                    autoFocus
-                  />
-                  <button
-                    className="btn btn-primary"
-                    style={{ fontSize: 10, padding: '4px 10px' }}
-                    onClick={handleSavePreset}
-                    disabled={!newPresetName.trim()}
-                  >
-                    Beam: {currentBeamSize}
-                  </button>
-                </div>
-              )}
-
-              {/* Preset buttons */}
-              {presets.length > 0 ? (
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {presets.map((preset) => (
-                    <div key={preset.name} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
-                      <button
-                        className={`btn ${currentBeamSize === preset.beam_size ? 'btn-primary' : 'btn-ghost'}`}
-                        style={{ fontSize: 10, padding: '3px 8px', borderRadius: '4px 0 0 4px' }}
-                        onClick={() => handleApplyPreset(preset)}
-                        title={`Beam Size: ${preset.beam_size}`}
-                      >
-                        {preset.name} ({preset.beam_size})
-                      </button>
-                      <button
-                        className="btn btn-ghost"
-                        style={{
-                          fontSize: 9, padding: '3px 4px', borderRadius: '0 4px 4px 0',
-                          color: 'var(--accent-danger)', opacity: 0.6,
-                          borderLeft: '1px solid var(--border-color)',
-                        }}
-                        onClick={() => handleDeletePreset(preset.name)}
-                        title="Preset'i sil"
-                      >
-                        <FiTrash2 size={9} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                  Henüz preset yok. Beam size'ı ayarlayıp "Kaydet" ile preset oluşturun.
-                </p>
-              )}
             </div>
           </div>
 
@@ -581,22 +419,20 @@ function ModelSelector() {
             )}
           </div>
 
-          {/* Reset */}
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-color)' }}>
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                resetModelSettings();
-                resetWhisperParams();
-                setSelectedLanguage('auto');
-              }}
-              style={{ width: '100%', fontSize: 11, padding: '6px 12px' }}
-            >
-              Varsayılan Ayarlara Dön
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Reset */}
+      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-color)' }}>
+        <button
+          className="btn btn-ghost"
+          onClick={() => {
+            resetModelSettings();
+            resetWhisperParams();
+            setSelectedLanguage('auto');
+          }}
+          style={{ width: '100%', fontSize: 11, padding: '6px 12px' }}
+        >
+          Varsayılan Ayarlara Dön
+        </button>
+      </div>
     </div>
   );
 }

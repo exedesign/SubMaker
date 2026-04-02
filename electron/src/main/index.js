@@ -4,22 +4,50 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const fs = require('fs');
 // vizRenderManager removed — viz rendering now happens in-page + Flask
 
-// NOTE: Do NOT use app.disableHardwareAcceleration() — it crashes WebGL components
-// (Butterchurn visualizer etc.) at startup. The IPC HTTP proxy handles the original
-// crash cause (Chromium network stack during GPU operations) without disabling GPU.
-
-// Workaround for NVIDIA ACCESS_VIOLATION (0xC0000005) crash on renderer start.
-// The GPU sandbox interacts badly with certain NVIDIA drivers in Electron 28.
-app.commandLine.appendSwitch('disable-gpu-sandbox');
-app.commandLine.appendSwitch('no-sandbox');
-app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess');
+// ─── SwiftShader (software WebGL) fallback — check FIRST ─────────────
+// If a previous run wrote a crash marker, relaunch with software rendering.
+// SwiftShader is slower but immune to NVIDIA driver crashes.
+// The marker is only cleared after the user successfully completes a render
+// (or manually deletes the file), so the app stays in safe mode until proven stable.
+//
+// IMPORTANT: The marker path must be computed AFTER setPath so dev and prod
+// share the same location check.
 
 // Use a separate user data dir in dev to avoid profile lock with other instances
 if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('userData'), 'dev'));
 }
+
+const CRASH_MARKER = path.join(app.getPath('userData'), 'gpu-crash-marker.txt');
+const swiftshaderActive = process.argv.includes('--use-angle=swiftshader');
+if (!swiftshaderActive && fs.existsSync(CRASH_MARKER)) {
+  console.log('[MAIN] GPU crash marker found — relaunching with SwiftShader');
+  app.relaunch({ args: ['--use-angle=swiftshader', ...process.argv.slice(1)] });
+  app.exit(0);
+}
+
+// ─── GPU Configuration ────────────────────────────────────────────────
+// Strategy: keep Electron's GPU behaviour as close to Chrome as possible.
+// Chrome works fine on the same machine / NVIDIA driver, so we avoid
+// aggressive flags (disable-gpu-compositing, disable-gpu-rasterization,
+// custom ANGLE backends) that make Electron behave DIFFERENTLY from Chrome
+// and can actually destabilise the GPU process.
+//
+// Only two minimal flags are applied:
+//   --no-sandbox            : required for Electron on some NVIDIA configs
+//   --disable-gpu-sandbox   : avoids sandbox DLL conflicts on NVIDIA Optimus
+//
+// SwiftShader fallback is the safety net: if the renderer still crashes,
+// a crash marker causes the next launch to use software WebGL.
+if (swiftshaderActive) {
+  console.log('[MAIN] SwiftShader mode — using software WebGL');
+  app.commandLine.appendSwitch('use-angle', 'swiftshader');
+}
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 // Keep references to prevent garbage collection
 let mainWindow = null;
@@ -102,13 +130,23 @@ function createWindow() {
     mainWindow.webContents.send('window:maximize-change', false);
   });
 
-  // Handle renderer crash — log details and show dialog before reload
+  // SwiftShader mode: Do NOT auto-clear the crash marker on page load.
+  // The marker persists so the app stays in safe software-rendering mode.
+  // It is only cleared via the 'gpu:clearCrashMarker' IPC call (e.g. from
+  // a "Retry hardware acceleration" button in settings, or after a
+  // successful render completes without crashing).
+  if (swiftshaderActive) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      console.log('[MAIN] SwiftShader mode active — crash marker kept for safety');
+    });
+  }
+
+  // Handle renderer crash — log details, write crash marker, show dialog
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     const crashInfo = `Renderer crashed!\nReason: ${details.reason}\nExit Code: ${details.exitCode}\nTime: ${new Date().toISOString()}`;
     console.error(`\u274c [MAIN] ${crashInfo}`);
-    
+
     // Write crash log to file
-    const fs = require('fs');
     const crashLogPath = path.join(app.getPath('userData'), 'crash-log.txt');
     const logEntry = `\n${'='.repeat(60)}\n${crashInfo}\n`;
     try {
@@ -118,12 +156,27 @@ function createWindow() {
       console.error('Failed to write crash log:', e);
     }
 
+    // GPU crash (ACCESS_VIOLATION 0xC0000005) — write marker so next launch
+    // uses SwiftShader software rendering instead.
+    const isGpuCrash = details.exitCode === -1073741819 || details.reason === 'crashed';
+    if (isGpuCrash && !swiftshaderActive) {
+      try {
+        fs.writeFileSync(CRASH_MARKER, `${new Date().toISOString()}\n${details.exitCode}\n`);
+        console.log('[MAIN] GPU crash marker written — next launch will use SwiftShader');
+      } catch (e) {
+        console.error('Failed to write crash marker:', e);
+      }
+    }
+
     if (mainWindow && !mainWindow.isDestroyed()) {
+      const swiftMsg = isGpuCrash && !swiftshaderActive
+        ? '\n\nSonraki başlatmada GPU sorunu için yazılım modu (SwiftShader) denenecek.'
+        : '';
       dialog.showMessageBox({
         type: 'error',
         title: 'Renderer Crash',
         message: `Renderer process crashed`,
-        detail: `Reason: ${details.reason}\nExit Code: ${details.exitCode}\n\nCrash log: ${crashLogPath}\n\n"Yeniden Yükle" ile devam edebilirsiniz.`,
+        detail: `Reason: ${details.reason}\nExit Code: ${details.exitCode}\n\nCrash log: ${crashLogPath}${swiftMsg}\n\n"Yeniden Yükle" ile devam edebilirsiniz.`,
         buttons: ['Yeniden Yükle', 'Kapat'],
         defaultId: 0,
       }).then((result) => {
@@ -164,38 +217,78 @@ function createWindow() {
  * Start the Python backend server
  */
 function startPythonBackend() {
-  const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
-  
   let backendPath;
+  let backendCwd;
   if (isDev) {
     backendPath = path.join(__dirname, '../../../backend/main.py');
+    backendCwd = path.join(__dirname, '../../..');
   } else {
     backendPath = path.join(process.resourcesPath, 'backend/main.py');
+    backendCwd = path.join(process.resourcesPath);
   }
 
-  console.log(`Starting Python backend: ${backendPath}`);
+  // Verify the backend script exists before attempting to spawn
+  if (!fs.existsSync(backendPath)) {
+    console.error(`❌ [MAIN] Backend script not found: ${backendPath}`);
+    return;
+  }
 
-  pythonProcess = spawn(pythonPath, [backendPath], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, PYTHONUNBUFFERED: '1' },
-  });
+  console.log(`🚀 [MAIN] Starting Python backend: ${backendPath}`);
+  console.log(`🚀 [MAIN] Backend cwd: ${backendCwd}`);
 
-  pythonProcess.stdout.on('data', (data) => {
-    console.log(`Python: ${data}`);
-  });
+  // Try common Python executable names
+  const pythonCandidates = process.platform === 'win32'
+    ? ['python', 'python3', 'py']
+    : ['python3', 'python'];
 
-  pythonProcess.stderr.on('data', (data) => {
-    console.error(`Python Error: ${data}`);
-  });
+  const trySpawn = (idx) => {
+    if (idx >= pythonCandidates.length) {
+      console.error('❌ [MAIN] No working Python executable found. Tried:', pythonCandidates.join(', '));
+      return;
+    }
+    const pyExe = pythonCandidates[idx];
+    console.log(`🔧 [MAIN] Trying: ${pyExe} ${backendPath}`);
 
-  pythonProcess.on('close', (code) => {
-    console.log(`Python process exited with code ${code}`);
-    pythonProcess = null;
-  });
+    pythonProcess = spawn(pyExe, [backendPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: backendCwd,
+      shell: true,
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
 
-  pythonProcess.on('error', (err) => {
-    console.error('Failed to start Python backend:', err);
-  });
+    let spawnFailed = false;
+
+    pythonProcess.on('error', (err) => {
+      spawnFailed = true;
+      console.error(`❌ [MAIN] Failed to start with '${pyExe}':`, err.message);
+      pythonProcess = null;
+      trySpawn(idx + 1);
+    });
+
+    // If the process exits almost immediately (within 3s), try next candidate
+    pythonProcess.on('close', (code) => {
+      if (code !== null && code !== 0) {
+        console.warn(`⚠️ [MAIN] Python (${pyExe}) exited with code ${code}`);
+      }
+      pythonProcess = null;
+    });
+
+    pythonProcess.stdout.on('data', (data) => {
+      console.log(`Python: ${data.toString().trim()}`);
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      const msg = data.toString().trim();
+      // Flask prints startup info to stderr — that's normal
+      if (msg.includes('Running on') || msg.includes('WARNING')) {
+        console.log(`Python: ${msg}`);
+      } else {
+        console.error(`Python Error: ${msg}`);
+      }
+    });
+  };
+
+  trySpawn(0);
 }
 
 /**
@@ -260,7 +353,14 @@ app.whenReady().then(() => {
   
   // Start backend if needed, then wait for it
   startBackendIfNeeded().then(() => {
-    setTimeout(waitForBackend, 2000);
+    // In dev mode the backend may take a while to start —
+    // open the window immediately and let the renderer poll health.
+    if (isDev) {
+      console.log('🔧 [MAIN] Dev mode: opening window immediately, renderer will poll health');
+      setTimeout(createWindow, 1500);
+    } else {
+      setTimeout(waitForBackend, 2000);
+    }
   });
 
   app.on('activate', () => {
@@ -374,20 +474,55 @@ ipcMain.handle('sse:request', async (event, { id, url, body }) => {
 // Generic HTTP Proxy — route ALL renderer HTTP through Node.js to avoid
 // Chromium network stack ACCESS_VIOLATION crashes during GPU operations
 // =============================================================================
-ipcMain.handle('ipc:fetch', async (event, { url, method, headers, body, responseType }) => {
+ipcMain.handle('ipc:fetch', async (event, { url, method, headers, body, responseType, formDataParts }) => {
   const http = require('http');
   const urlObj = new URL(url);
 
   return new Promise((resolve, reject) => {
-    const reqHeaders = { ...(headers || {}) };
-    let bodyStr = null;
+    const reqHeaders = {};
+    // Sanitise headers — drop undefined/null values that crash Node HTTP client
+    if (headers && typeof headers === 'object') {
+      for (const [key, value] of Object.entries(headers)) {
+        if (value !== undefined && value !== null && typeof value !== 'object') {
+          reqHeaders[key] = String(value);
+        }
+      }
+    }
+    let bodyBuf = null;
 
-    if (body !== undefined && body !== null) {
-      bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+    // ── FormData multipart support ──────────────────────────────
+    // When the renderer serialises a FormData into parts[], we rebuild
+    // a proper multipart/form-data body here in the main process so
+    // the actual HTTP request goes through Node.js, not Chromium.
+    if (Array.isArray(formDataParts) && formDataParts.length > 0) {
+      const boundary = `----ElectronIPC${Date.now()}${Math.random().toString(36).slice(2)}`;
+      reqHeaders['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
+
+      const chunks = [];
+      for (const part of formDataParts) {
+        let header = `--${boundary}\r\n`;
+        if (part.type === 'blob') {
+          header += `Content-Disposition: form-data; name="${part.name}"; filename="${part.filename}"\r\n`;
+          header += `Content-Type: ${part.mime}\r\n\r\n`;
+          chunks.push(Buffer.from(header, 'utf-8'));
+          chunks.push(Buffer.from(part.data, 'base64'));
+          chunks.push(Buffer.from('\r\n', 'utf-8'));
+        } else {
+          header += `Content-Disposition: form-data; name="${part.name}"\r\n\r\n`;
+          header += `${part.data}\r\n`;
+          chunks.push(Buffer.from(header, 'utf-8'));
+        }
+      }
+      chunks.push(Buffer.from(`--${boundary}--\r\n`, 'utf-8'));
+      bodyBuf = Buffer.concat(chunks);
+      reqHeaders['Content-Length'] = bodyBuf.length;
+    } else if (body !== undefined && body !== null) {
+      const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+      bodyBuf = Buffer.from(bodyStr, 'utf-8');
       if (!reqHeaders['Content-Type']) {
         reqHeaders['Content-Type'] = 'application/json';
       }
-      reqHeaders['Content-Length'] = Buffer.byteLength(bodyStr);
+      reqHeaders['Content-Length'] = bodyBuf.length;
     }
 
     const req = http.request({
@@ -416,7 +551,7 @@ ipcMain.handle('ipc:fetch', async (event, { url, method, headers, body, response
     req.on('error', (err) => reject(new Error(err.message)));
     req.setTimeout(600000, () => { req.destroy(); reject(new Error('Request timeout')); });
 
-    if (bodyStr) req.write(bodyStr);
+    if (bodyBuf) req.write(bodyBuf);
     req.end();
   });
 });
@@ -508,6 +643,20 @@ ipcMain.handle('backend:status', () => {
 ipcMain.handle('backend:restart', () => {
   stopPythonBackend();
   setTimeout(startPythonBackend, 1000);
+  return true;
+});
+
+// =============================================================================
+// GPU / SwiftShader status
+// =============================================================================
+ipcMain.handle('gpu:status', () => ({
+  swiftshader: swiftshaderActive,
+  crashMarkerExists: fs.existsSync(CRASH_MARKER),
+}));
+
+ipcMain.handle('gpu:clearCrashMarker', () => {
+  try { fs.unlinkSync(CRASH_MARKER); } catch {}
+  console.log('[MAIN] Crash marker cleared by user — next launch will try hardware GPU');
   return true;
 });
 

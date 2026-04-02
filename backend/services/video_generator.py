@@ -87,6 +87,33 @@ class VideoGenerator:
         except Exception as e:
             print(f"⚠️ GPU detection failed: {e}, falling back to CPU encoding")
     
+    def extract_thumbnail(self, video_path: str, output_path: str, seek_seconds: float = 2, width: int = 320) -> bool:
+        """Extract a single thumbnail frame from a video file.
+        
+        Args:
+            video_path: Path to video file
+            output_path: Path to save thumbnail JPEG
+            seek_seconds: Position to seek to in seconds
+            width: Thumbnail width (height auto-calculated)
+        Returns:
+            True if successful
+        """
+        try:
+            cmd = [
+                self.ffmpeg_path, "-y",
+                "-ss", f"{seek_seconds:.2f}",
+                "-i", video_path,
+                "-frames:v", "1",
+                "-vf", f"scale={width}:-1",
+                "-q:v", "5",
+                output_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=10)
+            return result.returncode == 0 and os.path.exists(output_path)
+        except Exception as e:
+            print(f"[VideoGen] Thumbnail extraction failed: {e}")
+            return False
+
     def get_audio_duration(self, audio_path: str) -> float:
         """Get duration of audio file in seconds"""
         cmd = [
@@ -326,7 +353,9 @@ class VideoGenerator:
         output_format: str = "mp4",
         quality: str = "high",
         fps: int = DEFAULT_FPS,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        cancel_check: Optional[callable] = None,
+        thumbnail_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate a video from an audio file with specified background
@@ -341,6 +370,7 @@ class VideoGenerator:
             quality: 'high', 'medium', or 'low'
             fps: Frames per second
             progress_callback: Progress callback function
+            thumbnail_path: Path to save live thumbnail JPEG
             
         Returns:
             Dict with output path and metadata
@@ -415,6 +445,31 @@ class VideoGenerator:
         if progress_callback:
             progress_callback(10, "Starting video generation...")
         
+        # Generate instant thumbnail from background
+        if thumbnail_path:
+            try:
+                if background_type == "image" and os.path.exists(background_value):
+                    # Thumbnail from background image
+                    thumb_cmd = [
+                        self.ffmpeg_path, "-y",
+                        "-i", background_value,
+                        "-frames:v", "1",
+                        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,scale=320:-1",
+                        "-q:v", "5", thumbnail_path
+                    ]
+                else:
+                    # Thumbnail from solid color
+                    color = background_value.lstrip("#") if background_value.startswith("#") else "000000"
+                    thumb_cmd = [
+                        self.ffmpeg_path, "-y",
+                        "-f", "lavfi", "-i", f"color=c=0x{color}:s=320x180:d=0.1",
+                        "-frames:v", "1", "-q:v", "5", thumbnail_path
+                    ]
+                subprocess.run(thumb_cmd, capture_output=True, timeout=5)
+                print(f"[VideoGen] Instant background thumbnail generated")
+            except Exception as e:
+                print(f"[VideoGen] Background thumbnail failed: {e}")
+        
         # Run FFmpeg
         gpu_info = f" (GPU: {self.gpu_type.upper()})" if self.hardware_codec else " (CPU)"
         bg_opt = " [Optimized BG]" if background_type == "image" and BACKGROUND_IMAGE_OPTIMIZATION else ""
@@ -428,7 +483,33 @@ class VideoGenerator:
             errors='replace'
         )
         
-        stdout, stderr = process.communicate()
+        # Read stderr line-by-line for progress and cancellation
+        import re as _re_gen
+        stderr_lines = []
+        for line in process.stderr:
+            stderr_lines.append(line)
+            
+            # Report progress during base video generation
+            if duration > 0 and "time=" in line:
+                time_match = _re_gen.search(r"time=(\d+):(\d+):(\d+)\.(\d+)", line)
+                if time_match:
+                    h, m, s, cs = map(int, time_match.groups())
+                    current_time = h * 3600 + m * 60 + s + cs / 100
+                    if progress_callback:
+                        gen_progress = min(90, int((current_time / duration) * 90))
+                        progress_callback(gen_progress, "Temel video oluşturuluyor...")
+            
+            if cancel_check and cancel_check():
+                process.kill()
+                process.wait()
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+                raise RuntimeError("Render cancelled")
+        
+        process.wait()
+        stderr = "".join(stderr_lines)
         
         # Cleanup temp background image if created
         if background_type == "image":
@@ -479,6 +560,8 @@ class VideoGenerator:
         progress_callback: Optional[callable] = None,
         visualizer_video_path: Optional[str] = None,
         visualizer_opacity: float = 0.8,
+        thumbnail_path: Optional[str] = None,
+        cancel_check: Optional[callable] = None,
     ) -> Dict[str, Any]:
         """
         Generate video with burned-in subtitles
@@ -523,9 +606,11 @@ class VideoGenerator:
             format_type=format_type,
             output_format=output_format,
             quality=quality,
-            progress_callback=lambda p, m: progress_callback(p // 2, m) if progress_callback else None
+            progress_callback=lambda p, m: progress_callback(p // 2, m) if progress_callback else None,
+            cancel_check=cancel_check,
+            thumbnail_path=thumbnail_path,
         )
-        
+
         # Generate output path if not provided
         if output_path is None:
             output_filename = f"submaker_{uuid.uuid4().hex[:8]}.{output_format}"
@@ -571,6 +656,9 @@ class VideoGenerator:
                 f"[0:v][viz_alpha]overlay=0:0:shortest=1[vwithviz]"
             )
             print(f"[VideoGen] Visualizer overlay added: {visualizer_video_path}, opacity={viz_opacity}")
+        else:
+            if visualizer_video_path:
+                print(f"[VideoGen] WARNING: Visualizer video file not found: {visualizer_video_path}")
 
         # Collect all logos (support both single logo and logos array)
         all_logos = []
@@ -684,18 +772,25 @@ class VideoGenerator:
                 
                 print(f"[VideoGen] Logo {idx+1} filter added: pos=({logo_pos_x},{logo_pos_y}), size={logo_size}%, opacity={logo_opacity}")
         
-        # Add subtitle filter
+        # Add subtitle filter — output to [vout]
+        has_complex_filter = bool(filter_parts)
         if logo_paths and filter_parts:
-            # Logos were added, subtitle filter works on [vlogo]
             filter_parts.append(f"[vlogo]{subtitle_filter}[vout]")
-            full_filter = ";".join(filter_parts)
         elif filter_parts:
-            # Only visualizer (no logos), subtitle filter works on [vwithviz]
             filter_parts.append(f"[vwithviz]{subtitle_filter}[vout]")
-            full_filter = ";".join(filter_parts)
         else:
-            # No logo or visualizer, simple subtitle filter
-            full_filter = subtitle_filter
+            filter_parts.append(f"[0:v]{subtitle_filter}[vout]")
+            has_complex_filter = True
+
+        # Add live thumbnail via split (FFmpeg writes JPEG every frame, scaled to 320px)
+        if thumbnail_path:
+            filter_parts.append("[vout]split=2[vmain][vproxy]")
+            filter_parts.append("[vproxy]fps=1,scale=320:-1[thumb]")
+            video_out_label = "[vmain]"
+        else:
+            video_out_label = "[vout]"
+
+        full_filter = ";".join(filter_parts)
         
         # Build FFmpeg command for subtitle burning with compatibility
         cmd = [
@@ -721,16 +816,9 @@ class VideoGenerator:
         if filter_parts:
             print(f"[VideoGen] Filter complex: {full_filter}")
         
-        # Add filter
-        if filter_parts:
-            cmd.extend(["-filter_complex", full_filter, "-map", "[vout]", "-map", "0:a"])
-        else:
-            cmd.extend(["-vf", full_filter])
-            cmd.extend(["-c:a", "copy"])
-        
-        # Add audio codec for complex filter case
-        if filter_parts:
-            cmd.extend(["-c:a", DEFAULT_AUDIO_CODEC, "-b:a", DEFAULT_AUDIO_BITRATE])
+        # Add filter — always use -filter_complex now
+        cmd.extend(["-filter_complex", full_filter, "-map", video_out_label, "-map", "0:a"])
+        cmd.extend(["-c:a", DEFAULT_AUDIO_CODEC, "-b:a", DEFAULT_AUDIO_BITRATE])
         
         # Add video codec settings with NVENC optimization
         if output_format == "webm":
@@ -746,6 +834,10 @@ class VideoGenerator:
                 cmd.extend(["-c:v", DEFAULT_VIDEO_CODEC])
         
         cmd.append(output_path)
+
+        # Second output: live thumbnail (FFmpeg overwrites JPEG each second)
+        if thumbnail_path:
+            cmd.extend(["-map", "[thumb]", "-f", "image2", "-update", "1", "-q:v", "5", thumbnail_path])
         
         # Debug: Print full FFmpeg command
         print(f"[VideoGen] FFmpeg command: {' '.join(cmd)}")
@@ -753,7 +845,7 @@ class VideoGenerator:
         if progress_callback:
             progress_callback(60, "Burning subtitles...")
         
-        # Run FFmpeg
+        # Run FFmpeg with progress tracking
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -762,7 +854,38 @@ class VideoGenerator:
             errors='replace'
         )
         
-        stdout, stderr = process.communicate()
+        # Parse stderr for progress (FFmpeg outputs time= field)
+        import re as _re
+        total_duration = result.get("duration", 0)
+        stderr_lines = []
+        for line in process.stderr:
+            stderr_lines.append(line)
+            if total_duration > 0 and "time=" in line:
+                time_match = _re.search(r"time=(\d+):(\d+):(\d+)\.(\d+)", line)
+                if time_match:
+                    h, m, s, cs = map(int, time_match.groups())
+                    current_time = h * 3600 + m * 60 + s + cs / 100
+                    burn_progress = min(1.0, current_time / total_duration)
+                    scaled = 60 + int(burn_progress * 35)
+                    if progress_callback:
+                        progress_callback(scaled, "Altyazılar yakılıyor...")
+            
+            # Check for cancellation
+            if cancel_check and cancel_check():
+                process.kill()
+                process.wait()
+                try:
+                    os.remove(temp_video)
+                except Exception:
+                    pass
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+                raise RuntimeError("Render cancelled")
+        
+        process.wait()
+        stderr = "".join(stderr_lines)
         
         # Clean up temp file
         try:
@@ -772,6 +895,13 @@ class VideoGenerator:
         
         if process.returncode != 0:
             raise RuntimeError(f"FFmpeg subtitle burn failed: {stderr}")
+        
+        # Extract final thumbnail from completed video
+        if thumbnail_path and os.path.exists(output_path):
+            try:
+                self.extract_thumbnail(output_path, thumbnail_path, seek_seconds=min(2, total_duration / 2), width=320)
+            except Exception:
+                pass
         
         if progress_callback:
             progress_callback(100, "Complete!")

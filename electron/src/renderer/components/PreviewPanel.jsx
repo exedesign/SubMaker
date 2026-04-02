@@ -2,10 +2,14 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useAppStore } from '../stores/appStore';
 import {
   FiEye, FiEyeOff, FiMinimize2, FiMaximize2, FiMove,
-  FiExternalLink, FiSidebar, FiX, FiMoreVertical, FiMaximize
+  FiExternalLink, FiSidebar, FiX, FiMaximize,
+  FiChevronDown, FiChevronRight, FiMenu
 } from 'react-icons/fi';
 import LogoOverlay from './LogoOverlay';
 import ButterchurnCanvas from './ButterchurnCanvas';
+import AnimationSelector from './AnimationSelector';
+import BackgroundSelector from './BackgroundSelector';
+import FormatSelector from './FormatSelector';
 
 // Utility function to convert backend file paths to HTTP URLs
 const getImageUrl = (imagePath) => {
@@ -61,6 +65,102 @@ function PreviewPanel() {
   const [isVisible, setIsVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(300); // Docked panel genişliği
+  const [collapsedSections, setCollapsedSections] = useState({ format: true, background: true, animation: true });
+
+  // Derive actual audio element reactively — globalAudioRef.current changes
+  // silently (ref mutation), so we use playbackTime/isPlaying as triggers
+  // to re-evaluate the ref on each render
+  const audioElementForViz = globalAudioRef?.current ?? null;
+
+  // Collapsible section definitions
+  const PREVIEW_SECTIONS_DEF = [
+    { id: 'format', title: 'Video Formatı', Component: FormatSelector },
+    { id: 'background', title: 'Arkaplan', Component: BackgroundSelector },
+    { id: 'animation', title: 'Animasyon', Component: AnimationSelector },
+  ];
+  const PREVIEW_DEFAULT_ORDER = PREVIEW_SECTIONS_DEF.map(s => s.id);
+  const PREVIEW_ORDER_KEY = 'submaker-preview-order';
+  const PREVIEW_COLLAPSED_KEY = 'submaker-preview-collapsed';
+
+  // Section order state (drag reorder)
+  const [previewSectionOrder, setPreviewSectionOrder] = useState(() => {
+    try {
+      const saved = localStorage.getItem(PREVIEW_ORDER_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length === PREVIEW_DEFAULT_ORDER.length &&
+            PREVIEW_DEFAULT_ORDER.every(id => parsed.includes(id))) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return PREVIEW_DEFAULT_ORDER;
+  });
+  const [sectionDraggedId, setSectionDraggedId] = useState(null);
+  const [sectionDragOverId, setSectionDragOverId] = useState(null);
+
+  // Persist collapsed state
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PREVIEW_COLLAPSED_KEY);
+      if (saved) setCollapsedSections(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  const toggleSection = (key) => {
+    setCollapsedSections(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem(PREVIEW_COLLAPSED_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // Section drag handlers
+  const handleSectionDragStart = useCallback((e, id) => {
+    setSectionDraggedId(id);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+    if (e.currentTarget) e.currentTarget.style.opacity = '0.5';
+  }, []);
+
+  const handleSectionDragEnd = useCallback((e) => {
+    if (e.currentTarget) e.currentTarget.style.opacity = '1';
+    setSectionDraggedId(null);
+    setSectionDragOverId(null);
+  }, []);
+
+  const handleSectionDragOver = useCallback((e, id) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (id !== sectionDragOverId) setSectionDragOverId(id);
+  }, [sectionDragOverId]);
+
+  const handleSectionDrop = useCallback((e, targetId) => {
+    e.preventDefault();
+    const sourceId = sectionDraggedId;
+    if (!sourceId || sourceId === targetId) {
+      setSectionDraggedId(null);
+      setSectionDragOverId(null);
+      return;
+    }
+    setPreviewSectionOrder(prev => {
+      const newOrder = [...prev];
+      const srcIdx = newOrder.indexOf(sourceId);
+      const tgtIdx = newOrder.indexOf(targetId);
+      if (srcIdx === -1 || tgtIdx === -1) return prev;
+      newOrder.splice(srcIdx, 1);
+      newOrder.splice(tgtIdx, 0, sourceId);
+      localStorage.setItem(PREVIEW_ORDER_KEY, JSON.stringify(newOrder));
+      return newOrder;
+    });
+    setSectionDraggedId(null);
+    setSectionDragOverId(null);
+  }, [sectionDraggedId]);
+
+  // Build ordered sections
+  const previewSectionMap = {};
+  PREVIEW_SECTIONS_DEF.forEach(s => { previewSectionMap[s.id] = s; });
+  const orderedPreviewSections = previewSectionOrder.map(id => previewSectionMap[id]).filter(Boolean);
 
   // Floating mode boyutları
   const [floatingSize, setFloatingSize] = useState({ width: 300, height: 400 });
@@ -68,6 +168,7 @@ function PreviewPanel() {
   // Drag state for floating mode
   const containerRef = useRef(null);
   const previewFrameRef = useRef(null);
+  const fullscreenRef = useRef(null);
   const isDragging = useRef(false);
   const isResizing = useRef(false);
   const resizeDirection = useRef(null);
@@ -257,19 +358,37 @@ function PreviewPanel() {
     };
   }, [previewMode]);
 
-  // Fullscreen toggle
+  // Fullscreen toggle — uses native Fullscreen API for true OS-level fullscreen
   const toggleFullscreen = useCallback(() => {
-    setIsFullscreen(prev => !prev);
-  }, []);
+    if (!isFullscreen) {
+      setIsFullscreen(true);
+    } else {
+      // Exit via state; native exit handled by fullscreenchange listener
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsFullscreen(false);
+    }
+  }, [isFullscreen]);
 
-  // Escape key to exit fullscreen
+  // Request native fullscreen when our state goes true
   useEffect(() => {
-    if (!isFullscreen) return;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') setIsFullscreen(false);
+    if (isFullscreen && fullscreenRef.current) {
+      fullscreenRef.current.requestFullscreen().catch(() => {
+        // Fallback: still show the overlay even if native FS is denied
+      });
+    }
+  }, [isFullscreen]);
+
+  // Sync state when user exits native fullscreen via Escape / F11
+  useEffect(() => {
+    const handleFsChange = () => {
+      if (!document.fullscreenElement && isFullscreen) {
+        setIsFullscreen(false);
+      }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, [isFullscreen]);
 
   // Format bilgileri
@@ -304,10 +423,22 @@ function PreviewPanel() {
     return { width: baseWidth, height, scaleFactor };
   }, [previewMode, panelWidth, floatingSize.width, videoFormat, formatInfo]);
 
-  // Fullscreen dimensions - fill entire screen maintaining aspect ratio
+  // Fullscreen dimensions — recalculate on screen/window resize
+  const [screenSize, setScreenSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+  useEffect(() => {
+    const onResize = () => setScreenSize({ w: screen.width || window.innerWidth, h: screen.height || window.innerHeight });
+    window.addEventListener('resize', onResize);
+    // Also update when entering fullscreen (screen dimensions may differ)
+    document.addEventListener('fullscreenchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('fullscreenchange', onResize);
+    };
+  }, []);
+
   const fullscreenDimensions = useMemo(() => {
-    const screenW = window.innerWidth;
-    const screenH = window.innerHeight;
+    const screenW = isFullscreen ? (screen.width || screenSize.w) : screenSize.w;
+    const screenH = isFullscreen ? (screen.height || screenSize.h) : screenSize.h;
     const videoAspect = formatInfo.width / formatInfo.height;
     let w, h;
     if (screenW / screenH > videoAspect) {
@@ -319,7 +450,7 @@ function PreviewPanel() {
     }
     const sf = w / formatInfo.width;
     return { width: w, height: h, scaleFactor: sf };
-  }, [formatInfo]);
+  }, [formatInfo, isFullscreen, screenSize]);
 
   const { width: previewWidth, height: previewHeight, scaleFactor } = previewDimensions;
   const { width: fsWidth, height: fsHeight, scaleFactor: fsScaleFactor } = fullscreenDimensions;
@@ -501,6 +632,7 @@ function PreviewPanel() {
   const previewContent = (
     <>
       {/* Video Frame */}
+      <div className="preview-frame-wrapper">
       <div
         ref={previewFrameRef}
         className="preview-frame"
@@ -534,7 +666,7 @@ function PreviewPanel() {
             <ButterchurnCanvas
               width={previewWidth}
               height={previewHeight}
-              audioElement={globalAudioRef?.current ?? null}
+              audioElement={audioElementForViz}
               presetName={visualizer.presetName}
               sensitivity={visualizer.sensitivity}
             />
@@ -615,70 +747,59 @@ function PreviewPanel() {
           </div>
         )}
       </div>
-
-      {/* Info Panel */}
-      <div className="preview-info">
-        <div className="info-row">
-          <span className="info-key">Font:</span>
-          <span className="info-val" style={{ fontFamily: style.fontName }}>{style.fontName}</span>
-        </div>
-        <div className="info-row">
-          <span className="info-key">Boyut:</span>
-          <span className="info-val highlight">{style.fontSize}px</span>
-        </div>
-        <div className="info-row">
-          <span className="info-key">Animasyon:</span>
-          <span className={`info-val animation-badge ${animation.type}`}>
-            {animation.type === 'karaoke' ? '🎤 Karaoke' : 
-             animation.type === 'fade' ? '✨ Fade' :
-             animation.type === 'pop' ? '💥 Pop' :
-             animation.type === 'typewriter' ? '⌨️ Typewriter' : '—'}
-          </span>
-        </div>
-        <div className="info-row colors">
-          <span className="color-dot" style={{ background: style.color }} title={`Metin: ${style.color}`} />
-          <span className="color-dot border" style={{ background: style.borderColor }} title={`Kenarlık: ${style.borderColor}`} />
-          {animation.type === 'karaoke' && (
-            <span className="color-dot karaoke" style={{ background: animation.highlightColor }} title={`Karaoke: ${animation.highlightColor}`} />
-          )}
-        </div>
       </div>
 
-      {/* Playback Info */}
-      <div className="preview-playback-info">
-        <div className={`playback-indicator ${isPlaying ? 'playing' : ''}`}>
-          <span className="time">{formatTime(playbackTime)}</span>
-          {isPlaying && <span className="live-badge">CANLI</span>}
-        </div>
-        {activeSubtitle && (
-          <div className="active-subtitle-num">
-            #{subtitles.indexOf(activeSubtitle) + 1} / {subtitles.length}
-          </div>
-        )}
-      </div>
+      {/* Settings Sections — collapsible + draggable (same as Sidebar) */}
+      {orderedPreviewSections.map(({ id, title, Component }) => {
+        const isDragging = sectionDraggedId === id;
+        const isDragOver = sectionDragOverId === id && sectionDraggedId !== id;
+        const isCollapsed = !!collapsedSections[id];
 
-      {/* Video Oluşturmaya Geç — edit adımında altyazılar varken */}
-      {currentStep === 'edit' && subtitles.length > 0 && (
-        <div style={{
-          padding: '8px 10px',
-          background: 'var(--bg-tertiary)',
-          borderRadius: 6,
-          border: '1px solid var(--border-color)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
-        }}>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-            {subtitles.length} altyazı hazır
-          </p>
-          <button
-            className="btn btn-primary"
-            onClick={() => useAppStore.getState().setCurrentStep('style')}
-            style={{ width: '100%', padding: '8px 12px', fontSize: 13 }}
+        return (
+          <div
+            key={id}
+            className={`sidebar-section${isDragging ? ' dragging' : ''}${isDragOver ? ' drag-over' : ''}${isCollapsed ? ' collapsed' : ''}`}
+            draggable
+            onDragStart={(e) => handleSectionDragStart(e, id)}
+            onDragEnd={handleSectionDragEnd}
+            onDragOver={(e) => handleSectionDragOver(e, id)}
+            onDrop={(e) => handleSectionDrop(e, id)}
           >
-            Video Oluşturmaya Geç →
-          </button>
-        </div>
+            <h3
+              className="sidebar-section-title"
+              onClick={() => toggleSection(id)}
+            >
+              <span
+                className="sidebar-drag-handle"
+                title="Sürükleyerek sırala"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <FiMenu size={12} />
+              </span>
+              <span className="sidebar-section-label">{title}</span>
+              <span className="sidebar-collapse-icon">
+                {isCollapsed ? <FiChevronRight size={14} /> : <FiChevronDown size={14} />}
+              </span>
+            </h3>
+            {!isCollapsed && (
+              <div className="sidebar-section-body">
+                <Component />
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Render Butonu — sağ panelde */}
+      {subtitles.length > 0 && (
+        <button
+          className="btn btn-primary"
+          onClick={() => useAppStore.getState().render()}
+          disabled={subtitles.length === 0}
+          style={{ width: '100%', padding: '8px 12px', fontSize: 13 }}
+        >
+          🎬 Render Video
+        </button>
       )}
     </>
   );
@@ -687,13 +808,24 @@ function PreviewPanel() {
   if (isFullscreen) {
     return (
       <div
+        ref={fullscreenRef}
         className="preview-fullscreen-overlay"
-        onDoubleClick={() => setIsFullscreen(false)}
+        onDoubleClick={() => {
+          if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+          }
+          setIsFullscreen(false);
+        }}
       >
         {/* Close button - auto-hides */}
         <button
           className="preview-fullscreen-close"
-          onClick={() => setIsFullscreen(false)}
+          onClick={() => {
+            if (document.fullscreenElement) {
+              document.exitFullscreen().catch(() => {});
+            }
+            setIsFullscreen(false);
+          }}
           title="Kapat (ESC)"
         >
           <FiX size={18} />
@@ -732,7 +864,7 @@ function PreviewPanel() {
               <ButterchurnCanvas
                 width={Math.round(fsWidth)}
                 height={Math.round(fsHeight)}
-                audioElement={globalAudioRef?.current ?? null}
+                audioElement={audioElementForViz}
                 presetName={visualizer.presetName}
                 sensitivity={visualizer.sensitivity}
               />
@@ -817,9 +949,7 @@ function PreviewPanel() {
           className="preview-resize-handle"
           onMouseDown={handleResizeStart}
           title="Sürükleyerek boyutlandır"
-        >
-          <FiMoreVertical size={12} />
-        </div>
+        />
         
         <div className="preview-header">
           <span className="preview-title">

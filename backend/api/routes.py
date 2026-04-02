@@ -3,8 +3,11 @@ SubMaker API Routes
 Flask endpoints for transcription, translation, and video rendering
 """
 import os
+import re
 import uuid
 import json
+import shutil
+import subprocess
 import requests
 from pathlib import Path
 from flask import Blueprint, request, jsonify, send_file, Response
@@ -13,7 +16,7 @@ import mimetypes
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from config import TEMP_DIR, OUTPUT_DIR, FONTS_DIR, SUPPORTED_LANGUAGES, TENOR_API_KEY, TENOR_CLIENT_KEY, GIPHY_API_KEY
+from config import TEMP_DIR, OUTPUT_DIR, FONTS_DIR, SUPPORTED_LANGUAGES, TENOR_API_KEY, TENOR_CLIENT_KEY, GIPHY_API_KEY, FFMPEG_PATH, ENABLE_GPU_ACCELERATION
 from services import (
     TranscriptionService,
     TranslationService,
@@ -770,7 +773,7 @@ def vocal_isolation_separate():
         return jsonify({"error": "Invalid request body"}), 400
 
     file_path = data.get("file_path")
-    model_id = data.get("model_id", "mdx23c")
+    model_id = data.get("model_id", "vocal_ep317")
     selected_stems = data.get("selected_stems")
 
     if not file_path:
@@ -984,7 +987,7 @@ def transcribe_stream():
 
     whisper_params = data.get("whisper_params", {})  # User fine-tune overrides
     enable_vocal_isolation = data.get("enable_vocal_isolation", False)
-    vocal_model_id = data.get("vocal_model_id")  # e.g. "mdx23c", "bs_roformer", or "demucs_ft"
+    vocal_model_id = data.get("vocal_model_id")  # e.g. "vocal_ep317" or "instrumental_resurrection"
 
     if not file_path:
         return jsonify({"error": "file_path required"}), 400
@@ -1465,7 +1468,8 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             "progress": 5,
             "step": "Altyazı dosyası oluşturuluyor...",
             "error": None,
-            "output_path": None
+            "output_path": None,
+            "thumbnail_url": None
         }
         
         # Step 1: Generate subtitle file
@@ -1606,6 +1610,13 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         print(f"[Render Job {job_id}] Getting video generator...")
         generator = get_video_generator()
         
+        # Thumbnail path for live preview
+        thumb_path = str(TEMP_DIR / f"thumb_{job_id}.jpg")
+        thumb_url = f"/api/media/temp/thumb_{job_id}.jpg"
+
+        # Set thumbnail URL immediately — frontend handles 404 gracefully via onError/onLoad
+        _render_jobs[job_id]["thumbnail_url"] = thumb_url
+
         # Progress callback for video generation
         def progress_callback(progress, step=""):
             # Scale 30-95 for video generation
@@ -1614,12 +1625,26 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             if step:
                 _render_jobs[job_id]["step"] = step
                 print(f"[Render Job {job_id}] Progress: {scaled}% - {step}")
+
+        # Cancel check callback — generator will kill FFmpeg if this returns True
+        def cancel_check():
+            return _render_jobs.get(job_id, {}).get("status") == "cancelled"
         
         print(f"[Render Job {job_id}] Generating video: audio={audio_path}, bg={background.get('type')}, logos={len(logos) if logos else 0}")
+
         # Visualizer video path (pre-rendered by frontend)
         visualizer_video_path = None
         if visualizer and isinstance(visualizer, dict):
             visualizer_video_path = visualizer.get("videoPath")
+
+        # Extract early thumbnail from visualizer video if available
+        if visualizer_video_path and os.path.exists(str(visualizer_video_path)):
+            try:
+                if generator.extract_thumbnail(str(visualizer_video_path), thumb_path, seek_seconds=2, width=320):
+                    _render_jobs[job_id]["thumbnail_url"] = thumb_url
+                    print(f"[Render Job {job_id}] Visualizer thumbnail generated")
+            except Exception as e:
+                print(f"[Render Job {job_id}] Visualizer thumbnail failed: {e}")
 
         # Derive output path from original media location (not mixed temp path)
         source_dir = os.path.dirname(original_audio_path)
@@ -1648,10 +1673,15 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             progress_callback=progress_callback,
             visualizer_video_path=visualizer_video_path,
             visualizer_opacity=visualizer.get("opacity", 0.8) if visualizer else 0.8,
+            thumbnail_path=thumb_path,
+            cancel_check=cancel_check,
         )
-        
+
+        # Ensure thumbnail URL is set after render completes
+        if os.path.exists(thumb_path):
+            _render_jobs[job_id]["thumbnail_url"] = thumb_url
         _render_jobs[job_id]["progress"] = 98
-        _render_jobs[job_id]["step"] = "Temizlik yapılıyor..."
+        _render_jobs[job_id]["step"] = "Son kontroller..."
         
         # Clean up temp files
         try:
@@ -1676,9 +1706,21 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         import traceback
         print(f"[Render Job {job_id}] ERROR: {str(e)}")
         traceback.print_exc()
-        _render_jobs[job_id]["status"] = "error"
-        _render_jobs[job_id]["error"] = str(e)
-        _render_jobs[job_id]["step"] = f"Hata: {str(e)}"
+        # Don't overwrite cancelled status
+        if _render_jobs[job_id]["status"] != "cancelled":
+            _render_jobs[job_id]["status"] = "error"
+            _render_jobs[job_id]["error"] = str(e)
+            _render_jobs[job_id]["step"] = f"Hata: {str(e)}"
+        else:
+            _render_jobs[job_id]["step"] = "İptal edildi"
+        
+        # Clean up thumbnail on error
+        try:
+            thumb_file = TEMP_DIR / f"thumb_{job_id}.jpg"
+            if thumb_file.exists():
+                thumb_file.unlink()
+        except Exception:
+            pass
 
 
 @api.route("/render", methods=["POST"])
@@ -1776,7 +1818,8 @@ def get_render_status(job_id):
         "progress": job["progress"],
         "step": job["step"],
         "error": job["error"],
-        "output_path": job["output_path"]
+        "output_path": job["output_path"],
+        "thumbnail_url": job.get("thumbnail_url")
     })
 
 
@@ -1807,6 +1850,154 @@ def download_file(filename):
         return send_file(str(temp_path), as_attachment=True)
     
     return jsonify({"error": "File not found"}), 404
+
+
+# =============================================================================
+# Visualizer Frame Assembly (Offline Render Pipeline)
+# =============================================================================
+
+@api.route("/visualizer/session", methods=["POST"])
+def visualizer_create_session():
+    """Create a new visualizer frame capture session with a temp directory."""
+    try:
+        session_id = f"viz_{uuid.uuid4().hex}"
+        session_dir = TEMP_DIR / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[Visualizer] Session created: {session_id}")
+        return jsonify({"success": True, "session_id": session_id})
+    except Exception as e:
+        print(f"[Visualizer] Session creation error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/visualizer/frames", methods=["POST"])
+def visualizer_upload_frames():
+    """Receive a batch of JPEG frames for a visualizer session."""
+    try:
+        session_id = request.form.get("session_id", "")
+        # Sanitize session_id to prevent path traversal
+        if not re.match(r"^viz_[a-f0-9]+$", session_id):
+            return jsonify({"error": "Invalid session_id"}), 400
+
+        session_dir = TEMP_DIR / session_id
+        if not session_dir.exists():
+            return jsonify({"error": "Session not found"}), 404
+
+        files = request.files.getlist("frames")
+        if not files:
+            return jsonify({"error": "No frames provided"}), 400
+
+        saved = 0
+        for f in files:
+            # Validate filename pattern: frame_XXXXX.jpg
+            fname = f.filename or ""
+            if not re.match(r"^frame_\d{5}\.jpg$", fname):
+                continue
+            f.save(str(session_dir / fname))
+            saved += 1
+
+        return jsonify({"success": True, "received": saved})
+    except Exception as e:
+        print(f"[Visualizer] Frame upload error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/visualizer/assemble", methods=["POST"])
+def visualizer_assemble():
+    """Assemble uploaded JPEG frames into a video using FFmpeg."""
+    try:
+        data = request.get_json()
+        session_id = data.get("session_id", "")
+        fps = data.get("fps", 30)
+        total_frames = data.get("total_frames", 0)
+
+        if not re.match(r"^viz_[a-f0-9]+$", session_id):
+            return jsonify({"error": "Invalid session_id"}), 400
+
+        session_dir = TEMP_DIR / session_id
+        if not session_dir.exists():
+            return jsonify({"error": "Session not found"}), 404
+
+        # Verify frames exist
+        frame_files = sorted(session_dir.glob("frame_*.jpg"))
+        if not frame_files:
+            return jsonify({"error": "No frames found in session"}), 400
+
+        print(f"[Visualizer] Assembling {len(frame_files)} frames @ {fps}fps for session {session_id}")
+
+        output_filename = f"{session_id}.mp4"
+        output_path = TEMP_DIR / output_filename
+        frame_pattern = str(session_dir / "frame_%05d.jpg")
+        ffmpeg_path = str(FFMPEG_PATH) if FFMPEG_PATH else "ffmpeg"
+
+        # Try NVENC first, then fall back to libx264
+        success = False
+        if ENABLE_GPU_ACCELERATION:
+            nvenc_cmd = [
+                ffmpeg_path, "-y",
+                "-framerate", str(fps),
+                "-i", frame_pattern,
+                "-c:v", "h264_nvenc",
+                "-preset", "fast",
+                "-cq", "20",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                str(output_path)
+            ]
+            print(f"[Visualizer] Trying NVENC: {' '.join(nvenc_cmd)}")
+            result = subprocess.run(nvenc_cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode == 0:
+                success = True
+                print(f"[Visualizer] NVENC assembly successful")
+            else:
+                print(f"[Visualizer] NVENC failed: {result.stderr[-500:] if result.stderr else 'no stderr'}")
+
+        if not success:
+            cpu_cmd = [
+                ffmpeg_path, "-y",
+                "-framerate", str(fps),
+                "-i", frame_pattern,
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "20",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                str(output_path)
+            ]
+            print(f"[Visualizer] Using libx264: {' '.join(cpu_cmd)}")
+            result = subprocess.run(cpu_cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                error_msg = result.stderr[-500:] if result.stderr else "Unknown FFmpeg error"
+                print(f"[Visualizer] FFmpeg failed: {error_msg}")
+                return jsonify({"error": f"FFmpeg assembly failed: {error_msg}"}), 500
+            print(f"[Visualizer] libx264 assembly successful")
+
+        # Verify output exists
+        if not output_path.exists() or output_path.stat().st_size < 1000:
+            return jsonify({"error": "Assembly produced empty or missing output"}), 500
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        print(f"[Visualizer] Output: {output_path} ({file_size_mb:.1f} MB)")
+
+        # Cleanup frame directory
+        try:
+            shutil.rmtree(str(session_dir))
+            print(f"[Visualizer] Cleaned up session directory: {session_dir}")
+        except Exception as cleanup_err:
+            print(f"[Visualizer] Cleanup warning: {cleanup_err}")
+
+        return jsonify({
+            "success": True,
+            "videoPath": str(output_path),
+            "file_size_mb": round(file_size_mb, 1),
+            "frames_assembled": len(frame_files)
+        })
+    except subprocess.TimeoutExpired:
+        print(f"[Visualizer] FFmpeg timed out after 300s")
+        return jsonify({"error": "FFmpeg assembly timed out"}), 500
+    except Exception as e:
+        print(f"[Visualizer] Assembly error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================

@@ -21,9 +21,8 @@ eventlet>=0.35.0
 librosa>=0.10.0
 soundfile>=0.12.0
 
-# Vocal Isolation (MDX23C, BS-Roformer via audio-separator + Demucs fallback)
+# Vocal Isolation (BS-Roformer HyperACE v2 + Resurrection UNWA via audio-separator)
 audio-separator[gpu]>=0.24.0
-demucs>=4.0.0
 
 # ONNX Runtime — GPU version only (do NOT install both onnxruntime and onnxruntime-gpu)
 # pip install onnxruntime-gpu

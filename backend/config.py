@@ -317,12 +317,11 @@ OUTPUT_FORMATS = {
 }
 
 # Vocal Isolation Settings
-# Engine: "mdx" (audio-separator: MDX23C, BS-Roformer) or "demucs" (PyTorch, higher quality 4-stem)
+# Engine: "mdx" (audio-separator: BS-Roformer EP317 / Resurrection UNWA)
 VOCAL_ENGINE = "mdx"
 
-# audio-separator models (MDX23C, BS-Roformer — auto-download on first use)
-# Options: "MDX23C-8KFFT-InstVoc_HQ.ckpt", "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
-VOCAL_MDX_MODEL = "MDX23C-8KFFT-InstVoc_HQ.ckpt"
+# Default vocal model (BS-Roformer EP317 — SDR 12.97 vocal extraction)
+VOCAL_MDX_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
 VOCAL_MDX_SEGMENT_SIZE = 256    # Chunk size (256 = default balance, 512 = faster but more RAM)
 VOCAL_MDX_BATCH_SIZE = 4        # Batch size for GPU (higher = faster but more VRAM)
 

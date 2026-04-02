@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../stores/appStore'
+import { fetchJson } from '../services/electronTransport'
 import './LyricsImportPanel.css'
 
 const LyricsImportPanel = () => {
@@ -96,17 +97,10 @@ const LyricsImportPanel = () => {
       setIsLoading(true)
       setError('')
       
-      const response = await fetch('http://127.0.0.1:5000/api/parse-lyrics/preview', {
+      const data = await fetchJson('http://127.0.0.1:5000/api/parse-lyrics/preview', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          lyrics: lyricsText
-        })
+        body: { lyrics: lyricsText },
       })
-
-      const data = await response.json()
       
       if (data.success) {
         setPreviewData(data)
@@ -139,15 +133,10 @@ const LyricsImportPanel = () => {
         requestBody.duration = parseFloat(totalDuration)
       }
 
-      const response = await fetch('http://127.0.0.1:5000/api/parse-lyrics', {
+      const data = await fetchJson('http://127.0.0.1:5000/api/parse-lyrics', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
+        body: requestBody,
       })
-
-      const data = await response.json()
       
       if (data.success) {
         // SubtitleStore'a aktar with selected mode

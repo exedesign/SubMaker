@@ -1,22 +1,41 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useAppStore } from './stores/appStore';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import StatusBar from './components/StatusBar';
 import PreviewPanel from './components/PreviewPanel';
+import LoadingOverlay from './components/LoadingOverlay';
 
 function App() {
-  const { checkBackendHealth, previewMode } = useAppStore();
+  const { checkBackendHealth, backendStatus, previewMode } = useAppStore();
+  const fastPollRef = useRef(null);
 
   useEffect(() => {
-    // Check backend health on mount
     checkBackendHealth();
-    
-    // Periodically check backend status (every 30 seconds)
-    const interval = setInterval(checkBackendHealth, 30000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // Poll quickly (every 3s) until backend comes online, then slow down to 30s
+    const startFastPoll = () => {
+      if (fastPollRef.current) return;
+      fastPollRef.current = setInterval(checkBackendHealth, 3000);
+    };
+    startFastPoll();
+
+    return () => {
+      if (fastPollRef.current) clearInterval(fastPollRef.current);
+    };
+  }, [checkBackendHealth]);
+
+  // Switch to slow polling once online
+  useEffect(() => {
+    if (backendStatus === 'online' && fastPollRef.current) {
+      clearInterval(fastPollRef.current);
+      fastPollRef.current = null;
+      // Switch to slow poll
+      const slow = setInterval(checkBackendHealth, 30000);
+      fastPollRef.current = slow;
+    }
+  }, [backendStatus, checkBackendHealth]);
 
   return (
     <div className="app">
@@ -24,12 +43,11 @@ function App() {
       <div className="app-body">
         <Sidebar />
         <MainContent />
-        {/* Docked preview panel */}
         {previewMode === 'docked' && <PreviewPanel />}
       </div>
       <StatusBar />
-      {/* Floating preview panel */}
       {previewMode === 'floating' && <PreviewPanel />}
+      <LoadingOverlay />
     </div>
   );
 }

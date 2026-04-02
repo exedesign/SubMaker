@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { fetchJson } from '../services/electronTransport';
+import { FiPlay, FiPause, FiSkipBack, FiSkipForward } from 'react-icons/fi';
 
 // Stem track constants
 const STEM_ORDER = ['original', 'vocals', 'instrumental', 'drums', 'bass', 'other'];
@@ -148,7 +149,28 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
     setTrackVolume,
     setTrackMuted,
     setTrackSolo,
+    isPlaying,
+    globalAudioRef,
+    mediaDuration,
   } = useAppStore();
+
+  // Playback controls
+  const handleTogglePlay = useCallback(() => {
+    const ref = globalAudioRef;
+    if (!ref?.current) return;
+    if (ref.current.paused) {
+      ref.current.play();
+    } else {
+      ref.current.pause();
+    }
+  }, [globalAudioRef]);
+
+  const handleSkip = useCallback((seconds) => {
+    const ref = globalAudioRef;
+    if (!ref?.current) return;
+    const dur = ref.current.duration || mediaDuration || duration || 0;
+    ref.current.currentTime = Math.max(0, Math.min(dur, ref.current.currentTime + seconds));
+  }, [globalAudioRef, mediaDuration, duration]);
   
   const containerRef = useRef(null);
   const waveformCanvasRef = useRef(null);
@@ -495,19 +517,80 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
   
   return (
     <div style={{ marginTop: 16 }}>
-      {/* Header */}
+      {/* Transport Bar — playback + timeline header unified */}
       <div style={{ 
         display: 'flex', 
-        justifyContent: 'space-between', 
+        alignItems: 'center',
+        gap: 8,
         marginBottom: 4,
-        fontSize: 11,
-        color: 'var(--text-muted)',
+        padding: '4px 8px',
+        background: 'var(--bg-tertiary)',
+        borderRadius: 6,
+        border: '1px solid var(--border-color)',
       }}>
-        <span>
-          Altyazı Zaman Çizelgesi
-          {isAnalyzing && <span style={{ color: 'var(--accent-warning)' }}> (Ses analizi yapılıyor...)</span>}
+        {/* Playback Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <button
+            onClick={() => handleSkip(-5)}
+            title="5s geri"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 26, height: 26, padding: 0,
+              background: 'transparent', border: 'none', borderRadius: 4,
+              color: 'var(--text-secondary)', cursor: 'pointer',
+              transition: 'background 0.12s, color 0.12s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+          >
+            <FiSkipBack size={13} />
+          </button>
+          <button
+            onClick={handleTogglePlay}
+            title={isPlaying ? 'Duraklat' : 'Oynat'}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 30, height: 30, padding: 0,
+              background: isPlaying ? 'var(--accent-primary)' : 'var(--bg-hover)',
+              border: 'none', borderRadius: '50%',
+              color: isPlaying ? '#fff' : 'var(--text-primary)', cursor: 'pointer',
+              transition: 'background 0.15s, transform 0.1s',
+            }}
+            onMouseEnter={e => { if (!isPlaying) e.currentTarget.style.background = 'var(--accent-primary)'; e.currentTarget.style.color = '#fff'; }}
+            onMouseLeave={e => { if (!isPlaying) { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; } }}
+          >
+            {isPlaying ? <FiPause size={14} /> : <FiPlay size={14} style={{ marginLeft: 1 }} />}
+          </button>
+          <button
+            onClick={() => handleSkip(5)}
+            title="5s ileri"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 26, height: 26, padding: 0,
+              background: 'transparent', border: 'none', borderRadius: 4,
+              color: 'var(--text-secondary)', cursor: 'pointer',
+              transition: 'background 0.12s, color 0.12s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+          >
+            <FiSkipForward size={13} />
+          </button>
+        </div>
+
+        {/* Time Display */}
+        <span style={{
+          fontSize: 11, fontFamily: 'monospace', color: 'var(--text-secondary)',
+          minWidth: 80, letterSpacing: '0.5px',
+        }}>
+          {formatTime(currentTime)}<span style={{ opacity: 0.4 }}> / </span>{formatTime(duration)}
         </span>
-        <span>{subtitles.length} altyazı</span>
+
+        {/* Spacer + Info */}
+        <span style={{ flex: 1 }}>
+          {isAnalyzing && <span style={{ fontSize: 11, color: 'var(--accent-warning)' }}>Ses analizi...</span>}
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{subtitles.length} altyazı</span>
       </div>
       
       {/* Audio Visualization Area */}

@@ -3,7 +3,6 @@ import { useAppStore } from '../stores/appStore';
 import VideoDropzone from './VideoDropzone';
 import SubtitleEditor from './SubtitleEditor';
 import VideoPreview from './VideoPreview';
-import RenderPanel from './RenderPanel';
 import SimpleSunoImporter from './SimpleSunoImporter';
 import useWaveformAnalyzer from '../hooks/useWaveformAnalyzer';
 
@@ -82,9 +81,6 @@ function MainContent() {
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <SubtitleEditor />
           </div>
-
-          {/* Render Panel - only in style/render steps */}
-          {(currentStep === 'style' || currentStep === 'render') && <RenderPanel />}
         </div>
       )}
     </main>

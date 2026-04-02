@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(xargs grep:*)",
+      "Read(//c/Users/FE/AppData/Roaming/SubMaker/dev/**)",
+      "Read(//c/Users/FE/AppData/Roaming/SubMaker/**)",
+      "Bash(npm --version)",
+      "Bash(npm run:*)",
+      "Bash(npx electron-builder:*)",
+      "Bash(taskkill /F /IM \"7za.exe\")",
+      "Bash(taskkill /F /IM \"electron-builder\")",
+      "Bash(ls -lh \"D:/AI/SubMaker/electron/release/\"*.exe)",
+      "Bash(ls -lh \"D:/AI/SubMaker/electron/release/win-unpacked/\"*.exe)"
     ]
   }
 }

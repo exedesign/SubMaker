@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { FiFilm, FiSettings, FiFolder, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile, FiPlay, FiPause, FiSkipBack, FiSkipForward } from 'react-icons/fi';
+import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile } from 'react-icons/fi';
 import { useAppStore } from '../stores/appStore';
 
 function Header() {
@@ -7,7 +7,6 @@ function Header() {
   const {
     settings, setSettings, setDualSubtitleEnabled, secondarySubtitle, updateAudioVisualization,
     mediaFile, originalFileName, mediaType, uploadFile,
-    isPlaying, playbackTime, globalAudioRef, mediaDuration,
     currentStep, subtitles,
   } = useAppStore();
 
@@ -57,32 +56,6 @@ function Header() {
     ? (originalFileName.length > 25 ? originalFileName.substring(0, 22) + '...' : originalFileName)
     : null;
 
-  const formatTime = (secs) => {
-    if (!secs || isNaN(secs)) return '0:00';
-    const mins = Math.floor(secs / 60);
-    const seconds = Math.floor(secs % 60);
-    return `${mins}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  const handleTogglePlay = useCallback(() => {
-    const ref = globalAudioRef;
-    if (!ref?.current) return;
-    if (ref.current.paused) {
-      ref.current.play();
-    } else {
-      ref.current.pause();
-    }
-  }, [globalAudioRef]);
-
-  const handleSkip = useCallback((seconds) => {
-    const ref = globalAudioRef;
-    if (!ref?.current) return;
-    const dur = ref.current.duration || mediaDuration || 0;
-    ref.current.currentTime = Math.max(0, Math.min(dur, ref.current.currentTime + seconds));
-  }, [globalAudioRef, mediaDuration]);
-
-  const showPlayback = mediaFile && (currentStep === 'edit' || currentStep === 'style' || currentStep === 'render') && subtitles.length > 0;
-
   return (
     <>
       <header className="header">
@@ -118,33 +91,6 @@ function Header() {
           </button>
         )}
 
-        {/* Playback Controls — visible when editing */}
-        {showPlayback && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '2px 8px',
-            background: 'var(--bg-tertiary)',
-            borderRadius: 6,
-            border: '1px solid var(--border-color)',
-            WebkitAppRegion: 'no-drag',
-          }}>
-            <button className="btn btn-ghost btn-icon" onClick={() => handleSkip(-5)} title="5s geri" style={{ padding: 4 }}>
-              <FiSkipBack size={14} />
-            </button>
-            <button className="btn btn-ghost btn-icon" onClick={handleTogglePlay} style={{ padding: 4 }}>
-              {isPlaying ? <FiPause size={16} /> : <FiPlay size={16} />}
-            </button>
-            <button className="btn btn-ghost btn-icon" onClick={() => handleSkip(5)} title="5s ileri" style={{ padding: 4 }}>
-              <FiSkipForward size={14} />
-            </button>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace', minWidth: 60 }}>
-              {formatTime(playbackTime)} / {formatTime(mediaDuration)}
-            </span>
-          </div>
-        )}
-
         <div className="header-actions">
           {/* Change source button (when no media loaded) */}
           {!mediaFile && (
@@ -156,13 +102,6 @@ function Header() {
               <FiUpload />
             </button>
           )}
-          <button
-            className="btn btn-ghost btn-icon"
-            title="Open Project Folder"
-            onClick={() => window.electronAPI?.openPath('.')}
-          >
-            <FiFolder />
-          </button>
           <button
             className="btn btn-ghost btn-icon"
             title="Settings"

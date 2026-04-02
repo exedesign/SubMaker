@@ -69,7 +69,7 @@ function VideoDropzone() {
       'video/*': ['.mp4', '.mkv', '.avi', '.mov', '.webm'],
     },
     maxFiles: 1,
-    noClick: !isElectron, // browser mode: disable click, use backend dialog instead
+    noClick: true, // Always handle click manually — routes to Electron or backend dialog
   });
   
   const openFileDialog = async (fileType = 'media') => {
@@ -113,7 +113,7 @@ function VideoDropzone() {
         {...getRootProps()}
         className={`dropzone ${isDragActive ? 'active' : ''}`}
         style={{ marginBottom: 20, cursor: 'pointer' }}
-        onClick={!isElectron ? (e) => { e.stopPropagation(); openFileDialog('media'); } : undefined}
+        onClick={(e) => { e.stopPropagation(); openFileDialog('media'); }}
       >
         <input {...getInputProps()} />
         <div className="dropzone-icon">

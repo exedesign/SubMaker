@@ -1,23 +1,142 @@
 /**
  * VisualizerFrameExporter
- * Pre-renders Butterchurn visualizer to a WebM video for final render compositing.
- * Uses an offscreen canvas + MediaRecorder to capture frames.
+ * Sequential Butterchurn rendering: frame-by-frame capture + FFmpeg assembly.
+ *
+ * Uses butterchurn's render({ elapsedTime }) for frame-precise timing.
+ * Audio levels are extracted directly from the AudioBuffer (no real-time needed).
+ * Frames are batch-uploaded to the backend and assembled by FFmpeg (NVENC).
+ *
+ * Works identically in both Electron and browser (same engine, same API).
  */
-import { getOrCreateAudioContext, cleanupAudioContext } from '../hooks/useAudioContext';
+
+import { fetchJson, fetchArrayBuffer, fetchFormData } from './electronTransport';
 
 const API_URL = window.API_URL || 'http://localhost:5000/api';
+const FRAME_BATCH_SIZE = 150;
+
+// ─── Shared helpers ───────────────────────────────────────────────────
+
+let _cachedValid = null;
 
 /**
- * Export visualizer as a WebM video file and upload to backend.
- * @param {Object} options
- * @param {string} options.audioUrl - URL to the audio file
- * @param {number} options.duration - Audio duration in seconds
- * @param {number} options.width - Output width
- * @param {number} options.height - Output height
- * @param {string} options.presetName - Butterchurn preset name
- * @param {number} options.fps - Target FPS (default 30)
- * @param {function} options.onProgress - Progress callback (0-100)
- * @returns {Promise<string>} - Server-side path to the visualizer video
+ * Test if a preset's equation strings can be compiled by new Function().
+ * This is what butterchurn does internally — no WebGL needed.
+ */
+function isPresetValid(preset) {
+  try {
+    const strs = [preset.init_eqs_str, preset.frame_eqs_str, preset.pixel_eqs_str];
+    for (const s of strs) {
+      if (s && s !== '') new Function('a', s + ' return a;');
+    }
+    if (preset.shapes) {
+      for (const shape of preset.shapes) {
+        if (shape.init_eqs_str) new Function('a', shape.init_eqs_str + ' return a;');
+        if (shape.frame_eqs_str) new Function('a', shape.frame_eqs_str + ' return a;');
+      }
+    }
+    if (preset.waves) {
+      for (const wave of preset.waves) {
+        if (wave.init_eqs_str) new Function('a', wave.init_eqs_str + ' return a;');
+        if (wave.frame_eqs_str) new Function('a', wave.frame_eqs_str + ' return a;');
+        if (wave.point_eqs_str && wave.point_eqs_str !== '') new Function('a', wave.point_eqs_str + ' return a;');
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadButterchurnPresets() {
+  if (_cachedValid) return _cachedValid;
+
+  const butterchurnMod = await import('butterchurn');
+  const butterchurn = butterchurnMod.default || butterchurnMod;
+  const presetsMod = await import('butterchurn-presets');
+  const src = presetsMod.default || presetsMod;
+  let allPresets;
+  if (typeof src.getPresets === 'function') allPresets = src.getPresets();
+  else if (typeof src === 'function') { try { allPresets = src(); } catch { allPresets = src; } }
+  else allPresets = src;
+
+  // Filter out presets with broken equation strings
+  const presets = {};
+  const allKeys = Object.keys(allPresets);
+  for (const name of allKeys) {
+    if (isPresetValid(allPresets[name])) {
+      presets[name] = allPresets[name];
+    }
+  }
+
+  console.log(`[VizExport] Validated presets: ${Object.keys(presets).length}/${allKeys.length}`);
+  _cachedValid = { butterchurn, presets };
+  return _cachedValid;
+}
+
+function resolvePreset(presets, presetName) {
+  const keys = Object.keys(presets);
+  if (!keys.length) throw new Error('No Butterchurn presets available');
+  let name = presetName;
+  let preset = presets[name];
+  if (!preset) {
+    name = keys[Math.floor(Math.random() * keys.length)];
+    preset = presets[name];
+    console.warn(`[VizExport] Preset '${presetName}' not found, using: ${name}`);
+  }
+  return { preset, name };
+}
+
+/**
+ * Safely load a preset into a butterchurn visualizer.
+ * Some presets contain invalid JS that causes SyntaxError in new Function().
+ * If loading fails, try up to 5 random alternatives.
+ */
+function safeLoadPreset(viz, presets, preset, name) {
+  try {
+    viz.loadPreset(preset, 0);
+    return name;
+  } catch (e) {
+    console.warn(`[VizExport] Preset '${name}' failed to load: ${e.message}`);
+  }
+  const keys = Object.keys(presets);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const fallbackName = keys[Math.floor(Math.random() * keys.length)];
+    try {
+      viz.loadPreset(presets[fallbackName], 0);
+      console.log(`[VizExport] Fallback preset loaded: ${fallbackName}`);
+      return fallbackName;
+    } catch (e2) {
+      console.warn(`[VizExport] Fallback '${fallbackName}' also failed: ${e2.message}`);
+    }
+  }
+  throw new Error('Could not load any Butterchurn preset');
+}
+
+async function fetchAndDecodeAudio(audioUrl) {
+  console.log(`[VizExport] Fetching audio: ${audioUrl}`);
+  const buf = await fetchArrayBuffer(audioUrl);
+  console.log(`[VizExport] Audio fetched: ${buf.byteLength} bytes`);
+
+  const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (tmpCtx.state === 'suspended') await tmpCtx.resume();
+  const audioBuffer = await tmpCtx.decodeAudioData(buf);
+  await tmpCtx.close();
+  console.log(`[VizExport] Decoded: ${audioBuffer.duration.toFixed(1)}s, ${audioBuffer.sampleRate}Hz`);
+  return audioBuffer;
+}
+
+function cleanupWebGL(canvas) {
+  try {
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+  } catch {}
+}
+
+// ─── Main entry point ─────────────────────────────────────────────────
+
+/**
+ * Export visualizer as a video file on the backend.
+ * @returns {Promise<string>} Server-side path to the assembled video
  */
 export async function exportVisualizerVideo({
   audioUrl,
@@ -28,153 +147,336 @@ export async function exportVisualizerVideo({
   fps = 30,
   onProgress,
 }) {
-  // Load butterchurn lazily
-  const butterchurnMod = await import('butterchurn');
-  const butterchurn = butterchurnMod.default || butterchurnMod;
-  const presetsMod = await import('butterchurn-presets');
-  const src = presetsMod.default || presetsMod;
-  let presets;
-  if (typeof src.getPresets === 'function') {
-    presets = src.getPresets();
-  } else if (typeof src === 'function') {
-    try { presets = src(); } catch { presets = src; }
-  } else {
-    presets = src;
+  console.log(`[VizExport] Starting: ${width}x${height}, ${duration}s, fps=${fps}`);
+
+  const { butterchurn, presets } = await loadButterchurnPresets();
+  const { preset, name } = resolvePreset(presets, presetName);
+  const audioBuffer = await fetchAndDecodeAudio(audioUrl);
+
+  // Always use audioBuffer's actual duration as the ground truth.
+  // The store's mediaDuration is unreliable (may be 0 or from partial metadata).
+  const actualDuration = audioBuffer.duration;
+  const totalFrames = Math.ceil(actualDuration * fps);
+
+  console.log(`[VizExport] Preset: ${name}, Frames: ${totalFrames}, duration=${actualDuration.toFixed(1)}s (requested=${duration}s)`);
+
+  return await renderFrames(butterchurn, presets, preset, name, audioBuffer, {
+    width, height, fps, totalFrames, actualDuration, onProgress,
+  });
+}
+
+// ─── FFT for offline frequency analysis ──────────────────────────────
+
+/**
+ * Compute frequency magnitude spectrum from PCM samples using Cooley-Tukey FFT.
+ * Returns Uint8Array[fftSize/2] matching AnalyserNode.getByteFrequencyData() format.
+ * This is what butterchurn needs to drive bass/mid/treb/vol preset variables.
+ */
+function computeFrequencyData(samples, fftSize) {
+  const N = fftSize;
+  const re = new Float32Array(N);
+  const im = new Float32Array(N);
+
+  // Apply Blackman window to reduce spectral leakage
+  for (let i = 0; i < N; i++) {
+    const w = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1))
+                   + 0.08 * Math.cos(4 * Math.PI * i / (N - 1));
+    re[i] = (samples[i] || 0) * w;
   }
 
-  const preset = presets[presetName];
-  if (!preset) {
-    throw new Error(`Preset not found: ${presetName}`);
+  // Bit-reversal permutation
+  let j = 0;
+  for (let i = 1; i < N; i++) {
+    let bit = N >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      let t = re[i]; re[i] = re[j]; re[j] = t;
+    }
   }
 
-  // Create offscreen canvas
+  // Cooley-Tukey butterfly passes
+  for (let len = 2; len <= N; len <<= 1) {
+    const halfLen = len >> 1;
+    const angle = -Math.PI / halfLen;
+    const wCos = Math.cos(angle);
+    const wSin = Math.sin(angle);
+    for (let i = 0; i < N; i += len) {
+      let wr = 1, wi = 0;
+      for (let k = 0; k < halfLen; k++) {
+        const ur = re[i + k + halfLen] * wr - im[i + k + halfLen] * wi;
+        const ui = re[i + k + halfLen] * wi + im[i + k + halfLen] * wr;
+        re[i + k + halfLen] = re[i + k] - ur;
+        im[i + k + halfLen] = im[i + k] - ui;
+        re[i + k] += ur;
+        im[i + k] += ui;
+        const newWr = wr * wCos - wi * wSin;
+        wi = wr * wSin + wi * wCos;
+        wr = newWr;
+      }
+    }
+  }
+
+  // Convert magnitude to byte array, normalised to match AnalyserNode output.
+  // Map 0 dB (full scale) → 255, −120 dB (silence) → 0.
+  const freqBins = N / 2;
+  const freqData = new Uint8Array(freqBins);
+  for (let i = 0; i < freqBins; i++) {
+    const mag = Math.sqrt(re[i] * re[i] + im[i] * im[i]) / N;
+    const db = 20 * Math.log10(Math.max(mag, 1e-8));
+    freqData[i] = Math.max(0, Math.min(255, Math.round((db + 120) * (255 / 120))));
+  }
+  return freqData;
+}
+
+// ─── Audio level extraction from AudioBuffer ─────────────────────────
+
+/**
+ * Compute audio levels for a specific time from an AudioBuffer.
+ * Returns time-domain AND frequency-domain data (Uint8Array[1024] each),
+ * matching butterchurn's AudioProcessor.fftSize = 1024.
+ * freqByteArray drives bass/mid/treb/vol variables in preset equations.
+ */
+function getAudioLevelsAtTime(audioBuffer, time) {
+  const sampleRate = audioBuffer.sampleRate;
+  const startSample = Math.floor(time * sampleRate);
+  const windowSize = 1024; // butterchurn's fftSize
+  const numChannels = audioBuffer.numberOfChannels;
+
+  // Get channel data references
+  const channels = [];
+  for (let ch = 0; ch < numChannels; ch++) {
+    channels.push(audioBuffer.getChannelData(ch));
+  }
+
+  const left = new Uint8Array(windowSize);
+  const right = new Uint8Array(windowSize);
+  const mono = new Uint8Array(windowSize);
+  const monoF = new Float32Array(windowSize);
+
+  for (let i = 0; i < windowSize; i++) {
+    const idx = startSample + i;
+    if (idx >= audioBuffer.length) {
+      left[i] = 128;
+      right[i] = 128;
+      mono[i] = 128;
+      // monoF[i] stays 0 (silence)
+      continue;
+    }
+
+    const L = channels[0][idx];
+    const R = numChannels > 1 ? channels[1][idx] : L;
+    const M = (L + R) / 2;
+
+    // Convert float [-1, 1] to unsigned byte [0, 255]
+    left[i] = Math.max(0, Math.min(255, Math.round((L + 1) * 127.5)));
+    right[i] = Math.max(0, Math.min(255, Math.round((R + 1) * 127.5)));
+    mono[i] = Math.max(0, Math.min(255, Math.round((M + 1) * 127.5)));
+    monoF[i] = M;
+  }
+
+  // Compute FFT frequency data — this drives bass/mid/treb/vol in preset equations.
+  // We share the mono spectrum for L/R to avoid 3× FFT cost; the difference is subtle.
+  const freqByteArray = computeFrequencyData(monoF, windowSize);
+
+  return {
+    timeByteArray: mono,
+    timeByteArrayL: left,
+    timeByteArrayR: right,
+    freqByteArray,
+    freqByteArrayL: freqByteArray,
+    freqByteArrayR: freqByteArray,
+  };
+}
+
+// ─── Sequential frame rendering ──────────────────────────────────────
+
+async function renderFrames(butterchurn, presets, preset, presetName, audioBuffer, opts) {
+  const { width, height, fps, totalFrames, actualDuration, onProgress } = opts;
+  console.log(`[VizExport] Rendering ${totalFrames} frames, ${actualDuration.toFixed(1)}s`);
+
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
 
+  // Pre-create WebGL2 context WITH preserveDrawingBuffer before butterchurn gets it.
   const gl = canvas.getContext('webgl2', {
-    alpha: false,
     preserveDrawingBuffer: true,
-    premultipliedAlpha: false,
-  }) || canvas.getContext('webgl', {
     alpha: false,
-    preserveDrawingBuffer: true,
+    antialias: false,
+    depth: false,
+    stencil: false,
     premultipliedAlpha: false,
   });
 
-  if (!gl) {
-    throw new Error('WebGL not available for frame export');
-  }
-
-  // Create offline audio context to decode audio
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  // Fetch and decode audio
-  const response = await fetch(audioUrl);
-  const arrayBuffer = await response.arrayBuffer();
-  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-  // Create visualizer
-  const viz = butterchurn.createVisualizer(audioCtx, canvas, {
-    width,
-    height,
-    pixelRatio: 1,
-    textureRatio: 1,
+  // Detect WebGL context loss
+  let contextLost = false;
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    contextLost = true;
+    console.error('[VizExport] ⚠ WebGL context LOST!');
   });
 
-  viz.loadPreset(preset, 0);
-
-  // Create analyser to feed audio data
-  const analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 2048;
-  viz.connectAudio(analyser);
-
-  // Use MediaRecorder to capture canvas as WebM
-  const stream = canvas.captureStream(fps);
-  const mediaRecorder = new MediaRecorder(stream, {
-    mimeType: 'video/webm;codecs=vp9',
-    videoBitsPerSecond: 8000000, // 8 Mbps
+  // audioContext = null: official butterchurn test pattern for offline rendering.
+  const viz = butterchurn.createVisualizer(null, canvas, {
+    width, height, pixelRatio: 1, textureRatio: 1,
   });
+  safeLoadPreset(viz, presets, preset, presetName);
 
-  const chunks = [];
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
+  // Helper 2D canvas for converting WebGL readPixels → JPEG blob.
+  // This completely bypasses any preserveDrawingBuffer / toBlob timing issues:
+  //   1. viz.render() → renders to WebGL framebuffer
+  //   2. gl.finish() → waits for GPU to complete all commands
+  //   3. gl.readPixels() → synchronously copies pixels from GPU to CPU
+  //   4. Draw flipped image to 2D helper canvas → toBlob for JPEG
+  const helperCanvas = document.createElement('canvas');
+  helperCanvas.width = width;
+  helperCanvas.height = height;
+  const ctx2d = helperCanvas.getContext('2d');
+  const stride = width * 4;
+  const pixelBuf = new Uint8Array(width * height * 4);
 
-  return new Promise((resolve, reject) => {
-    mediaRecorder.onstop = async () => {
-      try {
-        // Create blob from recorded chunks
-        const blob = new Blob(chunks, { type: 'video/webm' });
+  // Create backend session for frame storage
+  const sessionData = await fetchJson(`${API_URL}/visualizer/session`, {
+    method: 'POST',
+    body: { fps, width, height },
+  });
+  const sessionId = sessionData.session_id;
+  if (!sessionId) throw new Error('Session creation failed');
+  console.log(`[VizExport] Session: ${sessionId}`);
 
-        // Upload to backend
-        const formData = new FormData();
-        formData.append('file', blob, 'visualizer.webm');
+  const frameInterval = 1 / fps;
+  let batch = [];
+  let batchNum = 0;
+  let capturedFrames = 0;
+  let skippedFrames = 0;
+  let renderErrors = 0;
+  let lastPixelHash = 0;
+  let frozenCount = 0;
+  const t0 = performance.now();
 
-        const uploadResponse = await fetch(`${API_URL}/upload`, {
-          method: 'POST',
-          body: formData,
-        });
-
-        const result = await uploadResponse.json();
-        if (result.file_path) {
-          resolve(result.file_path);
-        } else {
-          reject(new Error('Upload failed'));
-        }
-      } catch (err) {
-        reject(err);
-      } finally {
-        // Cleanup
-        audioCtx.close();
-        gl.getExtension('WEBGL_lose_context')?.loseContext();
-      }
-    };
-
-    mediaRecorder.onerror = (e) => {
-      audioCtx.close();
-      reject(e.error || new Error('MediaRecorder error'));
-    };
-
-    // Start recording
-    mediaRecorder.start(1000); // Collect data every second
-
-    // Render frames
-    const totalFrames = Math.ceil(duration * fps);
-    const samplesPerFrame = Math.floor(audioBuffer.sampleRate / fps);
-    const timeData = new Float32Array(analyser.fftSize);
-    const freqData = new Float32Array(analyser.frequencyBinCount);
-    let currentFrame = 0;
-
-    // Create an offline source to simulate audio playback
-    const offlineCtx = new OfflineAudioContext(
-      audioBuffer.numberOfChannels,
-      audioBuffer.length,
-      audioBuffer.sampleRate
-    );
-    const source = offlineCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(offlineCtx.destination);
-    source.start();
-
-    // Render frame by frame using requestAnimationFrame for smooth output
-    function renderFrame() {
-      if (currentFrame >= totalFrames) {
-        mediaRecorder.stop();
-        return;
-      }
-
-      // Render the visualizer
-      viz.render();
-
-      currentFrame++;
-      if (onProgress) {
-        onProgress(Math.round((currentFrame / totalFrames) * 100));
-      }
-
-      requestAnimationFrame(renderFrame);
+  for (let i = 0; i < totalFrames; i++) {
+    if (contextLost) {
+      console.error(`[VizExport] Context lost at frame ${i}, stopping render`);
+      break;
     }
 
-    renderFrame();
+    const time = i * frameInterval;
+    const audioLevels = getAudioLevelsAtTime(audioBuffer, time);
+
+    // Render the frame
+    try {
+      viz.render({
+        elapsedTime: frameInterval,
+        audioLevels,
+      });
+    } catch (e) {
+      renderErrors++;
+      if (renderErrors <= 5) console.warn(`[VizExport] Frame ${i} render error:`, e.message);
+      continue;
+    }
+
+    // Force GPU to finish all pending operations before reading pixels
+    gl.finish();
+
+    // Synchronous pixel capture — reads directly from GPU framebuffer.
+    // This is immune to preserveDrawingBuffer and async timing issues.
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf);
+
+    // Quick pixel hash to detect frozen/identical frames
+    let pixelHash = 0;
+    for (let p = 0; p < pixelBuf.length; p += 4001) pixelHash += pixelBuf[p];
+
+    if (pixelHash === lastPixelHash) {
+      frozenCount++;
+    } else {
+      frozenCount = 0;
+    }
+    lastPixelHash = pixelHash;
+
+    // Flip vertically (WebGL readPixels returns bottom-up) and write to 2D canvas
+    const imageData = ctx2d.createImageData(width, height);
+    for (let y = 0; y < height; y++) {
+      const srcOff = (height - 1 - y) * stride;
+      imageData.data.set(pixelBuf.subarray(srcOff, srcOff + stride), y * stride);
+    }
+    ctx2d.putImageData(imageData, 0, 0);
+
+    // Convert to JPEG via 2D canvas (no WebGL buffer dependency)
+    const blob = await new Promise((resolve) => {
+      helperCanvas.toBlob(resolve, 'image/jpeg', 0.90);
+    });
+
+    if (!blob || blob.size < 100) {
+      skippedFrames++;
+      if (skippedFrames <= 5) console.warn(`[VizExport] Frame ${i} empty (blob=${blob?.size}), skipping`);
+      continue;
+    }
+
+    // Log diagnostic info every 30 frames
+    if (i % 30 === 0) {
+      console.log(`[VizExport] Frame ${i}/${totalFrames} | blob=${blob.size} | hash=${pixelHash} | frozen=${frozenCount}`);
+    }
+
+    batch.push({ index: capturedFrames, blob });
+    capturedFrames++;
+
+    // Upload batch when full
+    if (batch.length >= FRAME_BATCH_SIZE) {
+      await uploadFrameBatch(sessionId, batchNum, batch);
+      batchNum++;
+      batch = [];
+    }
+
+    if (onProgress && i % 30 === 0) {
+      onProgress(Math.round((i / totalFrames) * 75));
+    }
+
+    // Yield to event loop every 10 frames for UI responsiveness
+    if (i % 10 === 0) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+
+  // Upload remaining frames
+  if (batch.length > 0) {
+    await uploadFrameBatch(sessionId, batchNum, batch);
+  }
+
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  console.log(
+    `[VizExport] Done: ${capturedFrames} captured, ${skippedFrames} empty, ${renderErrors} errors, ` +
+    `contextLost=${contextLost}, frozenStreak=${frozenCount} | ${elapsed}s`
+  );
+  if (onProgress) onProgress(80);
+
+  // Assemble video on backend via FFmpeg
+  const result = await assembleFrames(sessionId, fps, capturedFrames);
+
+  // Cleanup
+  cleanupWebGL(canvas);
+
+  if (onProgress) onProgress(100);
+  console.log(`[VizExport] Video: ${result.videoPath}`);
+  return result.videoPath;
+}
+
+// ─── Backend communication ────────────────────────────────────────────
+
+async function uploadFrameBatch(sessionId, batchIndex, frames) {
+  const formData = new FormData();
+  formData.append('session_id', sessionId);
+  for (const { index, blob } of frames) {
+    formData.append('frames', blob, `frame_${String(index).padStart(5, '0')}.jpg`);
+  }
+  const data = await fetchFormData(`${API_URL}/visualizer/frames`, formData);
+  console.log(`[VizExport] Batch ${batchIndex}: ${data.received} frames uploaded`);
+}
+
+async function assembleFrames(sessionId, fps, totalFrames) {
+  console.log(`[VizExport] Assembling ${totalFrames} frames @ ${fps}fps...`);
+  return await fetchJson(`${API_URL}/visualizer/assemble`, {
+    method: 'POST',
+    body: { session_id: sessionId, fps, total_frames: totalFrames },
   });
 }

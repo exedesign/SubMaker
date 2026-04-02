@@ -19,6 +19,7 @@ function RenderPanel() {
     batchRenderTotal,
     batchRenderCurrent,
     selectedFormats,
+    renderThumbnailUrl,
   } = useAppStore();
 
   const formatTime = (seconds) => {
@@ -51,6 +52,24 @@ function RenderPanel() {
       gap: 12,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* Live thumbnail preview during render OR final thumbnail after completion */}
+        {((isProcessing && renderThumbnailUrl) || (outputPath && !batchRenderActive && renderThumbnailUrl)) && (
+          <img
+            key={renderThumbnailUrl}
+            src={`http://localhost:5000${renderThumbnailUrl}?t=${Math.floor(Date.now() / 3000)}&p=${processingProgress}`}
+            alt="Render preview"
+            onError={(e) => { e.target.style.display = 'none'; }}
+            onLoad={(e) => { e.target.style.display = ''; }}
+            style={{
+              width: 120,
+              height: 68,
+              objectFit: 'cover',
+              borderRadius: 6,
+              border: '1px solid var(--border-color)',
+              flexShrink: 0,
+            }}
+          />
+        )}
         <div style={{ flex: 1 }}>
           {outputPath && !batchRenderActive ? (
             <div>
