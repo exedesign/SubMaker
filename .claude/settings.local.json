@@ -11,7 +11,10 @@
       "Bash(taskkill /F /IM \"7za.exe\")",
       "Bash(taskkill /F /IM \"electron-builder\")",
       "Bash(ls -lh \"D:/AI/SubMaker/electron/release/\"*.exe)",
-      "Bash(ls -lh \"D:/AI/SubMaker/electron/release/win-unpacked/\"*.exe)"
+      "Bash(ls -lh \"D:/AI/SubMaker/electron/release/win-unpacked/\"*.exe)",
+      "Bash(grep -r \"import.*from\" /d/AI/SubMaker/electron/src/renderer/components/*.jsx)",
+      "Bash(find /d/AI/SubMaker/electron/src/renderer/components -name \"*.jsx\" -exec grep -l \"import.*from\" {} \\\\;)",
+      "Bash(grep \"import.*from.*components\" /d/AI/SubMaker/electron/src/renderer/*.jsx /d/AI/SubMaker/electron/src/renderer/components/*.jsx)"
     ]
   }
 }

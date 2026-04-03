@@ -3,8 +3,8 @@ import { useAppStore } from '../stores/appStore';
 import { FiEye, FiEyeOff, FiMinimize2, FiMaximize2, FiMove } from 'react-icons/fi';
 
 /**
- * FloatingPreview - Taşınabilir canlı önizleme penceresi
- * Tüm stil değişiklikleri anında yansır
+ * FloatingPreview - Draggable live preview window
+ * All style changes are reflected in real time
  */
 function FloatingPreview() {
   const {
@@ -33,7 +33,7 @@ function FloatingPreview() {
     const container = containerRef.current;
     if (!container) return;
     
-    // Başlangıç pozisyonu: sağ alt
+    // Initial position: bottom right
     container.style.right = '20px';
     container.style.bottom = '40px';
     container.style.left = 'auto';
@@ -41,7 +41,7 @@ function FloatingPreview() {
   }, []);
   
   const handleMouseDown = (e) => {
-    // Butonlara tıklamayı engelle
+    // Prevent clicks on buttons from triggering drag
     if (e.target.closest('button')) return;
     
     const container = containerRef.current;
@@ -67,11 +67,11 @@ function FloatingPreview() {
       const container = containerRef.current;
       if (!container) return;
       
-      // Yeni pozisyon
+      // New position
       let newX = e.clientX - offset.current.x;
       let newY = e.clientY - offset.current.y;
       
-      // Ekran sınırları
+      // Screen boundaries
       const maxX = window.innerWidth - container.offsetWidth;
       const maxY = window.innerHeight - container.offsetHeight;
       
@@ -105,22 +105,22 @@ function FloatingPreview() {
     };
   }, []);
 
-  // Format bilgileri - TÜM HOOK'LAR KOŞULLU RETURN'LERDEN ÖNCE OLMALI
+  // Format info — ALL HOOKS MUST COME BEFORE CONDITIONAL RETURNS
   const formatInfo = useMemo(() => ({
     width: videoFormat === 'vertical' ? 1080 : videoFormat === 'square' ? 1080 : 1920,
     height: videoFormat === 'vertical' ? 1920 : videoFormat === 'square' ? 1080 : 1080,
     aspectRatio: videoFormat === 'vertical' ? '9:16' : videoFormat === 'square' ? '1:1' : '16:9',
   }), [videoFormat]);
 
-  // Önizleme boyutları
+  // Preview dimensions
   const previewWidth = videoFormat === 'vertical' ? 140 : videoFormat === 'square' ? 180 : 240;
   const previewHeight = previewWidth * (formatInfo.height / formatInfo.width);
   const scaleFactor = previewWidth / formatInfo.width;
 
-  // Font ekran oranı
+  // Font screen ratio
   const fontRatio = ((style.fontSize / formatInfo.height) * 100).toFixed(1);
 
-  // Ölçeklenmiş stil
+  // Scaled style
   const getScaledStyle = useMemo(() => ({
     fontFamily: style.fontName,
     fontSize: Math.max(6, style.fontSize * scaleFactor),
@@ -136,18 +136,18 @@ function FloatingPreview() {
     wordWrap: 'break-word',
   }), [style, scaleFactor]);
 
-  // Aktif altyazıyı playback zamanına göre bul (GERÇEK ZAMANLI)
+  // Find active subtitle by playback time (REAL-TIME)
   const activeSubtitle = useMemo(() => {
     if (!subtitles.length) return null;
     return subtitles.find(sub => playbackTime >= sub.start && playbackTime <= sub.end);
   }, [subtitles, playbackTime]);
 
-  // Aktif ikinci dil altyazıyı bul - TIME BASED
+  // Find active secondary subtitle - TIME BASED
   const activeSecondarySubtitle = useMemo(() => {
     if (!settings?.dualSubtitleEnabled) return null;
     if (!secondarySubtitle?.subtitles?.length) return null;
     
-    // Şu anda aktif olan time'a göre ikincil altyazıyı bul
+    // Find secondary subtitle active at current time
     const found = secondarySubtitle.subtitles.find(sub => 
       playbackTime >= sub.start && playbackTime < sub.end
     );
@@ -182,7 +182,7 @@ function FloatingPreview() {
     const elapsed = playbackTime - activeSubtitle.start;
     const progress = Math.min(100, Math.max(0, (elapsed / duration) * 100));
     
-    // Fade in/out fazları (ilk ve son %15)
+    // Fade in/out phases (first and last 15%)
     const fadeInDuration = animation.fadeIn / 1000; // ms to seconds
     const fadeOutDuration = animation.fadeOut / 1000;
     
@@ -200,22 +200,22 @@ function FloatingPreview() {
     return { progress, phase, opacity: Math.max(0, Math.min(1, opacity)), elapsed, duration };
   }, [activeSubtitle, playbackTime, animation.fadeIn, animation.fadeOut]);
 
-  // Typewriter efekti için görünür karakter sayısı
+  // Visible character count for typewriter effect
   const typewriterChars = useMemo(() => {
     if (animation.type !== 'typewriter' || !activeSubtitle) return -1;
     const { elapsed, duration } = animationProgress;
     const text = activeSubtitle.text;
-    // Sürenin %80'inde yazma tamamlanır
+    // Writing completes at 80% of duration
     const writeTime = duration * 0.8;
     const charProgress = Math.min(1, elapsed / writeTime);
     return Math.floor(charProgress * text.length);
   }, [animation.type, activeSubtitle, animationProgress]);
 
-  // Pop efekti için scale
+  // Scale for pop effect
   const popScale = useMemo(() => {
     if (animation.type !== 'pop' || !activeSubtitle) return 1;
     const { elapsed } = animationProgress;
-    // İlk 0.15 saniyede pop animasyonu
+    // Pop animation in the first 0.15 seconds
     if (elapsed < 0.15) {
       // 0 -> 1.2 -> 1 easing
       const t = elapsed / 0.15;
@@ -228,7 +228,7 @@ function FloatingPreview() {
     return 1;
   }, [animation.type, activeSubtitle, animationProgress]);
 
-  // Render fonksiyonları - efekt tipine göre
+  // Render functions - by effect type
   const renderAnimatedText = (text) => {
     if (!activeSubtitle) return text;
     
@@ -270,7 +270,7 @@ function FloatingPreview() {
     }
   };
 
-  // Altyazı container stili (animasyonlar için)
+  // Subtitle container style (for animations)
   const getSubtitleAnimationStyle = () => {
     const baseStyle = {};
     
@@ -296,21 +296,21 @@ function FloatingPreview() {
     return baseStyle;
   };
 
-  // Görüntülenecek metin - ANA ALTYAZI
+  // Text to display - MAIN SUBTITLE
   const displayText = useMemo(() => {
     if (activeSubtitle) {
       const text = activeSubtitle.text;
       return text.length > 40 ? text.substring(0, 40) + '...' : text;
     }
-    // Çalmıyorsa veya altyazı yoksa ilk altyazıyı göster
+    // If not playing or no subtitle, show the first subtitle
     if (subtitles.length > 0) {
       const text = subtitles[0].text;
       return text.length > 40 ? text.substring(0, 40) + '...' : text;
     }
-    return 'Altyazı bekleniyor...';
+    return 'Waiting for subtitles...';
   }, [activeSubtitle, subtitles]);
 
-  // Görüntülenecek ikinci dil metni - BASİT VE NET
+  // Secondary language text to display - SIMPLE AND CLEAR
   const secondaryDisplayText = useMemo(() => {
     const text = activeSecondarySubtitle?.translatedText;
 
@@ -318,7 +318,7 @@ function FloatingPreview() {
     return text.length > 50 ? text.substring(0, 50) + '...' : text;
   }, [activeSecondarySubtitle]);
 
-  // Eğer medya dosyası yoksa veya upload aşamasındaysa gösterme
+  // Don't show if no media file or still in upload stage
   if (!mediaFile || currentStep === 'upload') {
     return null;
   }
@@ -329,7 +329,7 @@ function FloatingPreview() {
       <button 
         className="floating-preview-toggle"
         onClick={() => setIsVisible(true)}
-        title="Önizlemeyi göster"
+        title="Show preview"
       >
         <FiEye size={16} />
       </button>
@@ -348,12 +348,12 @@ function FloatingPreview() {
       >
         <span className="floating-preview-title">
           <FiMove size={12} className="drag-icon" />
-          Canlı Önizleme
+          Live Preview
         </span>
         <div className="floating-preview-actions">
           <button 
             onClick={() => setIsMinimized(!isMinimized)}
-            title={isMinimized ? 'Genişlet' : 'Küçült'}
+            title={isMinimized ? 'Expand' : 'Minimize'}
           >
             {isMinimized ? <FiMaximize2 size={12} /> : <FiMinimize2 size={12} />}
           </button>
@@ -387,7 +387,7 @@ function FloatingPreview() {
             {/* Safe area guide */}
             <div className="frame-safe-area" />
             
-            {/* Combined Subtitles Container - Ana altyazı mantığı */}
+            {/* Combined Subtitles Container - main subtitle logic */}
             <div 
               className={`frame-subtitle ${animation.type}-mode`}
               style={{
@@ -407,7 +407,7 @@ function FloatingPreview() {
                 {renderAnimatedText(displayText)}
               </span>
               
-              {/* Secondary Subtitle - İkinci Dil */}
+              {/* Secondary Subtitle - Second Language */}
               {settings?.dualSubtitleEnabled && secondaryDisplayText && (
                 <span style={{
                   fontFamily: secondarySubtitle?.style?.fontName || 'Arial',
@@ -476,7 +476,7 @@ function FloatingPreview() {
               <span 
                 className="color-dot border" 
                 style={{ background: style.borderColor }}
-                title={`Kenarlık: ${style.borderColor}`}
+                title={`Border: ${style.borderColor}`}
               />
               {animation.type === 'karaoke' && (
                 <span 

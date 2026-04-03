@@ -356,9 +356,9 @@ class VocalIsolator:
 
         if progress_callback:
             if self._separator_model == model_name:
-                progress_callback(5, f"Model hazır ({model_name})")
+                progress_callback(5, f"Model ready ({model_name})")
             else:
-                progress_callback(5, f"Model yükleniyor ({model_name})...")
+                progress_callback(5, f"Loading model ({model_name})...")
 
         start = time.time()
 
@@ -369,13 +369,13 @@ class VocalIsolator:
             sep = self._get_separator(model_name)
         except SystemExit as e:
             # audio-separator calls sys.exit(1) on some model load failures
-            raise RuntimeError(f"Model yüklenemedi: {model_name} (audio-separator sys.exit: {e})")
+            raise RuntimeError(f"Failed to load model: {model_name} (audio-separator sys.exit: {e})")
         except Exception as e:
-            raise RuntimeError(f"Model yüklenemedi: {model_name}: {e}")
+            raise RuntimeError(f"Failed to load model: {model_name}: {e}")
         logger.info(f"Model ready in {time.time() - load_start:.1f}s: {model_name}")
 
         if progress_callback:
-            progress_callback(20, "Vokal ayrıştırma başlıyor...")
+            progress_callback(20, "Starting vocal separation...")
 
         logger.info(f"Starting separation: {audio_path}")
         try:
@@ -384,7 +384,7 @@ class VocalIsolator:
             # Invalidate cached separator so next call gets a fresh instance
             self._separator = None
             self._separator_model = None
-            raise RuntimeError(f"Ayrıştırma başarısız (sys.exit): {e}")
+            raise RuntimeError(f"Separation failed (sys.exit): {e}")
         except RuntimeError as e:
             err_msg = str(e).lower()
             if "cudnn" in err_msg or "cudnngetlibconfig" in err_msg:
@@ -403,7 +403,7 @@ class VocalIsolator:
                 except Exception as retry_err:
                     torch.backends.cudnn.enabled = True
                     raise RuntimeError(
-                        f"Ayrıştırma cuDNN devre dışıyken de başarısız: {retry_err}"
+                        f"Separation failed while cuDNN disabled: {retry_err}"
                     )
                 finally:
                     torch.backends.cudnn.enabled = True
@@ -416,13 +416,13 @@ class VocalIsolator:
             error_str = str(e).lower()
             if any(kw in error_str for kw in ("cuda", "cudnn", "gpu", "onnxruntime", "provider")):
                 raise RuntimeError(
-                    f"GPU ayrıştırma başarısız (CUDA/cuDNN uyumsuzluğu olabilir): {e}"
+                    f"GPU separation failed (possible CUDA/cuDNN incompatibility): {e}"
                 ) from e
-            raise RuntimeError(f"Ayrıştırma başarısız: {e}") from e
+            raise RuntimeError(f"Separation failed: {e}") from e
         logger.info(f"Separation complete, output files: {output_files}")
 
         if progress_callback:
-            progress_callback(80, "Vokaller işleniyor...")
+            progress_callback(80, "Processing vocals...")
 
         # Resolve output files to full paths (audio-separator may return just filenames)
         resolved_files = []
@@ -492,7 +492,7 @@ class VocalIsolator:
             logger.info(f"Vocal isolation ({model_name}): {elapsed:.1f}s")
 
         if progress_callback:
-            progress_callback(100, f"Vokal izolasyonu tamamlandı ({elapsed:.0f}s)")
+            progress_callback(100, f"Vocal isolation completed ({elapsed:.0f}s)")
 
         result["duration"] = elapsed
         return result
@@ -530,11 +530,11 @@ class VocalIsolator:
                 and self._demucs_device_loaded == str(device)):
             model = self._demucs_model
             if progress_callback:
-                progress_callback(5, f"Demucs model hazır ({model_name}, {device})")
+                progress_callback(5, f"Demucs model ready ({model_name}, {device})")
             logger.info(f"Reusing cached Demucs model: {model_name} on {device}")
         else:
             if progress_callback:
-                progress_callback(5, f"Demucs model yükleniyor ({model_name}, {device})...")
+                progress_callback(5, f"Loading Demucs model ({model_name}, {device})...")
             model = get_model(model_name)
             model.to(device)
             model.eval()
@@ -547,7 +547,7 @@ class VocalIsolator:
             logger.info(f"Demucs model loaded: {model_name} on {device}")
 
         if progress_callback:
-            progress_callback(15, "Ses dosyası okunuyor...")
+            progress_callback(15, "Reading audio file...")
 
         sr = model.samplerate
         af = AudioFile(audio_path)
@@ -562,7 +562,7 @@ class VocalIsolator:
             wav = wav.half()
 
         if progress_callback:
-            progress_callback(25, f"Demucs çalışıyor ({audio_duration:.0f}s ses)...")
+            progress_callback(25, f"Demucs processing ({audio_duration:.0f}s audio)...")
 
         # Run apply_model in a sub-thread so we can send progress updates
         import threading
@@ -595,7 +595,7 @@ class VocalIsolator:
                 fake_pct = min(75, fake_pct + 2)
                 elapsed_so_far = time.time() - start
                 if progress_callback:
-                    progress_callback(fake_pct, f"Demucs işliyor... ({elapsed_so_far:.0f}s)")
+                    progress_callback(fake_pct, f"Demucs running... ({elapsed_so_far:.0f}s)")
 
         if apply_error[0] is not None:
             raise apply_error[0]
@@ -624,7 +624,7 @@ class VocalIsolator:
             torch.cuda.empty_cache()
 
         if progress_callback:
-            progress_callback(80, "Stem'ler kaydediliyor...")
+            progress_callback(80, "Saving stems...")
 
         key = self._get_cache_key(audio_path, f"demucs_{model_name}")
         result = {}
@@ -665,7 +665,7 @@ class VocalIsolator:
         logger.info(f"Demucs vocal isolation: {elapsed:.1f}s ({speed:.1f}x realtime)")
 
         if progress_callback:
-            progress_callback(100, f"Vokal izolasyonu tamamlandı ({elapsed:.0f}s)")
+            progress_callback(100, f"Vocal isolation completed ({elapsed:.0f}s)")
 
         result["duration"] = elapsed
         return result
@@ -691,7 +691,7 @@ class VocalIsolator:
         cached = self._get_cached(audio_path, effective_model)
         if cached:
             if progress_callback:
-                progress_callback(100, "Önbellekten yüklendi")
+                progress_callback(100, "Loaded from cache")
             return cached
 
         if not self.is_available():
@@ -726,13 +726,13 @@ class VocalIsolator:
             if engine == "mdx" and self._demucs_available():
                 logger.info("Falling back to Demucs...")
                 if progress_callback:
-                    progress_callback(10, "MDX başarısız, Demucs ile deneniyor...")
+                    progress_callback(10, "MDX failed, trying Demucs...")
                 result = self._separate_demucs(audio_path, None, progress_callback, keep_full_quality=False)
                 return result["whisper_path"]
             elif engine == "demucs" and self._mdx_available():
                 logger.info("Falling back to MDX-Net...")
                 if progress_callback:
-                    progress_callback(10, "Demucs başarısız, MDX-Net ile deneniyor...")
+                    progress_callback(10, "Demucs failed, trying MDX-Net...")
                 result = self._separate_mdx(audio_path, None, progress_callback, keep_full_quality=False)
                 return result["whisper_path"]
         except Exception as e2:

@@ -146,9 +146,9 @@ export const useAppStore = create((set, get) => ({
       bold: false,
       italic: false,
       marginVertical: 240, // Below primary subtitle - increased for 4K
-      // Pozisyon kontrolü
+      // Position control
       alignment: 5, // 1-9 grid (5 = center bottom)
-      offsetX: 0, // Yatay kayma (-100 to +100)
+      offsetX: 0, // Horizontal offset (-100 to +100)
       offsetY: 0, // Dikey kayma (-100 to +100)
     },
     isTranslating: false,
@@ -157,32 +157,32 @@ export const useAppStore = create((set, get) => ({
   // App Settings
   settings: {
     gifProvider: 'tenor', // 'tenor' or 'giphy'
-    dualSubtitleEnabled: true, // Module toggle in settings - varsayılan açık
-    
-    // Audio Visualization Settings - Basitleştirilmiş ve Varsayılan Aktif
+    dualSubtitleEnabled: true, // Module toggle in settings - enabled by default
+
+    // Audio Visualization Settings - Simplified and enabled by default
     audioVisualization: {
-      showWaveform: true,      // Varsayılan olarak aktif - Basit waveform
-      waveformHeight: 110,     // Optimize edilmiş yükseklik
-      waveformColor: '#00FF88',// Parlak yeşil renk (daha belirgin)
-      enhancement: 1.2,        // Optimize edilmiş güçlendirme
+      showWaveform: true,      // Active by default - simple waveform
+      waveformHeight: 110,     // Optimized height
+      waveformColor: '#00FF88',// Bright green (more visible)
+      enhancement: 1.2,        // Optimized boost
     },
   },
-  
-  // Model Settings - Dil bazında model seçimi (faster-whisper)
+
+  // Model Settings - per-language model selection (faster-whisper)
   modelSettings: {
-    ar: 'medium',    // Arapça için büyük model
-    tr: 'turbo',     // Türkçe için optimal
-    en: 'turbo',     // İngilizce
-    es: 'turbo',     // İspanyolca
-    fr: 'turbo',     // Fransızca
-    de: 'turbo',     // Almanca
-    it: 'turbo',     // İtalyanca
-    pt: 'turbo',     // Portekizce
-    ru: 'turbo',     // Rusça
-    zh: 'medium',    // Çince
-    ja: 'medium',    // Japonca
-    ko: 'medium',    // Korece
-    auto: 'turbo'    // Otomatik algılama için varsayılan
+    ar: 'medium',    // Arabic - large model
+    tr: 'turbo',     // Turkish - optimal
+    en: 'turbo',     // English
+    es: 'turbo',     // Spanish
+    fr: 'turbo',     // French
+    de: 'turbo',     // German
+    it: 'turbo',     // Italian
+    pt: 'turbo',     // Portuguese
+    ru: 'turbo',     // Russian
+    zh: 'medium',    // Chinese
+    ja: 'medium',    // Japanese
+    ko: 'medium',    // Korean
+    auto: 'turbo'    // Default for auto-detect
   },
   
   // Whisper Advanced Parameters (user-tunable)
@@ -199,7 +199,7 @@ export const useAppStore = create((set, get) => ({
 
   // Vocal Isolation
   vocalIsolation: false,
-  vocalModelId: 'vocal_ep317', // 'vocal_ep317' (temiz vokal), 'instrumental_resurrection' (temiz müzik)
+  vocalModelId: 'vocal_ep317', // 'vocal_ep317' (clean vocals), 'instrumental_resurrection' (clean music)
   vocalSelectedStems: {
     vocal_ep317: ['vocals', 'instrumental'],
     instrumental_resurrection: ['vocals', 'instrumental'],
@@ -231,15 +231,6 @@ export const useAppStore = create((set, get) => ({
   processingStep: '',
   processingProgress: 0,
   currentTranscriptText: '', // Currently transcribing text preview
-  
-  // Render statistics and timer
-  renderStats: {
-    totalRenders: 0,
-    lastRenderDuration: 0,
-  },
-  renderStartTime: null,
-  renderTimer: null,
-  renderElapsedTime: 0,
   
   // Render statistics and timer
   renderStats: {
@@ -457,7 +448,7 @@ export const useAppStore = create((set, get) => ({
 
   // Browse file via backend native dialog (browser mode — no Electron IPC)
   browseFile: async (fileType = 'media') => {
-    set({ isLoading: true, loadingMessage: 'Dosya seçici açılıyor...', error: null });
+    set({ isLoading: true, loadingMessage: 'Opening file picker...', error: null });
 
     try {
       const response = await api.post('/browse-file', {
@@ -523,7 +514,7 @@ export const useAppStore = create((set, get) => ({
       console.log('[Transcribe] Vocal isolation enabled — running separation first...');
       set({
         isProcessing: true,
-        processingStep: 'Vokal izolasyonu yapılıyor...',
+        processingStep: 'Running vocal isolation...',
         processingProgress: 0,
       });
       try {
@@ -547,7 +538,7 @@ export const useAppStore = create((set, get) => ({
 
     set({
       isProcessing: true,
-      processingStep: 'Transkripsiyon için AI modeli yükleniyor...',
+      processingStep: 'Loading AI model for transcription...',
       processingProgress: 0,
       currentTranscriptText: '',
       error: null,
@@ -573,7 +564,7 @@ export const useAppStore = create((set, get) => ({
         if (data.type === 'heartbeat') {
           heartbeatCount++;
           set({
-            processingStep: `AI modeli yükleniyor... (${heartbeatCount * 3}s)`,
+            processingStep: `Loading AI model... (${heartbeatCount * 3}s)`,
           });
           return;
         }
@@ -589,7 +580,7 @@ export const useAppStore = create((set, get) => ({
         if (data.type === 'progress') {
           const stepMessage = data.current_text
             ? `${data.current_text}`
-            : `İşleniyor... ${data.progress}%`;
+            : `Processing... ${data.progress}%`;
           set({
             processingStep: stepMessage,
             processingProgress: data.progress,
@@ -634,7 +625,7 @@ export const useAppStore = create((set, get) => ({
         if (streamSettled) return;
 
         set({
-          error: 'Transkripsiyon bağlantısı beklenmedik şekilde kapandı',
+          error: 'Transcription connection closed unexpectedly',
           isProcessing: false,
         });
         reject(new Error('Stream ended unexpectedly'));
@@ -642,7 +633,7 @@ export const useAppStore = create((set, get) => ({
         if (streamSettled) return;
 
         console.log('[Transcribe] Streaming failed, using regular API:', error.message);
-        set({ processingStep: 'Alternatif API kullanılıyor...' });
+        set({ processingStep: 'Falling back to standard API...' });
 
         fetchJson(`${API_URL}/transcribe`, {
           method: 'POST',
@@ -890,7 +881,6 @@ export const useAppStore = create((set, get) => ({
   // Active render job
   renderJobId: null,
   renderPolling: null,
-  renderThumbnailUrl: null,
   
   // Internal: render a single format and return a Promise that resolves on completion
   _renderOneFormat: (format, visualizerData, secondarySubData) => {
@@ -942,20 +932,19 @@ export const useAppStore = create((set, get) => ({
             set({
               processingProgress: status.progress,
               processingStep: status.step || 'Processing...',
-              renderThumbnailUrl: status.thumbnail_url || null,
             });
 
             if (status.status === 'completed') {
               clearInterval(pollInterval);
-              set({ renderJobId: null, renderPolling: null, renderThumbnailUrl: status.thumbnail_url || null });
+              set({ renderJobId: null, renderPolling: null });
               resolve({ success: true, outputPath: status.output_path });
             } else if (status.status === 'error') {
               clearInterval(pollInterval);
-              set({ renderJobId: null, renderPolling: null, renderThumbnailUrl: null });
+              set({ renderJobId: null, renderPolling: null });
               reject(new Error(status.error || 'Render failed'));
             } else if (status.status === 'cancelled') {
               clearInterval(pollInterval);
-              set({ renderJobId: null, renderPolling: null, renderThumbnailUrl: null });
+              set({ renderJobId: null, renderPolling: null });
               reject(new Error('Render cancelled'));
             }
           } catch (err) {
@@ -1006,7 +995,6 @@ export const useAppStore = create((set, get) => ({
       error: null,
       renderStartTime: startTime,
       renderElapsedTime: 0,
-      renderThumbnailUrl: null,
       batchRenderActive: isMulti,
       batchRenderResults: [],
       batchRenderTotal: formats.length,
@@ -1163,7 +1151,6 @@ export const useAppStore = create((set, get) => ({
       renderJobId: null,
       renderPolling: null,
       renderTimer: null,
-      renderThumbnailUrl: null,
       processingProgress: 0,
       processingStep: '',
       batchRenderActive: false,
@@ -1261,11 +1248,11 @@ export const useAppStore = create((set, get) => ({
     const originalFilePath = originalMediaPath || originalMediaFile || backendOriginalPath || mediaFile;
 
     const STEM_META = {
-      vocals: { label: 'Vokal', icon: '🎤', color: 'rgba(168, 85, 247, 0.8)' },
-      instrumental: { label: 'Enstrümantal', icon: '🎵', color: 'rgba(59, 130, 246, 0.8)' },
-      drums: { label: 'Davul', icon: '🥁', color: 'rgba(239, 68, 68, 0.8)' },
-      bass: { label: 'Bas', icon: '🎸', color: 'rgba(34, 197, 94, 0.8)' },
-      other: { label: 'Diğer', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
+      vocals: { label: 'Vocals', icon: '🎤', color: 'rgba(168, 85, 247, 0.8)' },
+      instrumental: { label: 'Instrumental', icon: '🎵', color: 'rgba(59, 130, 246, 0.8)' },
+      drums: { label: 'Drums', icon: '🥁', color: 'rgba(239, 68, 68, 0.8)' },
+      bass: { label: 'Bass', icon: '🎸', color: 'rgba(34, 197, 94, 0.8)' },
+      other: { label: 'Other', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
     };
 
     const tracks = {};
@@ -1417,7 +1404,7 @@ export const useAppStore = create((set, get) => ({
 
     const selectedStems = vocalSelectedStems[vocalModelId] || [];
 
-    set({ vocalSeparating: true, vocalSeparationProgress: 0, vocalSeparationMessage: 'Başlatılıyor...' });
+    set({ vocalSeparating: true, vocalSeparationProgress: 0, vocalSeparationMessage: 'Starting...' });
 
     try {
       let separationSettled = false;
@@ -1451,7 +1438,7 @@ export const useAppStore = create((set, get) => ({
             },
             vocalSeparating: false,
             vocalSeparationProgress: 100,
-            vocalSeparationMessage: event.cached ? 'Önbellekten yüklendi' : `Tamamlandı (${event.duration?.toFixed(1)}s)`,
+            vocalSeparationMessage: event.cached ? 'Loaded from cache' : `Completed (${event.duration?.toFixed(1)}s)`,
           });
           get().initAudioMixer(stemPaths, stemUrls, event.original_path);
           return;
@@ -1581,7 +1568,7 @@ export const useAppStore = create((set, get) => ({
           }
         }));
         
-        // State güncellemesi sonrası kontrol
+        // Post-update state check
         setTimeout(() => {
           const currentState = get();
           console.log('[Store] State updated, checking...', {
@@ -1671,7 +1658,7 @@ export const useAppStore = create((set, get) => ({
   }),
 }));
 
-// Debug: Store'a console'dan erişim için
+// Debug: Access store from console
 if (typeof window !== 'undefined') {
   window.appStore = useAppStore;
 }

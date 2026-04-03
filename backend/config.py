@@ -85,9 +85,9 @@ LANGUAGE_PARAMS = {
 # toward the correct character set and vocabulary for each language.
 LANGUAGE_PROMPTS = {
     'tr': {
-        'music': "Bu bir Türkçe şarkıdır. Şarkı sözleri:",
-        'speech': "Bu bir Türkçe konuşmadır.",
-        'podcast': "Bu bir Türkçe podcast yayınıdır.",
+        'music': "This is a Turkish song. Lyrics:",
+        'speech': "This is a Turkish speech transcription.",
+        'podcast': "This is a Turkish podcast transcription.",
     },
     'en': {
         'music': "These are English song lyrics.",
@@ -341,7 +341,7 @@ VOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # ASR Engine Settings (Faster-Whisper — direct transcription with word timestamps)
 ASR_ENGINE_CONFIG = {
     "name": "Faster-Whisper",
-    "description": "CTranslate2 tabanlı hızlı transkripsiyon — dahili kelime zamanlama",
+    "description": "CTranslate2-based fast transcription with built-in word timing",
     "default_model": "turbo",
     "language_models": {
         "tr": {"speech": "turbo", "music": "selimc/whisper-large-v3-turbo-turkish"},

@@ -87,33 +87,6 @@ class VideoGenerator:
         except Exception as e:
             print(f"⚠️ GPU detection failed: {e}, falling back to CPU encoding")
     
-    def extract_thumbnail(self, video_path: str, output_path: str, seek_seconds: float = 2, width: int = 320) -> bool:
-        """Extract a single thumbnail frame from a video file.
-        
-        Args:
-            video_path: Path to video file
-            output_path: Path to save thumbnail JPEG
-            seek_seconds: Position to seek to in seconds
-            width: Thumbnail width (height auto-calculated)
-        Returns:
-            True if successful
-        """
-        try:
-            cmd = [
-                self.ffmpeg_path, "-y",
-                "-ss", f"{seek_seconds:.2f}",
-                "-i", video_path,
-                "-frames:v", "1",
-                "-vf", f"scale={width}:-1",
-                "-q:v", "5",
-                output_path
-            ]
-            result = subprocess.run(cmd, capture_output=True, timeout=10)
-            return result.returncode == 0 and os.path.exists(output_path)
-        except Exception as e:
-            print(f"[VideoGen] Thumbnail extraction failed: {e}")
-            return False
-
     def get_audio_duration(self, audio_path: str) -> float:
         """Get duration of audio file in seconds"""
         cmd = [
@@ -355,11 +328,10 @@ class VideoGenerator:
         fps: int = DEFAULT_FPS,
         progress_callback: Optional[callable] = None,
         cancel_check: Optional[callable] = None,
-        thumbnail_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate a video from an audio file with specified background
-        
+
         Args:
             audio_path: Path to audio file (MP3, WAV, etc.)
             output_path: Output video path (optional, auto-generated if None)
@@ -370,7 +342,6 @@ class VideoGenerator:
             quality: 'high', 'medium', or 'low'
             fps: Frames per second
             progress_callback: Progress callback function
-            thumbnail_path: Path to save live thumbnail JPEG
             
         Returns:
             Dict with output path and metadata
@@ -444,32 +415,7 @@ class VideoGenerator:
         
         if progress_callback:
             progress_callback(10, "Starting video generation...")
-        
-        # Generate instant thumbnail from background
-        if thumbnail_path:
-            try:
-                if background_type == "image" and os.path.exists(background_value):
-                    # Thumbnail from background image
-                    thumb_cmd = [
-                        self.ffmpeg_path, "-y",
-                        "-i", background_value,
-                        "-frames:v", "1",
-                        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,scale=320:-1",
-                        "-q:v", "5", thumbnail_path
-                    ]
-                else:
-                    # Thumbnail from solid color
-                    color = background_value.lstrip("#") if background_value.startswith("#") else "000000"
-                    thumb_cmd = [
-                        self.ffmpeg_path, "-y",
-                        "-f", "lavfi", "-i", f"color=c=0x{color}:s=320x180:d=0.1",
-                        "-frames:v", "1", "-q:v", "5", thumbnail_path
-                    ]
-                subprocess.run(thumb_cmd, capture_output=True, timeout=5)
-                print(f"[VideoGen] Instant background thumbnail generated")
-            except Exception as e:
-                print(f"[VideoGen] Background thumbnail failed: {e}")
-        
+
         # Run FFmpeg
         gpu_info = f" (GPU: {self.gpu_type.upper()})" if self.hardware_codec else " (CPU)"
         bg_opt = " [Optimized BG]" if background_type == "image" and BACKGROUND_IMAGE_OPTIMIZATION else ""
@@ -497,7 +443,7 @@ class VideoGenerator:
                     current_time = h * 3600 + m * 60 + s + cs / 100
                     if progress_callback:
                         gen_progress = min(90, int((current_time / duration) * 90))
-                        progress_callback(gen_progress, "Temel video oluşturuluyor...")
+                        progress_callback(gen_progress, "Generating base video...")
             
             if cancel_check and cancel_check():
                 process.kill()
@@ -528,12 +474,12 @@ class VideoGenerator:
         
         if process.returncode != 0:
             raise RuntimeError(f"FFmpeg failed: {stderr}")
-        
+
         if progress_callback:
             perf_info = f" using {self.gpu_type.upper()} GPU" if self.hardware_codec else ""
             bg_info = " with optimized background" if background_type == "image" else ""
             progress_callback(100, f"4K Video generation complete{perf_info}{bg_info}!")
-        
+
         return {
             "output_path": output_path,
             "duration": duration,
@@ -560,7 +506,6 @@ class VideoGenerator:
         progress_callback: Optional[callable] = None,
         visualizer_video_path: Optional[str] = None,
         visualizer_opacity: float = 0.8,
-        thumbnail_path: Optional[str] = None,
         cancel_check: Optional[callable] = None,
     ) -> Dict[str, Any]:
         """
@@ -608,7 +553,6 @@ class VideoGenerator:
             quality=quality,
             progress_callback=lambda p, m: progress_callback(p // 2, m) if progress_callback else None,
             cancel_check=cancel_check,
-            thumbnail_path=thumbnail_path,
         )
 
         # Generate output path if not provided
@@ -782,13 +726,7 @@ class VideoGenerator:
             filter_parts.append(f"[0:v]{subtitle_filter}[vout]")
             has_complex_filter = True
 
-        # Add live thumbnail via split (FFmpeg writes JPEG every frame, scaled to 320px)
-        if thumbnail_path:
-            filter_parts.append("[vout]split=2[vmain][vproxy]")
-            filter_parts.append("[vproxy]fps=1,scale=320:-1[thumb]")
-            video_out_label = "[vmain]"
-        else:
-            video_out_label = "[vout]"
+        video_out_label = "[vout]"
 
         full_filter = ";".join(filter_parts)
         
@@ -835,10 +773,6 @@ class VideoGenerator:
         
         cmd.append(output_path)
 
-        # Second output: live thumbnail (FFmpeg overwrites JPEG each second)
-        if thumbnail_path:
-            cmd.extend(["-map", "[thumb]", "-f", "image2", "-update", "1", "-q:v", "5", thumbnail_path])
-        
         # Debug: Print full FFmpeg command
         print(f"[VideoGen] FFmpeg command: {' '.join(cmd)}")
         
@@ -868,8 +802,8 @@ class VideoGenerator:
                     burn_progress = min(1.0, current_time / total_duration)
                     scaled = 60 + int(burn_progress * 35)
                     if progress_callback:
-                        progress_callback(scaled, "Altyazılar yakılıyor...")
-            
+                        progress_callback(scaled, "Burning subtitles...")
+
             # Check for cancellation
             if cancel_check and cancel_check():
                 process.kill()
@@ -895,14 +829,7 @@ class VideoGenerator:
         
         if process.returncode != 0:
             raise RuntimeError(f"FFmpeg subtitle burn failed: {stderr}")
-        
-        # Extract final thumbnail from completed video
-        if thumbnail_path and os.path.exists(output_path):
-            try:
-                self.extract_thumbnail(output_path, thumbnail_path, seek_seconds=min(2, total_duration / 2), width=320)
-            except Exception:
-                pass
-        
+
         if progress_callback:
             progress_callback(100, "Complete!")
         

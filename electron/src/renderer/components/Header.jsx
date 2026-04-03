@@ -69,7 +69,7 @@ function Header() {
           <button
             className="btn btn-ghost header-source-btn"
             onClick={handleChangeSource}
-            title={originalFileName ? `Kaynak: ${originalFileName}\nTıklayarak değiştir` : 'Kaynak dosya seç'}
+            title={originalFileName ? `Source: ${originalFileName}\nClick to change` : 'Select source file'}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -85,7 +85,7 @@ function Header() {
           >
             <FiFile size={12} style={{ flexShrink: 0, color: mediaType === 'audio' ? '#22c55e' : '#6366f1' }} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {displayName || 'Kaynak Seç'}
+              {displayName || 'Select Source'}
             </span>
             <FiUpload size={11} style={{ flexShrink: 0, opacity: 0.5 }} />
           </button>
@@ -96,7 +96,7 @@ function Header() {
           {!mediaFile && (
             <button
               className="btn btn-ghost btn-icon"
-              title="Kaynak dosya seç"
+              title="Select source file"
               onClick={handleChangeSource}
             >
               <FiUpload />
@@ -143,7 +143,7 @@ function Header() {
             }}>
               <h3 style={{ margin: 0, fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <FiSettings size={18} />
-                Ayarlar
+                Settings
               </h3>
               <button
                 className="btn btn-secondary"
@@ -159,10 +159,10 @@ function Header() {
               {/* GIF Provider */}
               <div className="form-group">
                 <label className="label" style={{ marginBottom: 8, display: 'block' }}>
-                  GIF Servisi
+                  GIF Service
                 </label>
                 <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                  Logo/Watermark için GIF arama servisini seçin
+                  Select GIF search service for logo/watermark
                 </p>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
@@ -209,8 +209,8 @@ function Header() {
                 fontSize: 12,
                 color: 'var(--text-secondary)',
               }}>
-                <strong style={{ color: 'var(--text-primary)' }}>💡 İpucu:</strong><br/>
-                Her iki servis de ücretsiz GIF araması sunar. Farklı sonuçlar için servisi değiştirmeyi deneyebilirsiniz.
+                <strong style={{ color: 'var(--text-primary)' }}>💡 Tip:</strong><br/>
+                Both services offer free GIF search. Try switching services for different results.
               </div>
               
               {/* Divider */}
@@ -226,7 +226,7 @@ function Header() {
                 }}>
                   <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <FiGlobe size={16} />
-                    Çift Dilli Altyazı
+                    Dual Language Subtitles
                   </label>
                   <button
                     className="btn btn-ghost"
@@ -240,7 +240,7 @@ function Header() {
                   </button>
                 </div>
                 <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                  Ana altyazının altında ikinci bir dilde çeviri gösterin. Çeviri otomatik yapılır ve manuel düzenlenebilir.
+                  Show a translation in a second language below the main subtitle. Translation is automatic and manually editable.
                 </p>
                 
                 {settings.dualSubtitleEnabled && (
@@ -252,10 +252,10 @@ function Header() {
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--primary-color)' }}>
                       <FiGlobe size={14} />
-                      <span style={{ fontSize: 13 }}>Aktif</span>
+                      <span style={{ fontSize: 13 }}>Active</span>
                     </div>
                     <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '8px 0 0' }}>
-                      Stil panelinde "Çift Dil" sekmesinden ayarları yapabilirsiniz.
+                      Configure settings from the "Dual Language" tab in the style panel.
                     </p>
                   </div>
                 )}
@@ -274,7 +274,7 @@ function Header() {
                 }}>
                   <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <FiMusic size={16} />
-                    Audio Görselleştirme
+                    Audio Visualization
                   </label>
                   <button
                     className="btn btn-ghost"
@@ -288,15 +288,15 @@ function Header() {
                   </button>
                 </div>
                 <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                  Zaman çizelgesinde ses dalgası görselleştirmesi gösterin.
+                  Show waveform visualization on the timeline.
                   <br/>
-                  <span style={{ color: 'var(--accent-success)' }}>✓ Waveform varsayılan olarak aktiftir.</span>
+                  <span style={{ color: 'var(--accent-success)' }}>✓ Waveform is enabled by default.</span>
                 </p>
                 
                 {settings.audioVisualization.showWaveform && (
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                      <label style={{ fontSize: 12, minWidth: '80px' }}>Dalga Yüksek.:</label>
+                      <label style={{ fontSize: 12, minWidth: '80px' }}>Wave Height:</label>
                       <input
                         type="range"
                         min="80"
@@ -309,7 +309,7 @@ function Header() {
                     </div>
                     
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                      <label style={{ fontSize: 12, minWidth: '80px' }}>Güçlendirme:</label>
+                      <label style={{ fontSize: 12, minWidth: '80px' }}>Boost:</label>
                       <input
                         type="range"
                         min="1"
@@ -323,7 +323,7 @@ function Header() {
                     </div>
                     
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <label style={{ fontSize: 12, minWidth: '80px' }}>Dalga Rengi:</label>
+                      <label style={{ fontSize: 12, minWidth: '80px' }}>Wave Color:</label>
                       <input
                         type="color"
                         value={settings.audioVisualization.waveformColor}
@@ -349,10 +349,10 @@ function Header() {
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#22c55e' }}>
                       <FiMusic size={14} />
-                      <span style={{ fontSize: 13 }}>Aktif</span>
+                      <span style={{ fontSize: 13 }}>Active</span>
                     </div>
                     <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '8px 0 0' }}>
-                      Profesyonel ses düzenleyicisi tarzında görselleştirme etkin.
+                      Professional audio editor-style visualization enabled.
                     </p>
                   </div>
                 )}
@@ -370,7 +370,7 @@ function Header() {
                 className="btn btn-primary"
                 onClick={() => setShowSettings(false)}
               >
-                Tamam
+                OK
               </button>
             </div>
           </div>

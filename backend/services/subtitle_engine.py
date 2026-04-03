@@ -184,16 +184,16 @@ class SubtitleEngine:
             return "".join(karaoke_parts)
         
         elif animation.type == "karaoke" and not words:
-            # FALLBACK: Words verisi yok, metni kelimelere böl
+            # FALLBACK: No word data, split text into words
             print(f"[KARAOKE FALLBACK] Creating karaoke without words data for: '{text[:50]}...'")
             
-            # Text'i kelimelere ayır
+            # Split text into words
             words_list = text.strip().split()
             if not words_list:
                 return text
             
             karaoke_parts = []
-            # Her kelime için eşit süre dağıt
+            # Distribute equal duration for each word
             word_duration = duration / len(words_list)
             
             for word in words_list:

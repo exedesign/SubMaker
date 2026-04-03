@@ -48,7 +48,7 @@ function FormatSelector() {
               color: 'var(--accent-success)',
               fontWeight: 500,
             }}>
-              {selectedFormats.length} format seçili
+              {selectedFormats.length} formats selected
             </span>
           )}
         </label>
@@ -69,7 +69,7 @@ function FormatSelector() {
                   outline: isPreview ? '2px solid var(--accent-primary)' : 'none',
                   outlineOffset: 2,
                 }}
-                title={`${isSelected ? 'Kaldır' : 'Ekle'}: ${label}`}
+                title={`${isSelected ? 'Remove' : 'Add'}: ${label}`}
               >
                 {isSelected && (
                   <span style={{
@@ -95,7 +95,7 @@ function FormatSelector() {
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
           {selectedFormats.length > 1
-            ? `${selectedFormats.map(f => FORMAT_OPTIONS.find(o => o.value === f)?.label).join(', ')} formatlarında render alınacak`
+            ? `Will render in ${selectedFormats.map(f => FORMAT_OPTIONS.find(o => o.value === f)?.label).join(', ')} formats`
             : FORMAT_OPTIONS.find(o => o.value === selectedFormats[0])?.desc
           }
         </p>

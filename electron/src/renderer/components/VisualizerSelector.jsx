@@ -94,7 +94,7 @@ function VisualizerSelector() {
           marginTop: 6,
           marginLeft: 32,
         }}>
-          Sesle senkron ProjectM/Milkdrop görselleştirici. Önizleme ve videoda görünür.
+          Audio-synced ProjectM/Milkdrop visualizer. Visible in preview and rendered video.
         </p>
       </div>
 
@@ -127,7 +127,7 @@ function VisualizerSelector() {
             {/* Preset dropdown */}
             {isLoading ? (
               <p style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                Presetler yükleniyor...
+                Loading presets...
               </p>
             ) : (
               <select
@@ -178,13 +178,13 @@ function VisualizerSelector() {
                 style={{ width: 14, height: 14 }}
               />
               <FiRefreshCw size={12} />
-              <span style={{ fontWeight: 600 }}>Otomatik Değiştir</span>
+              <span style={{ fontWeight: 600 }}>Auto Cycle</span>
             </label>
 
             {visualizer.autoCycle && (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>
-                  <span>Aralık</span>
+                  <span>Interval</span>
                   <span>{visualizer.autoCycleInterval}s</span>
                 </div>
                 <input
@@ -205,7 +205,7 @@ function VisualizerSelector() {
           {/* Opacity */}
           <div className="form-group" style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label className="label" style={{ marginBottom: 0 }}>Saydamlık</label>
+              <label className="label" style={{ marginBottom: 0 }}>Opacity</label>
               <span style={{
                 background: 'rgba(99, 102, 241, 0.2)',
                 padding: '2px 8px',

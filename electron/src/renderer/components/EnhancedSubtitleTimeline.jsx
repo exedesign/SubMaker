@@ -313,7 +313,7 @@ function EnhancedSubtitleTimeline({ currentTime, duration, onSeek }) {
     const handleMouseUp = () => {
       setIsDragging(false);
       setDragData(null);
-      // Mouse bırakıldığında hover state'i temizleyerek uniform genişliğe dön
+      // Clear hover state on mouse up to return to uniform width
       setHoveredSubtitle(null);
       setShowControls(null);
     };
@@ -500,9 +500,9 @@ function EnhancedSubtitleTimeline({ currentTime, duration, onSeek }) {
           const isExpanded = isSelected || isHovered || isDragging;
           
           // Use uniform width unless expanded
-          const UNIFORM_WIDTH = 8; // Daha görünür uniform genişlik
+          const UNIFORM_WIDTH = 8; // More visible uniform width
           const displayWidth = isExpanded ? Math.max(UNIFORM_WIDTH, realWidth) : UNIFORM_WIDTH;
-          const displayLeft = Math.max(0, startLeft); // Her zaman gerçek pozisyonda
+          const displayLeft = Math.max(0, startLeft); // Always at real position
           
           return (
             <div 
@@ -511,7 +511,7 @@ function EnhancedSubtitleTimeline({ currentTime, duration, onSeek }) {
               style={{
                 left: `${displayLeft}%`,
                 width: `${displayWidth}%`,
-                top: 110 + (index * 36), // Yeni yükseklik için daha fazla spacing
+                top: 110 + (index * 36), // More spacing for new height
                 backgroundColor: isExpanded ? getTypeColor(subtitle.type) : '#6b7280',
                 cursor: isDragging ? 'grabbing' : 'grab',
                 transition: isDragging ? 'none' : 'all 0.2s ease-out',
@@ -519,7 +519,7 @@ function EnhancedSubtitleTimeline({ currentTime, duration, onSeek }) {
                 border: isExpanded ? '2px solid rgba(255,255,255,0.4)' : '1px solid rgba(255,255,255,0.1)',
                 zIndex: isExpanded ? 10 : 1,
                 position: 'absolute',
-                height: '28px', // Biraz daha yüksek - resize için daha kolay
+                height: '28px', // Slightly taller — easier to resize
                 borderRadius: '4px',
                 overflow: 'hidden'
               }}
@@ -552,7 +552,7 @@ function EnhancedSubtitleTimeline({ currentTime, duration, onSeek }) {
                   e.stopPropagation();
                   handleSubtitleMouseDown(e, subtitle, 'resize-start');
                 }}
-                title="Başlangıç süresini ayarla"
+                title="Adjust start time"
               />
               <div 
                 className="resize-handle right"
@@ -560,7 +560,7 @@ function EnhancedSubtitleTimeline({ currentTime, duration, onSeek }) {
                   e.stopPropagation();
                   handleSubtitleMouseDown(e, subtitle, 'resize-end');
                 }}
-                title="Bitiş süresini ayarla"
+                title="Adjust end time"
               />
               
               {/* Text content with duration indicator */}

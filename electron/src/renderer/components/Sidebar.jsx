@@ -7,9 +7,9 @@ import ModelSelector from './ModelSelector';
 
 // Section definitions — id is stable key, title is display label
 const SECTIONS = [
-  { id: 'language', title: 'Dil Ayarları', component: LanguageSelector },
-  { id: 'whisper', title: 'Altyazı', component: ModelSelector },
-  { id: 'style', title: 'Altyazı Stili', component: StyleEditor },
+  { id: 'language', title: 'Language Settings', component: LanguageSelector },
+  { id: 'whisper', title: 'Subtitles', component: ModelSelector },
+  { id: 'style', title: 'Subtitle Style', component: StyleEditor },
 ];
 
 const DEFAULT_ORDER = SECTIONS.map(s => s.id);
@@ -178,7 +178,7 @@ function Sidebar() {
               >
                 <span
                   className="sidebar-drag-handle"
-                  title="Sürükleyerek sırala"
+                  title="Drag to reorder"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <FiMenu size={12} />

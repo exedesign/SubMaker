@@ -292,6 +292,7 @@ class TranscriptionService:
         ]
 
         if language and language.lower() == 'tr':
+            # Turkish common hallucinations: subscribe, like, subtitles, thank you for watching
             HALLUCINATION_PATTERNS.extend([
                 "abone ol", "beğen", "altyazı",
                 "izlediğiniz için teşekkürler",
@@ -402,7 +403,7 @@ class TranscriptionService:
                 if isolator.is_available():
                     logger.info("Performing vocal isolation with demucs...")
                     if progress_callback:
-                        progress_callback(5, "Vokaller ayrıştırılıyor...")
+                        progress_callback(5, "Separating vocals...")
                     # Map isolator's 0-100% to pipeline's 5-40%
                     def vocal_progress(pct, msg=""):
                         if progress_callback:
@@ -424,7 +425,7 @@ class TranscriptionService:
 
         # Enhanced audio preprocessing based on content type (applied to isolated vocals)
         if progress_callback:
-            progress_callback(42, "Ses önişleme yapılıyor...")
+            progress_callback(42, "Pre-processing audio...")
         processed_audio_path = self.preprocess_music_audio(
             vocal_audio_path,
             content_type=content_type,
@@ -446,7 +447,7 @@ class TranscriptionService:
 
         # Load optimal model with explicit override
         if progress_callback:
-            progress_callback(45, f"{optimal_model} modeli yükleniyor...")
+            progress_callback(45, f"Loading {optimal_model} model...")
         self.load_model(language, model_size_override=optimal_model)
         
         # Get content-specific transcription parameters
@@ -491,7 +492,7 @@ class TranscriptionService:
         
         # Transcribe via ASR engine with optimized parameters
         if progress_callback:
-            progress_callback(50, "Transkripsiyon başladı...")
+            progress_callback(50, "Transcription started...")
         if is_rtl:
             params['initial_prompt'] = ""  # RTL: empty prompt prevents garbled output
         elif language and language.lower() in LANGUAGE_PROMPTS:
@@ -603,11 +604,11 @@ class TranscriptionService:
         processed_audio_path = audio_path
         if preprocess_audio:
             if progress_callback:
-                progress_callback(10, "Ses önişleme yapılıyor...")
+                progress_callback(10, "Pre-processing audio...")
             processed_audio_path = self.preprocess_audio(audio_path)
 
         if progress_callback:
-            progress_callback(20, "Model yükleniyor...")
+            progress_callback(20, "Loading model...")
         self.load_model(language)
         
         if not os.path.exists(processed_audio_path):
@@ -625,7 +626,7 @@ class TranscriptionService:
 
         # Transcribe via ASR engine
         if progress_callback:
-            progress_callback(30, "Transkripsiyon başladı...")
+            progress_callback(30, "Transcription started...")
         if is_rtl:
             params['initial_prompt'] = ""  # RTL: empty prompt prevents garbled output
         elif language and language.lower() in LANGUAGE_PROMPTS:

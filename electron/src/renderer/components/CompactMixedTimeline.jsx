@@ -267,8 +267,8 @@ function CompactMixedTimeline({ currentTime, duration, onSeek }) {
         justifyContent: 'space-between',
         alignItems: 'center',
       }}>
-        <span>🎵 Ses Katmanları — Seçmek için tıklayın</span>
-        {isLoading && <span style={{ fontSize: 9, opacity: 0.7 }}>Dalga formları yükleniyor...</span>}
+        <span>🎵 Audio Layers — Click to select</span>
+        {isLoading && <span style={{ fontSize: 9, opacity: 0.7 }}>Loading waveforms...</span>}
       </div>
 
       {sortedTracks.map((track) => (
@@ -293,7 +293,7 @@ function CompactMixedTimeline({ currentTime, duration, onSeek }) {
         color: 'var(--text-muted)',
         borderTop: '1px solid rgba(255, 255, 255, 0.05)',
       }}>
-        {sortedTracks.length} ses katmanı
+        {sortedTracks.length} audio layers
       </div>
     </div>
   );

@@ -22,21 +22,17 @@ function StatusBar() {
     renderJobId,
   } = useAppStore();
   
-  // Output klasörünü aç
   const openOutputFolder = async () => {
     try {
-      // Electron API varsa kullan
       if (window.electronAPI?.openPath) {
         if (outputPath) {
-          // Dosya varsa dosyayı Explorer'da göster
           await window.electronAPI.openPath(outputPath);
         } else {
-          // Varsayılan output klasörünü aç
           const defaultOutput = 'D:\\AI\\SubMaker\\output';
           await window.electronAPI.openPath(defaultOutput);
         }
       } else {
-        // Tarayıcı modunda - backend üzerinden aç
+        // Browser mode - open via backend
         const folderPath = outputPath 
           ? outputPath.substring(0, outputPath.lastIndexOf('\\'))
           : 'D:\\AI\\SubMaker\\output';
@@ -49,7 +45,6 @@ function StatusBar() {
     }
   };
   
-  // Süreyi formatla
   const formatDuration = (seconds) => {
     if (!seconds) return '--:--';
     const mins = Math.floor(seconds / 60);
@@ -57,16 +52,15 @@ function StatusBar() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
   
-  // İşlem tipini belirle
   const getProcessType = () => {
     const step = processingStep?.toLowerCase() || '';
     if (step.includes('transcri') || step.includes('transkrip') || step.includes('model') || step.includes('whisper')) {
       return 'transcribe';
     }
-    if (step.includes('render') || step.includes('video') || step.includes('altyazı') || step.includes('ffmpeg') || step.includes('oluşturul')) {
+    if (step.includes('render') || step.includes('video') || step.includes('subtitle') || step.includes('ffmpeg') || step.includes('generat')) {
       return 'render';
     }
-    if (step.includes('upload') || step.includes('yükle')) {
+    if (step.includes('upload')) {
       return 'upload';
     }
     return 'other';
@@ -74,7 +68,6 @@ function StatusBar() {
   
   const processType = getProcessType();
   
-  // İşlem yapılıyorsa tam genişlikte progress bar göster
   if (isProcessing) {
     return (
       <div className="status-bar processing-mode">
@@ -87,10 +80,10 @@ function StatusBar() {
             {processType === 'other' && <FiLoader className="process-icon spin" size={18} />}
             
             <span className="process-title">
-              {processType === 'transcribe' && 'Transkripsiyon'}
-              {processType === 'render' && 'Video Oluşturuluyor'}
-              {processType === 'upload' && 'Dosya Yükleniyor'}
-              {processType === 'other' && 'İşleniyor'}
+              {processType === 'transcribe' && 'Transcription'}
+              {processType === 'render' && 'Rendering Video'}
+              {processType === 'upload' && 'Uploading File'}
+              {processType === 'other' && 'Processing'}
             </span>
           </div>
           
@@ -110,12 +103,11 @@ function StatusBar() {
             <span className="process-step">{processingStep}</span>
           </div>
           
-          {/* İptal butonu (sadece render için) */}
           {renderJobId && (
-            <button 
+            <button
               className="process-cancel-btn"
               onClick={cancelRender}
-              title="İptal Et"
+              title="Cancel"
             >
               <FiX size={14} />
             </button>
@@ -138,8 +130,8 @@ function StatusBar() {
             }`}
           />
           <span className="status-label">
-            {backendStatus === 'online' ? 'Bağlı' :
-             backendStatus === 'checking' ? 'Kontrol...' : 'Çevrimdışı'}
+            {backendStatus === 'online' ? 'Connected' :
+             backendStatus === 'checking' ? 'Checking...' : 'Offline'}
           </span>
         </div>
         
@@ -167,7 +159,7 @@ function StatusBar() {
             <div className="status-divider" />
             <div className="status-item">
               <span className="status-badge">{subtitles.length}</span>
-              <span className="status-label">altyazı</span>
+              <span className="status-label">subtitles</span>
             </div>
           </>
         )}
@@ -182,11 +174,11 @@ function StatusBar() {
           {(currentStep === 'style' || currentStep === 'render') && <FiFilm size={14} />}
           {currentStep === 'complete' && <FiCheck size={14} style={{ color: 'var(--accent-success)' }} />}
           <span>
-            {currentStep === 'upload' && 'Dosya Yükle'}
-            {currentStep === 'transcribe' && 'Transkript'}
-            {currentStep === 'edit' && 'Düzenleme'}
-            {(currentStep === 'style' || currentStep === 'render') && 'Video Oluşturma'}
-            {currentStep === 'complete' && 'Tamamlandı'}
+            {currentStep === 'upload' && 'Upload File'}
+            {currentStep === 'transcribe' && 'Transcribe'}
+            {currentStep === 'edit' && 'Edit'}
+            {(currentStep === 'style' || currentStep === 'render') && 'Render Video'}
+            {currentStep === 'complete' && 'Complete'}
           </span>
         </div>
       </div>
@@ -197,17 +189,17 @@ function StatusBar() {
           <button 
             className="status-output-btn success"
             onClick={openOutputFolder}
-            title={`Çıktı: ${outputPath}`}
+            title={`Output: ${outputPath}`}
           >
             <FiCheck size={14} />
-            <span>Çıktıyı Aç</span>
+            <span>Open Output</span>
             <FiFolder size={14} />
           </button>
         ) : (
           <button 
             className="status-output-btn"
             onClick={openOutputFolder}
-            title="Output klasörünü aç"
+            title="Open output folder"
           >
             <FiFolder size={14} />
             <span>Output</span>

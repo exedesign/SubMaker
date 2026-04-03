@@ -1,6 +1,6 @@
 /**
  * ModelSelector Component
- * Altyazı model seçimi, Beam Size ayarı, Vokal İzolasyonu model seçimi ve ayrım önizleme
+ * Subtitle model selection, Beam Size setting, Vocal Isolation model selection and separation preview
  */
 import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
@@ -9,79 +9,79 @@ import {
   FiVolume2, FiMusic, FiMic,
 } from 'react-icons/fi';
 
-// Faster-Whisper model listeleri
+// Faster-Whisper model list
 const WHISPER_MODELS = {
   default: [
-    { value: 'turbo', label: 'Turbo (809M)', description: 'Hızlı, yüksek doğruluk (tavsiye)' },
-    { value: 'large-v3', label: 'Large V3 (1550M)', description: 'En yüksek doğruluk, yavaş' },
-    { value: 'large-v3-turbo', label: 'Large V3 Turbo (809M)', description: 'Large-v3 kalitesi, turbo hızı' },
-    { value: 'large-v2', label: 'Large V2 (1550M)', description: 'Çok yüksek doğruluk, yavaş' },
-    { value: 'distil-large-v3', label: 'Distil Large V3 (756M)', description: 'Large-v3 distil — hızlı, yüksek doğruluk' },
-    { value: 'medium', label: 'Medium (769M)', description: 'Yavaş, yüksek doğruluk' },
-    { value: 'small', label: 'Small (244M)', description: 'Dengeli hız/doğruluk' },
-    { value: 'base', label: 'Base (74M)', description: 'Hızlı, orta doğruluk' },
-    { value: 'tiny', label: 'Tiny (39M)', description: 'En hızlı, düşük doğruluk' },
+    { value: 'turbo', label: 'Turbo (809M)', description: 'Fast, high accuracy (recommended)' },
+    { value: 'large-v3', label: 'Large V3 (1550M)', description: 'Highest accuracy, slow' },
+    { value: 'large-v3-turbo', label: 'Large V3 Turbo (809M)', description: 'Large-v3 quality, turbo speed' },
+    { value: 'large-v2', label: 'Large V2 (1550M)', description: 'Very high accuracy, slow' },
+    { value: 'distil-large-v3', label: 'Distil Large V3 (756M)', description: 'Large-v3 distil — fast, high accuracy' },
+    { value: 'medium', label: 'Medium (769M)', description: 'Slow, high accuracy' },
+    { value: 'small', label: 'Small (244M)', description: 'Balanced speed/accuracy' },
+    { value: 'base', label: 'Base (74M)', description: 'Fast, medium accuracy' },
+    { value: 'tiny', label: 'Tiny (39M)', description: 'Fastest, low accuracy' },
   ],
   tr: [
-    { value: 'turbo', label: 'Turbo (809M)', description: 'Hızlı, yüksek doğruluk (tavsiye)' },
-    { value: 'large-v3', label: 'Large V3 (1550M)', description: 'En yüksek doğruluk, yavaş' },
-    { value: 'large-v3-turbo', label: 'Large V3 Turbo (809M)', description: 'Large-v3 kalitesi, turbo hızı' },
-    { value: 'large-v2', label: 'Large V2 (1550M)', description: 'Çok yüksek doğruluk, yavaş' },
-    { value: 'distil-large-v3', label: 'Distil Large V3 (756M)', description: 'Large-v3 distil — hızlı, yüksek doğruluk' },
-    { value: 'medium', label: 'Medium (769M)', description: 'Yavaş, yüksek doğruluk' },
-    { value: 'small', label: 'Small (244M)', description: 'Dengeli hız/doğruluk' },
-    { value: 'base', label: 'Base (74M)', description: 'Hızlı, orta doğruluk' },
-    { value: 'tiny', label: 'Tiny (39M)', description: 'En hızlı, düşük doğruluk' },
-    { value: 'selimc/whisper-large-v3-turbo-turkish', label: 'Turkish Fine-tuned (Turbo)', description: 'Common Voice 17.0 Türkçe fine-tune, en iyi Türkçe doğruluk', recommended: true },
+    { value: 'turbo', label: 'Turbo (809M)', description: 'Fast, high accuracy (recommended)' },
+    { value: 'large-v3', label: 'Large V3 (1550M)', description: 'Highest accuracy, slow' },
+    { value: 'large-v3-turbo', label: 'Large V3 Turbo (809M)', description: 'Large-v3 quality, turbo speed' },
+    { value: 'large-v2', label: 'Large V2 (1550M)', description: 'Very high accuracy, slow' },
+    { value: 'distil-large-v3', label: 'Distil Large V3 (756M)', description: 'Large-v3 distil — fast, high accuracy' },
+    { value: 'medium', label: 'Medium (769M)', description: 'Slow, high accuracy' },
+    { value: 'small', label: 'Small (244M)', description: 'Balanced speed/accuracy' },
+    { value: 'base', label: 'Base (74M)', description: 'Fast, medium accuracy' },
+    { value: 'tiny', label: 'Tiny (39M)', description: 'Fastest, low accuracy' },
+    { value: 'selimc/whisper-large-v3-turbo-turkish', label: 'Turkish Fine-tuned (Turbo)', description: 'Common Voice 17.0 Turkish fine-tune, best Turkish accuracy', recommended: true },
   ],
 };
 
-// Desteklenen diller
+// Supported languages
 const SUPPORTED_LANGUAGES = [
-  { code: 'auto', name: 'Otomatik Algılama', description: 'Tüm diller için varsayılan (turbo)' },
-  { code: 'ar', name: 'Arapça', description: 'RTL dil, medium önerilir' },
-  { code: 'tr', name: 'Türkçe', description: 'Turbo model önerilir' },
-  { code: 'en', name: 'İngilizce', description: 'Turbo model önerilir' },
-  { code: 'es', name: 'İspanyolca', description: 'Turbo model önerilir' },
-  { code: 'fr', name: 'Fransızca', description: 'Turbo model önerilir' },
-  { code: 'de', name: 'Almanca', description: 'Turbo model önerilir' },
-  { code: 'it', name: 'İtalyanca', description: 'Turbo model önerilir' },
-  { code: 'pt', name: 'Portekizce', description: 'Turbo model önerilir' },
-  { code: 'ru', name: 'Rusça', description: 'Turbo model önerilir' },
-  { code: 'zh', name: 'Çince', description: 'Medium önerilir' },
-  { code: 'ja', name: 'Japonca', description: 'Medium önerilir' },
-  { code: 'ko', name: 'Korece', description: 'Medium önerilir' }
+  { code: 'auto', name: 'Auto Detect', description: 'Default for all languages (turbo)' },
+  { code: 'ar', name: 'Arabic', description: 'RTL language, medium recommended' },
+  { code: 'tr', name: 'Turkish', description: 'Turbo model recommended' },
+  { code: 'en', name: 'English', description: 'Turbo model recommended' },
+  { code: 'es', name: 'Spanish', description: 'Turbo model recommended' },
+  { code: 'fr', name: 'French', description: 'Turbo model recommended' },
+  { code: 'de', name: 'German', description: 'Turbo model recommended' },
+  { code: 'it', name: 'Italian', description: 'Turbo model recommended' },
+  { code: 'pt', name: 'Portuguese', description: 'Turbo model recommended' },
+  { code: 'ru', name: 'Russian', description: 'Turbo model recommended' },
+  { code: 'zh', name: 'Chinese', description: 'Medium recommended' },
+  { code: 'ja', name: 'Japanese', description: 'Medium recommended' },
+  { code: 'ko', name: 'Korean', description: 'Medium recommended' }
 ];
 
 // Vocal isolation models
 const VOCAL_MODELS = [
   {
     id: 'vocal_ep317',
-    label: 'BS-Roformer EP317 (Vokal)',
-    description: 'Yüksek kalite vokal ayırma — SDR 12.97. 8GB VRAM uyumlu.',
+    label: 'BS-Roformer EP317 (Vocal)',
+    description: 'High quality vocal separation — SDR 12.97. Compatible with 8GB VRAM.',
     icon: FiMic,
     stems: ['vocals', 'instrumental'],
-    badge: 'Vokal',
+    badge: 'Vocal',
     badgeColor: 'rgba(168, 85, 247, 0.8)',
   },
   {
     id: 'instrumental_resurrection',
-    label: 'Resurrection UNWA (Müzik)',
-    description: 'En temiz enstrümantal çıkışı — vokal sızıntısı minimal. 8GB VRAM uyumlu.',
+    label: 'Resurrection UNWA (Music)',
+    description: 'Cleanest instrumental output — minimal vocal leakage. Compatible with 8GB VRAM.',
     icon: FiMusic,
     stems: ['vocals', 'instrumental'],
-    badge: 'Müzik',
+    badge: 'Music',
     badgeColor: 'rgba(59, 130, 246, 0.8)',
   },
 ];
 
 // Stem display labels
 const STEM_LABELS = {
-  vocals: { label: 'Vokal', icon: '🎤', color: 'rgba(168, 85, 247, 0.8)' },
-  instrumental: { label: 'Enstrümantal', icon: '🎵', color: 'rgba(59, 130, 246, 0.8)' },
-  drums: { label: 'Davul', icon: '🥁', color: 'rgba(239, 68, 68, 0.8)' },
-  bass: { label: 'Bas', icon: '🎸', color: 'rgba(34, 197, 94, 0.8)' },
-  other: { label: 'Diğer', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
+  vocals: { label: 'Vocals', icon: '🎤', color: 'rgba(168, 85, 247, 0.8)' },
+  instrumental: { label: 'Instrumental', icon: '🎵', color: 'rgba(59, 130, 246, 0.8)' },
+  drums: { label: 'Drums', icon: '🥁', color: 'rgba(239, 68, 68, 0.8)' },
+  bass: { label: 'Bass', icon: '🎸', color: 'rgba(34, 197, 94, 0.8)' },
+  other: { label: 'Other', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
 };
 
 function ModelSelector() {
@@ -130,7 +130,7 @@ function ModelSelector() {
     <div>
       {/* Language Selection */}
       <div className="form-group">
-        <label className="label">Dil Seçin</label>
+        <label className="label">Select Language</label>
         <select
           className="select"
           value={selectedLanguage}
@@ -196,9 +196,9 @@ function ModelSelector() {
               style={{ width: '100%', height: 6 }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
-              <span>1 (hızlı)</span>
-              <span>5 (varsayılan)</span>
-              <span>20 (maksimum doğruluk)</span>
+              <span>1 (fast)</span>
+              <span>5 (default)</span>
+              <span>20 (max accuracy)</span>
             </div>
           </div>
 
@@ -224,13 +224,13 @@ function ModelSelector() {
                 style={{ width: 16, height: 16 }}
               />
               <FiVolume2 size={14} style={{ color: 'rgb(168, 85, 247)' }} />
-              <span style={{ fontWeight: 600 }}>Vokal İzolasyonu</span>
+              <span style={{ fontWeight: 600 }}>Vocal Isolation</span>
             </label>
 
             {/* Model Selection — always visible when enabled */}
             {vocalIsolation && (
               <div style={{ marginTop: 10 }}>
-                <label className="label" style={{ fontSize: 11, marginBottom: 6 }}>Ayrıştırma Modeli</label>
+                <label className="label" style={{ fontSize: 11, marginBottom: 6 }}>Separation Model</label>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {VOCAL_MODELS.map((model) => {
                     const isSelected = vocalModelId === model.id;
@@ -280,7 +280,7 @@ function ModelSelector() {
                   border: '1px solid var(--border-color)',
                 }}>
                   <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
-                    Çıkarılacak Stem'ler
+                    Stems to Extract
                   </span>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {selectedVocalModel.stems.map((stemId) => {
@@ -329,7 +329,7 @@ function ModelSelector() {
                       }}
                     >
                       <FiMusic size={12} />
-                      {vocalSeparating ? 'Ayrıştırılıyor...' : 'Ayrıştır'}
+                      {vocalSeparating ? 'Separating...' : 'Separate'}
                     </button>
 
                     {/* Progress bar */}
@@ -378,10 +378,10 @@ function ModelSelector() {
                   }}>
                     <div>
                       <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent-success)' }}>
-                        {Object.keys(vocalSeparation.stems).length} stem ayrıştırıldı
+                        {Object.keys(vocalSeparation.stems).length} stems separated
                       </span>
                       <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '2px 0 0' }}>
-                        Ses katmanları zaman çizelgesinde görüntüleniyor
+                        Audio layers shown on timeline
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -393,7 +393,7 @@ function ModelSelector() {
                           background: 'rgba(34, 197, 94, 0.2)',
                           color: 'var(--accent-success)',
                         }}>
-                          Önbellek
+                          Cached
                         </span>
                       )}
                       {vocalSeparation.duration > 0 && (
@@ -414,7 +414,7 @@ function ModelSelector() {
                 marginTop: 6,
                 marginLeft: 32,
               }}>
-                Arka plan müziğini temizler. Müzik transkripsiyon kalitesini artırır.
+                Removes background music. Improves transcription quality.
               </p>
             )}
           </div>
@@ -430,7 +430,7 @@ function ModelSelector() {
           }}
           style={{ width: '100%', fontSize: 11, padding: '6px 12px' }}
         >
-          Varsayılan Ayarlara Dön
+          Reset to Defaults
         </button>
       </div>
     </div>

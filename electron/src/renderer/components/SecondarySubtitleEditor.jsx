@@ -78,7 +78,7 @@ function SecondarySubtitleEditor() {
   
   const handleTranslate = async () => {
     if (subtitles.length === 0) {
-      alert('Önce ana altyazıları oluşturun');
+      alert('Please generate main subtitles first');
       return;
     }
     await translateToSecondary();
@@ -106,16 +106,16 @@ function SecondarySubtitleEditor() {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <FiGlobe size={16} style={{ color: 'var(--primary-color)' }} />
-          <span style={{ fontWeight: 600, fontSize: 13 }}>Çift Dilli Altyazı</span>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Dual Language Subtitles</span>
           {hasTranslation && (
-            <span style={{ 
-              fontSize: 11, 
-              background: 'var(--primary-color)', 
+            <span style={{
+              fontSize: 11,
+              background: 'var(--primary-color)',
               color: 'white',
               padding: '2px 6px',
               borderRadius: 4,
             }}>
-              {translatedSubs.length} çeviri
+              {translatedSubs.length} translations
             </span>
           )}
         </div>
@@ -127,7 +127,7 @@ function SecondarySubtitleEditor() {
         <div style={{ padding: 16 }}>
           {/* Language Selection */}
           <div className="form-group">
-            <label className="label">Hedef Dil</label>
+            <label className="label">Target Language</label>
             <select
               className="select"
               value={targetLanguage}
@@ -151,13 +151,13 @@ function SecondarySubtitleEditor() {
             {isTranslating ? (
               <>
                 <FiLoader style={{ animation: 'spin 1s linear infinite' }} />
-                <span style={{ marginLeft: 8 }}>Çeviriliyor...</span>
+                <span style={{ marginLeft: 8 }}>Translating...</span>
               </>
             ) : (
               <>
                 <FiRefreshCw size={14} />
                 <span style={{ marginLeft: 8 }}>
-                  {hasTranslation ? 'Yeniden Çevir' : 'Tümünü Çevir'}
+                  {hasTranslation ? 'Re-translate' : 'Translate All'}
                 </span>
               </>
             )}
@@ -165,7 +165,7 @@ function SecondarySubtitleEditor() {
           
           {hasTranslation && (
             <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 16, textAlign: 'center' }}>
-              ✓ {translatedSubs.length} altyazı çevrildi. Düzenlemeler için altyazı listesini kullanın.
+              ✓ {translatedSubs.length} subtitles translated. Use the subtitle list to make edits.
             </p>
           )}
           
@@ -173,7 +173,7 @@ function SecondarySubtitleEditor() {
           <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
             <label className="label" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
               <FiType size={14} />
-              İkinci Altyazı Stili
+              Secondary Subtitle Style
             </label>
             
             {/* Font */}
@@ -194,7 +194,7 @@ function SecondarySubtitleEditor() {
             
             {/* Font Size */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Boyut: {style.fontSize}px</label>
+              <label className="label" style={{ fontSize: 11 }}>Size: {style.fontSize}px</label>
               <input
                 type="range"
                 className="slider"
@@ -208,7 +208,7 @@ function SecondarySubtitleEditor() {
             {/* Colors Row */}
             <div className="form-row">
               <div className="form-group">
-                <label className="label" style={{ fontSize: 11 }}>Metin Rengi</label>
+                <label className="label" style={{ fontSize: 11 }}>Text Color</label>
                 <input
                   type="color"
                   value={style.color}
@@ -217,7 +217,7 @@ function SecondarySubtitleEditor() {
                 />
               </div>
               <div className="form-group">
-                <label className="label" style={{ fontSize: 11 }}>Kenarlık</label>
+                <label className="label" style={{ fontSize: 11 }}>Border</label>
                 <input
                   type="color"
                   value={style.borderColor}
@@ -229,7 +229,7 @@ function SecondarySubtitleEditor() {
             
             {/* Border Width */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Kenarlık: {style.borderWidth}px</label>
+              <label className="label" style={{ fontSize: 11 }}>Border Width: {style.borderWidth}px</label>
               <input
                 type="range"
                 className="slider"
@@ -242,7 +242,7 @@ function SecondarySubtitleEditor() {
             
             {/* Vertical Margin (Position) */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Dikey Pozisyon: {style.marginVertical}px</label>
+              <label className="label" style={{ fontSize: 11 }}>Vertical Position: {style.marginVertical}px</label>
               <input
                 type="range"
                 className="slider"
@@ -252,11 +252,11 @@ function SecondarySubtitleEditor() {
                 onChange={(e) => setSecondaryStyle({ marginVertical: parseInt(e.target.value) })}
               />
               <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                Ana altyazının altında ne kadar aşağıda görüneceği
+                How far below the main subtitle this appears
               </p>
             </div>
             
-            {/* Position Controls - ANA DİL İLE AYNI */}
+            {/* Position Controls */}
             <div className="form-group">
               <label className="label" style={{ fontSize: 11 }}>Position</label>
               <div style={{ 
@@ -279,7 +279,7 @@ function SecondarySubtitleEditor() {
               </div>
             </div>
             
-            {/* Margin from edge - ANA DİL İLE AYNI */}
+            {/* Margin from edge */}
             <div className="form-group">
               <label className="label" style={{ fontSize: 11 }}>Margin from edge: {style.marginVertical}px</label>
               <input

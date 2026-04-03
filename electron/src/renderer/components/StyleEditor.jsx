@@ -87,7 +87,7 @@ function StyleEditor() {
         setGifResults(response.data.results);
       }
     } catch (err) {
-      setGifError('GIF\'ler yüklenirken hata oluştu');
+      setGifError('Error loading GIFs');
       console.error(err);
     } finally {
       setGifLoading(false);
@@ -111,7 +111,7 @@ function StyleEditor() {
         setGifResults(response.data.results);
       }
     } catch (err) {
-      setGifError('Arama yapılırken hata oluştu');
+      setGifError('Error performing search');
       console.error(err);
     } finally {
       setGifLoading(false);
@@ -286,9 +286,9 @@ function StyleEditor() {
               className="btn btn-secondary"
               onClick={clearAllLogos}
               style={{ padding: '4px 8px', fontSize: 10 }}
-              title="Tümünü Kaldır"
+              title="Remove All"
             >
-              Temizle
+              Clear
             </button>
           )}
         </label>
@@ -320,7 +320,7 @@ function StyleEditor() {
             style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           >
             <FiUpload size={16} />
-            Dosya Yükle
+            Upload File
           </button>
           <button
             className="btn btn-secondary"
@@ -336,7 +336,7 @@ function StyleEditor() {
         {logos?.length > 0 && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-              Düzenlemek için logo seçin:
+              Select a logo to edit:
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {logos.map((logo, index) => (
@@ -380,12 +380,12 @@ function StyleEditor() {
               marginBottom: 12,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 500 }}>Seçili Logo Ayarları</span>
+                <span style={{ fontSize: 12, fontWeight: 500 }}>Selected Logo Settings</span>
                 <button
                   className="btn btn-secondary"
                   onClick={clearLogo}
                   style={{ padding: '4px 8px', fontSize: 10 }}
-                  title="Bu Logoyu Kaldır"
+                  title="Remove This Logo"
                 >
                   <FiX size={12} />
                 </button>
@@ -413,7 +413,7 @@ function StyleEditor() {
                   ))}
                 </div>
                 <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Önizlemede sürükleyerek de konumlandırabilirsiniz
+                  You can also drag to reposition in the preview
                 </div>
               </div>
               
@@ -432,7 +432,7 @@ function StyleEditor() {
               
               {/* Logo Opacity */}
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="label" style={{ fontSize: 11 }}>Opaklık: {selectedLogo.opacity}%</label>
+                <label className="label" style={{ fontSize: 11 }}>Opacity: {selectedLogo.opacity}%</label>
                 <input
                   type="range"
                   className="slider"
@@ -497,7 +497,7 @@ function StyleEditor() {
                 <input
                   type="text"
                   className="input"
-                  placeholder="GIF ara... (örn: thumbs up, celebrate, fire)"
+                  placeholder="Search GIFs... (e.g. thumbs up, celebrate, fire)"
                   value={gifSearchQuery}
                   onChange={(e) => setGifSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && searchGifs()}
@@ -527,7 +527,7 @@ function StyleEditor() {
                   style={{ fontSize: 12, padding: '6px 12px' }}
                   disabled={!gifSearchQuery.trim()}
                 >
-                  🔍 Arama Sonuçları
+                  🔍 Search
                 </button>
               </div>
             </div>
@@ -547,7 +547,7 @@ function StyleEditor() {
                   color: 'var(--text-secondary)',
                 }}>
                   <FiLoader size={24} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
-                  <span style={{ marginLeft: 12 }}>Yükleniyor...</span>
+                  <span style={{ marginLeft: 12 }}>Loading...</span>
                 </div>
               )}
               
@@ -568,8 +568,8 @@ function StyleEditor() {
                   color: 'var(--text-secondary)',
                 }}>
                   {activeTab === 'search' 
-                    ? 'Sonuç bulunamadı. Başka bir şey aramayı deneyin.'
-                    : 'GIF yüklemek için arama yapın'}
+                    ? 'No results found. Try searching for something else.'
+                    : 'Search to load GIFs'}
                 </div>
               )}
               
@@ -610,7 +610,7 @@ function StyleEditor() {
                       }}
                       loading="lazy"
                       onError={(e) => {
-                        console.error('GIF yükleme hatası:', gif.preview_url);
+                        console.error('GIF load error:', gif.preview_url);
                         e.target.style.display = 'none';
                       }}
                     />

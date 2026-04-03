@@ -37,9 +37,9 @@ const getImageUrl = (imagePath) => {
 };
 
 /**
- * PreviewPanel - Çift modlu canlı önizleme
- * - Docked Mode: Sağ panelde sabit, resize edilebilir
- * - Floating Mode: Sürüklenebilir pencere
+ * PreviewPanel - Dual mode live preview
+ * - Docked Mode: Fixed in right panel, resizable
+ * - Floating Mode: Draggable window
  */
 function PreviewPanel() {
   const {
@@ -64,7 +64,7 @@ function PreviewPanel() {
   const [isMinimized, setIsMinimized] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(300); // Docked panel genişliği
+  const [panelWidth, setPanelWidth] = useState(300); // Docked panel width
   const [collapsedSections, setCollapsedSections] = useState({ format: true, background: true, animation: true });
 
   // Derive actual audio element reactively — globalAudioRef.current changes
@@ -74,9 +74,9 @@ function PreviewPanel() {
 
   // Collapsible section definitions
   const PREVIEW_SECTIONS_DEF = [
-    { id: 'format', title: 'Video Formatı', Component: FormatSelector },
-    { id: 'background', title: 'Arkaplan', Component: BackgroundSelector },
-    { id: 'animation', title: 'Animasyon', Component: AnimationSelector },
+    { id: 'format', title: 'Video Format', Component: FormatSelector },
+    { id: 'background', title: 'Background', Component: BackgroundSelector },
+    { id: 'animation', title: 'Animation', Component: AnimationSelector },
   ];
   const PREVIEW_DEFAULT_ORDER = PREVIEW_SECTIONS_DEF.map(s => s.id);
   const PREVIEW_ORDER_KEY = 'submaker-preview-order';
@@ -162,7 +162,7 @@ function PreviewPanel() {
   PREVIEW_SECTIONS_DEF.forEach(s => { previewSectionMap[s.id] = s; });
   const orderedPreviewSections = previewSectionOrder.map(id => previewSectionMap[id]).filter(Boolean);
 
-  // Floating mode boyutları
+  // Floating mode dimensions
   const [floatingSize, setFloatingSize] = useState({ width: 300, height: 400 });
   
   // Drag state for floating mode
@@ -192,7 +192,7 @@ function PreviewPanel() {
     e.preventDefault();
   };
   
-  // Resize handler for floating mode (kenarlar ve köşeler)
+  // Resize handler for floating mode (edges and corners)
   const handleFloatingResizeStart = (e, direction) => {
     if (previewMode !== 'floating') return;
     e.preventDefault();
@@ -398,19 +398,19 @@ function PreviewPanel() {
     aspectRatio: videoFormat === 'vertical' ? '9:16' : videoFormat === 'square' ? '1:1' : '16:9',
   }), [videoFormat]);
 
-  // Önizleme boyutları - panel genişliğine göre dinamik
+  // Preview dimensions - dynamic based on panel width
   const previewDimensions = useMemo(() => {
-    // Mod'a göre kullanılabilir genişliği hesapla
+    // Calculate available width by mode
     let availableWidth;
     if (previewMode === 'docked') {
-      availableWidth = panelWidth - 40; // Padding için
+      availableWidth = panelWidth - 40; // For padding
     } else {
       availableWidth = floatingSize.width - 40; // Floating mode padding
     }
     
     let baseWidth = availableWidth;
     
-    // Format'a göre ayarla - vertical ve square için oranla
+    // Adjust by format - scale for vertical and square
     if (videoFormat === 'vertical') {
       baseWidth = Math.min(availableWidth * 0.6, availableWidth - 20);
     } else if (videoFormat === 'square') {
@@ -455,7 +455,7 @@ function PreviewPanel() {
   const { width: previewWidth, height: previewHeight, scaleFactor } = previewDimensions;
   const { width: fsWidth, height: fsHeight, scaleFactor: fsScaleFactor } = fullscreenDimensions;
 
-  // Ölçeklenmiş stil
+  // Scaled style
   const getScaledStyle = useMemo(() => ({
     fontFamily: style.fontName,
     fontSize: Math.max(6, style.fontSize * scaleFactor),
@@ -471,11 +471,11 @@ function PreviewPanel() {
     wordWrap: 'break-word',
   }), [style, scaleFactor]);
 
-  // Aktif altyazı - sadece bir tane ve tam zamanında
+  // Active subtitle - only one at a time, precisely timed
   const activeSubtitle = useMemo(() => {
     if (!subtitles.length) return null;
-    
-    // playbackTime >= start VE playbackTime < end (end dahil değil, çakışmayı önler)
+
+    // playbackTime >= start AND playbackTime < end (end excluded to prevent overlap)
     const active = subtitles.find(sub => 
       playbackTime >= sub.start && playbackTime < sub.end
     );
@@ -483,12 +483,12 @@ function PreviewPanel() {
     return active || null;
   }, [subtitles, playbackTime]);
 
-  // Aktif ikincil altyazı (çeviri) - aynı time-based mantık
+  // Active secondary subtitle (translation) - same time-based logic
   const activeSecondarySubtitle = useMemo(() => {
     if (!settings?.dualSubtitleEnabled) return null;
     if (!secondarySubtitle?.subtitles?.length) return null;
-    
-    // playbackTime bazlı ikincil altyazı bulma
+
+    // Secondary subtitle lookup by playbackTime
     const activeSecondary = secondarySubtitle.subtitles.find(sub => 
       playbackTime >= sub.start && playbackTime < sub.end
     );
@@ -585,13 +585,13 @@ function PreviewPanel() {
     }
   };
 
-  // Display text - sadece aktif altyazı varsa göster
+  // Display text - only show when there is an active subtitle
   const displayText = useMemo(() => {
     if (activeSubtitle) {
       const text = activeSubtitle.text;
       return text.length > 60 ? text.substring(0, 60) + '...' : text;
     }
-    return null; // Aktif altyazı yoksa null döndür
+    return null; // Return null when no active subtitle
   }, [activeSubtitle]);
 
   // Fullscreen scaled style (must be before any early returns to maintain hooks order)
@@ -621,7 +621,7 @@ function PreviewPanel() {
       <button 
         className="floating-preview-toggle"
         onClick={() => setIsVisible(true)}
-        title="Önizlemeyi göster"
+        title="Show preview"
       >
         <FiEye size={16} />
       </button>
@@ -679,7 +679,7 @@ function PreviewPanel() {
         {/* Logo Overlay */}
         <LogoOverlay containerRef={previewFrameRef} scaleFactor={scaleFactor} />
         
-        {/* Sadece aktif altyazı varsa göster */}
+        {/* Only show when there is an active subtitle */}
         {displayText && (
           <div 
             className={`frame-subtitle ${animation.type}-mode`}
@@ -695,19 +695,19 @@ function PreviewPanel() {
               ...getSubtitleAnimationStyle(),
             }}
           >
-            {/* Ana altyazı - animasyon ile */}
+            {/* Main subtitle - with animation */}
             <span style={getScaledStyle}>
               {renderAnimatedText(displayText)}
             </span>
           </div>
         )}
         
-        {/* İkincil altyazı (çeviri) - ayrı container, animasyon YOK */}
+        {/* Secondary subtitle (translation) - separate container, NO animation */}
         {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (
           <div 
             className="frame-subtitle secondary-subtitle"
             style={{
-              // İkincil altyazı pozisyonu
+              // Secondary subtitle position
               top: (secondarySubtitle?.style?.alignment || 5) >= 7 ? 
                 `${8 + (secondarySubtitle?.style?.offsetY || 0) * 0.5}%` : 
                 (secondarySubtitle?.style?.alignment || 5) >= 4 ? 
@@ -722,7 +722,7 @@ function PreviewPanel() {
               display: 'flex',
             }}
           >
-            {/* İkincil altyazı metni - DEBUG EKLİ */}
+            {/* Secondary subtitle text */}
             <span style={{
               fontFamily: secondarySubtitle?.style?.fontName || 'Arial',
               fontSize: Math.max(5, (secondarySubtitle?.style?.fontSize || 36) * scaleFactor * 0.8),
@@ -742,7 +742,7 @@ function PreviewPanel() {
                 originalText: activeSecondarySubtitle.text,
                 hasTranslation: !!activeSecondarySubtitle.translatedText
               })}
-              {activeSecondarySubtitle.translatedText || `[ÇEVİRİ YOK: ${activeSecondarySubtitle.text}]`}
+              {activeSecondarySubtitle.translatedText || `[NO TRANSLATION: ${activeSecondarySubtitle.text}]`}
             </span>
           </div>
         )}
@@ -771,7 +771,7 @@ function PreviewPanel() {
             >
               <span
                 className="sidebar-drag-handle"
-                title="Sürükleyerek sırala"
+                title="Drag to reorder"
                 onClick={(e) => e.stopPropagation()}
               >
                 <FiMenu size={12} />
@@ -948,24 +948,24 @@ function PreviewPanel() {
         <div 
           className="preview-resize-handle"
           onMouseDown={handleResizeStart}
-          title="Sürükleyerek boyutlandır"
+          title="Drag to resize"
         />
         
         <div className="preview-header">
           <span className="preview-title">
             <FiEye size={12} />
-            Canlı Önizleme
+            Live Preview
           </span>
           <div className="preview-actions">
             <button
               onClick={toggleFullscreen}
-              title="Tam ekran"
+              title="Fullscreen"
             >
               <FiMaximize size={12} />
             </button>
             <button
               onClick={() => setPreviewMode('floating')}
-              title="Taşınabilir moda geç"
+              title="Switch to floating mode"
             >
               <FiExternalLink size={12} />
             </button>
@@ -1001,12 +1001,12 @@ function PreviewPanel() {
       <div className="preview-header" onMouseDown={handleMouseDown}>
         <span className="preview-title">
           <FiMove size={12} className="drag-icon" />
-          Canlı Önizleme
+          Live Preview
         </span>
         <div className="preview-actions">
-          <button 
+          <button
             onClick={() => setIsMinimized(!isMinimized)}
-            title={isMinimized ? 'Genişlet' : 'Daralt'}
+            title={isMinimized ? 'Expand' : 'Collapse'}
           >
             {isMinimized ? <FiMaximize2 size={10} /> : <FiMinimize2 size={10} />}
           </button>

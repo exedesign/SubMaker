@@ -5,26 +5,26 @@ import SecondarySubtitleEditor from './SecondarySubtitleEditor';
 
 // Common languages
 const LANGUAGES = [
-  { code: null, name: 'Otomatik Algıla' },
-  { code: 'en', name: 'İngilizce' },
-  { code: 'ar', name: 'Arapça' },
-  { code: 'tr', name: 'Türkçe' },
-  { code: 'es', name: 'İspanyolca' },
-  { code: 'fr', name: 'Fransızca' },
-  { code: 'de', name: 'Almanca' },
-  { code: 'it', name: 'İtalyanca' },
-  { code: 'pt', name: 'Portekizce' },
-  { code: 'ru', name: 'Rusça' },
-  { code: 'zh', name: 'Çince' },
-  { code: 'ja', name: 'Japonca' },
-  { code: 'ko', name: 'Korece' },
-  { code: 'hi', name: 'Hintçe' },
-  { code: 'fa', name: 'Farsça' },
-  { code: 'he', name: 'İbranice' },
-  { code: 'nl', name: 'Hollandaca' },
-  { code: 'pl', name: 'Lehçe' },
-  { code: 'sv', name: 'İsveççe' },
-  { code: 'uk', name: 'Ukraynaca' },
+  { code: null, name: 'Auto Detect' },
+  { code: 'en', name: 'English' },
+  { code: 'ar', name: 'Arabic' },
+  { code: 'tr', name: 'Turkish' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'fr', name: 'French' },
+  { code: 'de', name: 'German' },
+  { code: 'it', name: 'Italian' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'ru', name: 'Russian' },
+  { code: 'zh', name: 'Chinese' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'ko', name: 'Korean' },
+  { code: 'hi', name: 'Hindi' },
+  { code: 'fa', name: 'Farsi' },
+  { code: 'he', name: 'Hebrew' },
+  { code: 'nl', name: 'Dutch' },
+  { code: 'pl', name: 'Polish' },
+  { code: 'sv', name: 'Swedish' },
+  { code: 'uk', name: 'Ukrainian' },
 ];
 
 function LanguageSelector() {
@@ -45,10 +45,10 @@ function LanguageSelector() {
       {/* Source Language */}
       <div className="form-group">
         <label className="label">
-          Kaynak Dil
+          Source Language
           {detectedLanguage && (
             <span style={{ fontWeight: 'normal', marginLeft: 8, color: 'var(--accent-success)' }}>
-              (Algılanan: {LANGUAGES.find(l => l.code === detectedLanguage)?.name || detectedLanguage})
+              (Detected: {LANGUAGES.find(l => l.code === detectedLanguage)?.name || detectedLanguage})
             </span>
           )}
         </label>
@@ -76,20 +76,20 @@ function LanguageSelector() {
               style={{ width: '100%', justifyContent: 'center' }}
             >
               <FiRefreshCw size={14} />
-              Seçili Dil ile Yeniden Transkript
+              Re-transcribe with Selected Language
             </button>
           ) : (
             <div className="retranscribe-confirm-inline">
               <div className="confirm-message">
                 <FiAlertCircle size={16} style={{ color: 'var(--accent-warning)' }} />
-                <span>{subtitles.length} altyazı silinecek!</span>
+                <span>{subtitles.length} subtitles will be deleted!</span>
               </div>
               <div className="confirm-actions">
                 <button 
                   className="btn btn-ghost btn-sm"
                   onClick={() => setShowRetranscribe(false)}
                 >
-                  İptal
+                  Cancel
                 </button>
                 <button 
                   className="btn btn-warning btn-sm"
@@ -99,7 +99,7 @@ function LanguageSelector() {
                     setShowRetranscribe(false);
                   }}
                 >
-                  <FiRefreshCw size={12} /> Yeniden Yap
+                  <FiRefreshCw size={12} /> Re-transcribe
                 </button>
               </div>
             </div>

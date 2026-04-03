@@ -24,43 +24,43 @@ FASTER_WHISPER_MODELS = [
         "id": "turbo",
         "name": "Turbo (809M)",
         "size_mb": 1600,
-        "description": "Hızlı, yüksek doğruluk (tavsiye)",
+        "description": "Fast, high accuracy (recommended)",
     },
     {
         "id": "large-v3",
         "name": "Large V3 (1550M)",
         "size_mb": 2900,
-        "description": "En yüksek doğruluk, yavaş",
+        "description": "Highest accuracy, slower",
     },
     {
         "id": "large-v3-turbo",
         "name": "Large V3 Turbo (809M)",
         "size_mb": 1600,
-        "description": "Large-v3 kalitesi, turbo hızı",
+        "description": "Large-v3 quality, turbo speed",
     },
     {
         "id": "large-v2",
         "name": "Large V2 (1550M)",
         "size_mb": 2900,
-        "description": "Çok yüksek doğruluk, yavaş",
+        "description": "Very high accuracy, slower",
     },
     {
         "id": "distil-large-v3",
         "name": "Distil Large V3 (756M)",
         "size_mb": 1500,
-        "description": "Large-v3 distil — hızlı, yüksek doğruluk",
+        "description": "Large-v3 distilled — fast, high accuracy",
     },
     {
         "id": "medium",
         "name": "Medium (769M)",
         "size_mb": 1400,
-        "description": "Yavaş, yüksek doğruluk",
+        "description": "Slower, high accuracy",
     },
     {
         "id": "small",
         "name": "Small (244M)",
         "size_mb": 460,
-        "description": "Dengeli hız/doğruluk",
+        "description": "Balanced speed/accuracy",
     },
     {
         "id": "base",
@@ -157,7 +157,7 @@ class FasterWhisperEngine:
 
         # --- 1) Transcribe ---
         if progress_callback:
-            progress_callback(55, "Faster-Whisper transkripsiyon yapılıyor...")
+            progress_callback(55, "Running Faster-Whisper transcription...")
 
         # Build faster-whisper compatible params
         fw_params = {}
@@ -184,7 +184,7 @@ class FasterWhisperEngine:
 
         # --- 2) Consume generator and build segments ---
         if progress_callback:
-            progress_callback(65, "Segmentler işleniyor...")
+            progress_callback(65, "Processing segments...")
 
         result_segments: List[SegmentResult] = []
         raw_segments = list(segments_gen)  # Consume generator fully
@@ -231,7 +231,7 @@ class FasterWhisperEngine:
 
         # --- 4) Build result ---
         if progress_callback:
-            progress_callback(92, "Sonuçlar düzenleniyor...")
+            progress_callback(92, "Organizing results...")
 
         logger.info(f"Transcription done: {len(result_segments)} segments, {duration:.1f}s")
 

@@ -62,7 +62,7 @@ const StemTrackRow = React.memo(({
       ctx.fillStyle = 'rgba(255,255,255,0.2)';
       ctx.font = '10px "Segoe UI", Arial';
       ctx.textAlign = 'center';
-      ctx.fillText('Dalga formu yükleniyor...', width / 2, height / 2 + 3);
+      ctx.fillText('Loading waveform...', width / 2, height / 2 + 3);
     }
 
     // Playhead
@@ -588,9 +588,9 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
 
         {/* Spacer + Info */}
         <span style={{ flex: 1 }}>
-          {isAnalyzing && <span style={{ fontSize: 11, color: 'var(--accent-warning)' }}>Ses analizi...</span>}
+          {isAnalyzing && <span style={{ fontSize: 11, color: 'var(--accent-warning)' }}>Analyzing audio...</span>}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{subtitles.length} altyazı</span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{subtitles.length} subtitles</span>
       </div>
       
       {/* Audio Visualization Area */}
@@ -626,7 +626,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
             fontSize: 12,
             background: 'var(--bg-secondary)',
           }}>
-            Basit ses dalgası görselleştirmesi
+            Simple audio waveform visualization
           </div>
         )}
       </div>
@@ -652,7 +652,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
             background: 'rgba(0, 0, 0, 0.15)',
           }}>
             <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)' }}>
-              Ses Katmanları ({sortedTracks.length})
+              Audio Layers ({sortedTracks.length})
             </span>
             <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6 }}>
               {sortedTracks.filter(t => t.waveformData).length}/{sortedTracks.length} dalga formu
@@ -758,7 +758,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
                     border: '1px solid rgba(255, 255, 255, 0.5)',
                   }}
                   onMouseDown={(e) => handleSubtitleMouseDown(e, sub, 'resize-start')}
-                  title="Başlangıç süresini ayarla"
+                  title="Adjust start time"
                 />
               )}
               
@@ -779,7 +779,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
                     border: '1px solid rgba(255, 255, 255, 0.5)',
                   }}
                   onMouseDown={(e) => handleSubtitleMouseDown(e, sub, 'resize-end')}
-                  title="Bitiş süresini ayarla"
+                  title="Adjust end time"
                 />
               )}
               

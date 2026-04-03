@@ -1,6 +1,6 @@
 """
 Suno Lyrics Parser
-Suno'dan gelen lirik metinlerini parse ederek subtitle formatına çevirir.
+Parses Suno format lyrics into subtitle segments with timing information.
 """
 
 import re
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 @dataclass
 class LyricSegment:
-    """Tek bir lirik segmentini temsil eder"""
+    """Represents a single lyric segment"""
     start_time: float
     end_time: float
     text: str
@@ -18,7 +18,7 @@ class LyricSegment:
     metadata: Dict = None
     
     def to_subtitle_format(self) -> Dict:
-        """Subtitle formatına çevirir"""
+        """Converts to subtitle format"""
         return {
             'start': self.start_time,
             'end': self.end_time,
@@ -28,10 +28,10 @@ class LyricSegment:
         }
 
 class SunoLyricsParser:
-    """Suno lirik metinlerini parse eden ana sınıf"""
+    """Main class for parsing Suno format lyrics into subtitle segments"""
     
     def __init__(self):
-        # Varsayılan timing ayarları
+        # Default timing configuration
         self.default_timings = {
             'intro_duration': 3.0,
             'section_duration': 4.0,
@@ -44,7 +44,7 @@ class SunoLyricsParser:
             'words_per_second': 2.5
         }
         
-        # Pattern'lar
+        # Regex patterns for parsing
         self.patterns = {
             'section': r'\[([^\]]+)\]',
             'citation': r'\[cite_start\]([^[]+?)(?=\[|\Z)',
@@ -55,19 +55,19 @@ class SunoLyricsParser:
     
     def parse_lyrics(self, lyrics_text: str, base_start_time: float = 0.0) -> List[LyricSegment]:
         """
-        Suno lirik metnini parse ederek segment listesi döndürür
+        Parse Suno lyrics text and return list of segments
         
         Args:
-            lyrics_text: Ham lirik metni
-            base_start_time: Başlangıç zamanı
+            lyrics_text: Raw lyrics text
+            base_start_time: Start time in seconds
             
         Returns:
-            LyricSegment listesi
+            List of LyricSegment objects
         """
         segments = []
         current_time = base_start_time
         
-        # Metni satırlara böl
+        # Split text into lines
         lines = lyrics_text.strip().split('\n')
         
         for line in lines:
@@ -83,15 +83,15 @@ class SunoLyricsParser:
         return segments
     
     def _parse_line(self, line: str, start_time: float) -> Optional[LyricSegment]:
-        """Tek satırı parse eder"""
+        """Parse a single line of lyrics"""
         
-        # Section başlıkları [Intro], [Section 1: El-Huda / Rehber] vb.
+        # Section headers like [Intro], [Section 1: El-Huda / Rehber] etc.
         section_match = re.search(self.patterns['section'], line)
         if section_match:
             section_text = section_match.group(1)
             duration = self._calculate_section_duration(section_text)
             
-            # Metadata'yı temizle
+            # Clean metadata from section text
             clean_text = re.sub(self.patterns['parenthetical'], '', section_text).strip()
             metadata = self._extract_metadata(line)
             
@@ -103,7 +103,7 @@ class SunoLyricsParser:
                 metadata=metadata
             )
         
-        # Citation (cite_start ile işaretli metinler)
+        # Citation (marked with cite_start)
         citation_match = re.search(self.patterns['citation'], line)
         if citation_match:
             citation_text = citation_match.group(1).strip()
@@ -117,7 +117,7 @@ class SunoLyricsParser:
                 metadata={'is_citation': True, 'language': self._detect_language(citation_text)}
             )
         
-        # Pause etiketlerini atla
+        # Skip pause markers
         if '[pause]' in line:
             return LyricSegment(
                 start_time=start_time,
@@ -127,9 +127,9 @@ class SunoLyricsParser:
                 metadata={'is_pause': True}
             )
         
-        # Normal metin satırları
+        # Normal text lines
         if line and not line.startswith('['):
-            # Parenthetical notları temizle
+            # Clean parenthetical notes
             clean_text = re.sub(self.patterns['parenthetical'], '', line).strip()
             if clean_text:
                 duration = self._calculate_text_duration(clean_text)
@@ -146,7 +146,7 @@ class SunoLyricsParser:
         return None
     
     def _calculate_section_duration(self, section_text: str) -> float:
-        """Section başlığının süresini hesaplar"""
+        """Calculate duration for section headers"""
         if 'intro' in section_text.lower():
             return self.default_timings['intro_duration']
         elif 'outro' in section_text.lower():
@@ -157,20 +157,24 @@ class SunoLyricsParser:
             return self.default_timings['section_duration']
     
     def _calculate_text_duration(self, text: str) -> float:
-        """Metin uzunluğuna göre süre hesaplar"""
-        # Kelime sayısını hesapla
+        """Calculate duration based on text length
+        
+        Uses average words per second to estimate duration,
+        with longer duration for Arabic text.
+        """
+        # Count words
         words = len(text.split())
-        # Arapça karakterler için daha uzun süre
+        # Use longer duration for Arabic text
         if self._contains_arabic(text):
             duration = words / (self.default_timings['words_per_second'] * 0.8)
         else:
             duration = words / self.default_timings['words_per_second']
         
-        # Minimum süre 1 saniye
+        # Minimum 1 second duration
         return max(duration, 1.0)
     
     def _determine_section_type(self, section_text: str) -> str:
-        """Section tipini belirler"""
+        """Determine section type from text"""
         text_lower = section_text.lower()
         if 'intro' in text_lower:
             return 'intro'
@@ -184,23 +188,23 @@ class SunoLyricsParser:
             return 'section'
     
     def _extract_metadata(self, line: str) -> Dict:
-        """Satırdan metadata çıkarır"""
+        """Extract metadata from line"""
         metadata = {}
         
-        # Parenthetical notları bul
+        # Find parenthetical notes
         parenthetical_matches = re.findall(self.patterns['parenthetical'], line)
         for match in parenthetical_matches:
             if 'voice' in match.lower():
                 metadata['voice_note'] = match
             elif any(word in match.lower() for word in ['ambient', 'peaceful', 'softly', 'whispering']):
                 metadata['mood'] = match
-            elif 'edebi' in match.lower() or 'şiirsel' in match.lower():
+            elif any(word in match.lower() for word in ['edebi', 'şiirsel', 'poetic', 'literary']):
                 metadata['style'] = match
         
         return metadata
     
     def _detect_language(self, text: str) -> str:
-        """Basit dil tespiti"""
+        """Simple language detection based on character set"""
         if self._contains_arabic(text):
             return 'ar'
         elif self._contains_turkish(text):
@@ -209,39 +213,39 @@ class SunoLyricsParser:
             return 'unknown'
     
     def _contains_arabic(self, text: str) -> bool:
-        """Arapça karakter içeriyor mu kontrol eder"""
+        """Check if text contains Arabic characters"""
         arabic_pattern = r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]'
         return bool(re.search(arabic_pattern, text))
     
     def _contains_turkish(self, text: str) -> bool:
-        """Türkçe karakter içeriyor mu kontrol eder"""
+        """Check if text contains Turkish characters"""
         turkish_chars = 'çğıöşüÇĞIÖŞÜ'
         return any(char in text for char in turkish_chars)
     
     def adjust_timings(self, segments: List[LyricSegment], total_duration: Optional[float] = None) -> List[LyricSegment]:
         """
-        Segment timinglerini ayarlar - toplam süreye göre normalize eder
+        Adjust segment timings to normalize total duration
         
         Args:
-            segments: LyricSegment listesi
-            total_duration: Hedef toplam süre (saniye)
+            segments: List of LyricSegment objects
+            total_duration: Target total duration in seconds
             
         Returns:
-            Ayarlanmış segment listesi
+            Adjusted list of segments
         """
         if not segments or not total_duration:
             return segments
         
-        # Mevcut toplam süre
+        # Get current total duration
         current_total = max(seg.end_time for seg in segments) if segments else 0
         
         if current_total <= 0:
             return segments
         
-        # Scale factor hesapla
+        # Calculate scale factor
         scale_factor = total_duration / current_total
         
-        # Tüm zamanları ölçekle
+        # Scale all timings
         adjusted_segments = []
         for segment in segments:
             adjusted_segment = LyricSegment(
@@ -256,40 +260,40 @@ class SunoLyricsParser:
         return adjusted_segments
     
     def export_to_subtitle_format(self, segments: List[LyricSegment]) -> List[Dict]:
-        """Segment listesini subtitle formatına çevirir"""
+        """Convert segments to subtitle format"""
         return [segment.to_subtitle_format() for segment in segments]
     
     def parse_and_export(self, lyrics_text: str, total_duration: Optional[float] = None) -> List[Dict]:
         """
-        Tam parsing işlemi - metni parse edip subtitle formatında döndürür
+        Full parsing and export process - parse text and return in subtitle format
         
         Args:
-            lyrics_text: Ham lirik metni
-            total_duration: Hedef toplam süre
+            lyrics_text: Raw lyrics text
+            total_duration: Target total duration
             
         Returns:
-            Subtitle formatında segment listesi
+            List of segments in subtitle format
         """
-        # Parse et
+        # Parse lyrics
         segments = self.parse_lyrics(lyrics_text)
         
-        # Timing'leri ayarla
+        # Adjust timings if needed
         if total_duration:
             segments = self.adjust_timings(segments, total_duration)
         
-        # Subtitle formatına çevir
+        # Convert to subtitle format
         return self.export_to_subtitle_format(segments)
 
 def parse_suno_lyrics(lyrics_text: str, total_duration: Optional[float] = None) -> List[Dict]:
     """
-    Convenience function - Suno liriklerini parse eder
+    Convenience function - Parse Suno format lyrics
     
     Args:
-        lyrics_text: Ham lirik metni
-        total_duration: Hedef toplam süre (saniye)
+        lyrics_text: Raw lyrics text
+        total_duration: Target total duration in seconds
         
     Returns:
-        Subtitle formatında segment listesi
+        List of segments in subtitle format
     """
     parser = SunoLyricsParser()
     return parser.parse_and_export(lyrics_text, total_duration)

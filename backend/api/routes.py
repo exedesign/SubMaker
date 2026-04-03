@@ -879,7 +879,7 @@ def transcribe():
 
     file_path = data.get("file_path")
     language = data.get("language")  # None for auto-detect
-    model_settings = data.get("model_settings", {})  # Frontend'den gelen model ayarları
+    model_settings = data.get("model_settings", {})  # Model settings from frontend
     output_formats = data.get("output_formats", [])  # e.g. ["json", "lrc", "enhanced_lrc", "id3"]
 
     print(f"[Transcribe] file_path='{file_path}', exists={os.path.exists(file_path) if file_path else 'N/A'}")
@@ -894,7 +894,7 @@ def transcribe():
     try:
         service = get_transcription_service()
         
-        # Model ayarlarını kullanarak optimal model boyutunu belirle
+        # Determine optimal model size using frontend settings
         if model_settings and language:
             optimal_model = model_settings.get(language, model_settings.get('auto', 'small'))
             print(f"Using model '{optimal_model}' for language '{language}' (from frontend settings)")
@@ -983,7 +983,7 @@ def transcribe_stream():
 
     file_path = data.get("file_path")
     language = data.get("language")
-    model_settings = data.get("model_settings", {})  # Frontend'den gelen model ayarları
+    model_settings = data.get("model_settings", {})  # Model settings from frontend
 
     whisper_params = data.get("whisper_params", {})  # User fine-tune overrides
     enable_vocal_isolation = data.get("enable_vocal_isolation", False)
@@ -1031,14 +1031,14 @@ def transcribe_stream():
                             from services.vocal_isolator import get_vocal_isolator
                             isolator = get_vocal_isolator()
                             if isolator.is_available():
-                                progress_callback(5, "Vokal izolasyonu yapılıyor...")
+                                progress_callback(5, "Vocal isolation in progress...")
                                 audio_to_transcribe = isolator.separate_vocals(
                                     file_path,
                                     progress_callback=lambda p, m: progress_callback(p * 0.3, m),
                                     model_id=vocal_model_id,
                                 )
                             else:
-                                progress_callback(5, "Demucs yüklü değil, orijinal ses kullanılıyor...")
+                                progress_callback(5, "Demucs not available, using original audio...")
                         except Exception as vi_err:
                             print(f"Vocal isolation failed, using original: {vi_err}")
 
@@ -1146,7 +1146,7 @@ def transcribe_stream():
             if is_rtl:
                 try:
                     subtitles = ArabicTextProcessor.process_subtitles(subtitles, detected_lang)
-                    yield f"data: {json_module.dumps({'type': 'status', 'message': 'RTL text işleniyor...', 'progress': 99})}\n\n"
+                    yield f"data: {json_module.dumps({'type': 'status', 'message': 'Processing RTL text...', 'progress': 99})}\n\n"
                 except Exception as rtl_err:
                     print(f"RTL processing warning: {rtl_err}")
 
@@ -1466,10 +1466,9 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         _render_jobs[job_id] = {
             "status": "processing",
             "progress": 5,
-            "step": "Altyazı dosyası oluşturuluyor...",
+            "step": "Generating subtitle file...",
             "error": None,
             "output_path": None,
-            "thumbnail_url": None
         }
         
         # Step 1: Generate subtitle file
@@ -1479,7 +1478,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         engine.set_resolution_from_format(video_format)
         
         _render_jobs[job_id]["progress"] = 10
-        _render_jobs[job_id]["step"] = "Stil ayarları uygulanıyor..."
+        _render_jobs[job_id]["step"] = "Applying style settings..."
         
         # Log all style settings
         print(f"[Render Job {job_id}] Full style settings received: {style}")
@@ -1501,7 +1500,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         print(f"[Render Job {job_id}] Created SubtitleStyle: font={sub_style.font_name}, size={sub_style.font_size}, color={sub_style.primary_color}, border={sub_style.border_color}, align={sub_style.alignment}")
         
         _render_jobs[job_id]["progress"] = 15
-        _render_jobs[job_id]["step"] = "Animasyon ayarları uygulanıyor..."
+        _render_jobs[job_id]["step"] = "Applying animation settings..."
         
         # Detect RTL language from subtitles or source language
         is_rtl = source_language in RTL_LANGUAGES or detect_rtl_from_subtitles(subtitles)
@@ -1519,7 +1518,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         )
         
         _render_jobs[job_id]["progress"] = 20
-        _render_jobs[job_id]["step"] = "ASS altyazı dosyası oluşturuluyor..."
+        _render_jobs[job_id]["step"] = "Generating ASS subtitle file..."
         
         subtitle_path = str(TEMP_DIR / f"render_{job_id}.ass")
         print(f"[Render Job {job_id}] Saving ASS to: {subtitle_path}")
@@ -1556,7 +1555,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             engine.save_ass(subtitles, subtitle_path, sub_style, anim_config)
         
         _render_jobs[job_id]["progress"] = 25
-        _render_jobs[job_id]["step"] = "Ses hazırlanıyor..."
+        _render_jobs[job_id]["step"] = "Preparing audio..."
 
         # Step 1.5: Mix audio tracks if mixer config provided
         if audio_mixer and audio_mixer.get("useMixer") and audio_mixer.get("tracks"):
@@ -1604,19 +1603,12 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             print(f"[Render Job {job_id}] Mixed audio saved to: {mixed_audio_path}")
 
         _render_jobs[job_id]["progress"] = 30
-        _render_jobs[job_id]["step"] = "Video oluşturuluyor..."
+        _render_jobs[job_id]["step"] = "Generating video..."
 
         # Step 2: Generate video with subtitles
         print(f"[Render Job {job_id}] Getting video generator...")
         generator = get_video_generator()
         
-        # Thumbnail path for live preview
-        thumb_path = str(TEMP_DIR / f"thumb_{job_id}.jpg")
-        thumb_url = f"/api/media/temp/thumb_{job_id}.jpg"
-
-        # Set thumbnail URL immediately — frontend handles 404 gracefully via onError/onLoad
-        _render_jobs[job_id]["thumbnail_url"] = thumb_url
-
         # Progress callback for video generation
         def progress_callback(progress, step=""):
             # Scale 30-95 for video generation
@@ -1636,15 +1628,6 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         visualizer_video_path = None
         if visualizer and isinstance(visualizer, dict):
             visualizer_video_path = visualizer.get("videoPath")
-
-        # Extract early thumbnail from visualizer video if available
-        if visualizer_video_path and os.path.exists(str(visualizer_video_path)):
-            try:
-                if generator.extract_thumbnail(str(visualizer_video_path), thumb_path, seek_seconds=2, width=320):
-                    _render_jobs[job_id]["thumbnail_url"] = thumb_url
-                    print(f"[Render Job {job_id}] Visualizer thumbnail generated")
-            except Exception as e:
-                print(f"[Render Job {job_id}] Visualizer thumbnail failed: {e}")
 
         # Derive output path from original media location (not mixed temp path)
         source_dir = os.path.dirname(original_audio_path)
@@ -1673,15 +1656,11 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             progress_callback=progress_callback,
             visualizer_video_path=visualizer_video_path,
             visualizer_opacity=visualizer.get("opacity", 0.8) if visualizer else 0.8,
-            thumbnail_path=thumb_path,
             cancel_check=cancel_check,
         )
 
-        # Ensure thumbnail URL is set after render completes
-        if os.path.exists(thumb_path):
-            _render_jobs[job_id]["thumbnail_url"] = thumb_url
         _render_jobs[job_id]["progress"] = 98
-        _render_jobs[job_id]["step"] = "Son kontroller..."
+        _render_jobs[job_id]["step"] = "Final checks..."
         
         # Clean up temp files
         try:
@@ -1696,7 +1675,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         
         _render_jobs[job_id]["progress"] = 100
         _render_jobs[job_id]["status"] = "completed"
-        _render_jobs[job_id]["step"] = "Tamamlandı!"
+        _render_jobs[job_id]["step"] = "Completed!"
         _render_jobs[job_id]["output_path"] = result.get("output_path")
         _render_jobs[job_id]["result"] = result
         
@@ -1710,17 +1689,9 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         if _render_jobs[job_id]["status"] != "cancelled":
             _render_jobs[job_id]["status"] = "error"
             _render_jobs[job_id]["error"] = str(e)
-            _render_jobs[job_id]["step"] = f"Hata: {str(e)}"
+            _render_jobs[job_id]["step"] = f"Error: {str(e)}"
         else:
-            _render_jobs[job_id]["step"] = "İptal edildi"
-        
-        # Clean up thumbnail on error
-        try:
-            thumb_file = TEMP_DIR / f"thumb_{job_id}.jpg"
-            if thumb_file.exists():
-                thumb_file.unlink()
-        except Exception:
-            pass
+            _render_jobs[job_id]["step"] = "Cancelled"
 
 
 @api.route("/render", methods=["POST"])
@@ -1819,7 +1790,6 @@ def get_render_status(job_id):
         "step": job["step"],
         "error": job["error"],
         "output_path": job["output_path"],
-        "thumbnail_url": job.get("thumbnail_url")
     })
 
 
@@ -2046,11 +2016,11 @@ def open_folder():
     folder_path = request.args.get('path', str(OUTPUT_DIR))
     
     try:
-        # Klasör yoksa oluştur
+        # Create folder if it doesn't exist
         if not os.path.exists(folder_path):
             os.makedirs(folder_path, exist_ok=True)
         
-        # İşletim sistemine göre aç
+        # Open based on operating system
         system = platform.system()
         if system == 'Windows':
             subprocess.Popen(['explorer', folder_path])
@@ -2071,12 +2041,12 @@ def open_folder():
 @api.route("/parse-lyrics", methods=["POST"])
 def parse_lyrics():
     """
-    Suno lirik metinlerini parse ederek subtitle formatına çevirir
+    Parse Suno format lyrics into subtitle segments with timing
     
     Request body:
     {
-        "lyrics": "string",  # Ham lirik metni
-        "duration": float    # Hedef toplam süre (opsiyonel)
+        "lyrics": "string",  # Raw lyrics text
+        "duration": float    # Target total duration (optional)
     }
     """
     try:
@@ -2087,7 +2057,7 @@ def parse_lyrics():
         if not lyrics_text:
             return jsonify({"error": "Lyrics text is required"}), 400
         
-        # Parse et
+        # Parse lyrics
         parsed_subtitles = parse_suno_lyrics(lyrics_text, total_duration)
         
         return jsonify({
@@ -2104,7 +2074,7 @@ def parse_lyrics():
 @api.route("/parse-lyrics/preview", methods=["POST"])
 def preview_lyrics():
     """
-    Suno liriklerinin önizlemesini döndürür (timing hesaplamadan)
+    Return preview of Suno lyrics without timing calculations
     """
     try:
         data = request.get_json()
@@ -2113,10 +2083,10 @@ def preview_lyrics():
         if not lyrics_text:
             return jsonify({"error": "Lyrics text is required"}), 400
             
-        # Sadece parse et, timing ayarlaması yapma
+        # Parse without timing adjustment
         parsed_subtitles = parse_suno_lyrics(lyrics_text)
         
-        # Özet bilgiler
+        # Summary information
         preview_info = {
             "line_count": len(parsed_subtitles),
             "estimated_duration": max([sub['end'] for sub in parsed_subtitles]) if parsed_subtitles else 0,
@@ -2129,7 +2099,7 @@ def preview_lyrics():
         return jsonify({
             "success": True,
             "preview": preview_info,
-            "sample_subtitles": parsed_subtitles[:5]  # İlk 5 örnek
+            "sample_subtitles": parsed_subtitles[:5]  # First 5 samples
         })
 
     except Exception as e:
@@ -2155,7 +2125,7 @@ def export_lyrics():
 
     # Security check: ensure the source path is a real, absolute file
     if not os.path.isabs(source_file_path) or not os.path.exists(source_file_path):
-        return jsonify({"error": f"Kaynak dosya bulunamadı: {source_file_path}"}), 404
+        return jsonify({"error": f"Source file not found: {source_file_path}"}), 404
 
     try:
         engine = get_subtitle_engine()

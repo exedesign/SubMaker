@@ -170,14 +170,14 @@ function createWindow() {
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       const swiftMsg = isGpuCrash && !swiftshaderActive
-        ? '\n\nSonraki başlatmada GPU sorunu için yazılım modu (SwiftShader) denenecek.'
+        ? '\n\nOn next startup, software mode (SwiftShader) will be tested for GPU issues.'
         : '';
       dialog.showMessageBox({
         type: 'error',
         title: 'Renderer Crash',
         message: `Renderer process crashed`,
-        detail: `Reason: ${details.reason}\nExit Code: ${details.exitCode}\n\nCrash log: ${crashLogPath}${swiftMsg}\n\n"Yeniden Yükle" ile devam edebilirsiniz.`,
-        buttons: ['Yeniden Yükle', 'Kapat'],
+        detail: `Reason: ${details.reason}\nExit Code: ${details.exitCode}\n\nCrash log: ${crashLogPath}${swiftMsg}\n\nYou can continue with "Reload".`,
+        buttons: ['Reload', 'Close'],
         defaultId: 0,
       }).then((result) => {
         if (result.response === 0) {

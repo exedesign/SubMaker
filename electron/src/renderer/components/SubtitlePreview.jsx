@@ -3,8 +3,8 @@ import { useAppStore } from '../stores/appStore';
 import { FiEye, FiList, FiGrid, FiChevronDown, FiChevronUp, FiAlignLeft, FiAlignCenter, FiAlignRight, FiType } from 'react-icons/fi';
 
 /**
- * SubtitlePreview - Render öncesi kapsamlı önizleme paneli
- * Tüm altyazıları, format ayarlarını ve stilleri gösterir
+ * SubtitlePreview - Comprehensive pre-render preview panel
+ * Shows all subtitles, format settings, and styles
  */
 function SubtitlePreview() {
   const {
@@ -24,7 +24,7 @@ function SubtitlePreview() {
   const [expandedSection, setExpandedSection] = useState({ subtitles: true, format: true, style: true });
   const [previewIndex, setPreviewIndex] = useState(0);
 
-  // İstatistikler
+  // Statistics
   const stats = useMemo(() => {
     if (subtitles.length === 0) return null;
     
@@ -39,7 +39,7 @@ function SubtitlePreview() {
     const totalChars = subtitles.reduce((acc, sub) => acc + sub.text.length, 0);
     const totalWords = subtitles.reduce((acc, sub) => acc + sub.text.split(/\s+/).filter(w => w).length, 0);
     
-    // RTL kontrolü
+    // RTL check
     const hasArabic = subtitles.some(sub => /[\u0600-\u06FF]/.test(sub.text));
     const hasHebrew = subtitles.some(sub => /[\u0590-\u05FF]/.test(sub.text));
     const isRTL = hasArabic || hasHebrew;
@@ -70,28 +70,28 @@ function SubtitlePreview() {
     setExpandedSection(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Format bilgileri
+  // Format info
   const formatInfo = {
     resolution: videoFormat === 'vertical' ? '1080x1920' : videoFormat === 'square' ? '1080x1080' : '1920x1080',
     aspectRatio: videoFormat === 'vertical' ? '9:16' : videoFormat === 'square' ? '1:1' : '16:9',
     format: outputFormat.toUpperCase(),
-    quality: quality === 'high' ? 'Yüksek (1080p)' : quality === 'medium' ? 'Orta (720p)' : 'Düşük (480p)',
-    // Gerçek video boyutları
+    quality: quality === 'high' ? 'High (1080p)' : quality === 'medium' ? 'Medium (720p)' : 'Low (480p)',
+    // Actual video dimensions
     width: videoFormat === 'vertical' ? 1080 : videoFormat === 'square' ? 1080 : 1920,
     height: videoFormat === 'vertical' ? 1920 : videoFormat === 'square' ? 1080 : 1080,
   };
 
-  // Önizleme ölçek faktörü - gerçek video boyutundan önizleme boyutuna
+  // Preview scale factor — from actual video dimensions to preview size
   const previewWidth = videoFormat === 'vertical' ? 180 : videoFormat === 'square' ? 220 : 280;
   const scaleFactor = previewWidth / formatInfo.width;
-  
-  // Font boyutunun ekrana oranını hesapla
+
+  // Calculate font size ratio relative to screen height
   const fontRatio = ((style.fontSize / formatInfo.height) * 100).toFixed(1);
 
-  // Stil önizlemesi - gerçek oranları yansıtan
+  // Style preview — reflects real proportions
   const getPreviewStyle = () => ({
     fontFamily: style.fontName,
-    fontSize: Math.max(8, style.fontSize * scaleFactor), // Ölçeklenmiş font boyutu
+    fontSize: Math.max(8, style.fontSize * scaleFactor), // Scaled font size
     color: style.color,
     fontWeight: style.bold ? 'bold' : 'normal',
     fontStyle: style.italic ? 'italic' : 'normal',
@@ -108,7 +108,7 @@ function SubtitlePreview() {
       <div className="preview-panel empty">
         <FiEye size={32} style={{ opacity: 0.3 }} />
         <p style={{ color: 'var(--text-muted)', marginTop: 12 }}>
-          Önizleme için altyazı gerekli
+          Subtitles required for preview
         </p>
       </div>
     );
@@ -119,27 +119,27 @@ function SubtitlePreview() {
       {/* Header */}
       <div className="preview-header">
         <h3 style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <FiEye /> Render Önizleme
+          <FiEye /> Render Preview
         </h3>
         <div className="view-toggle">
           <button 
             className={`btn btn-ghost btn-sm ${viewMode === 'list' ? 'active' : ''}`}
             onClick={() => setViewMode('list')}
-            title="Liste görünümü"
+            title="List view"
           >
             <FiList size={14} />
           </button>
-          <button 
+          <button
             className={`btn btn-ghost btn-sm ${viewMode === 'preview' ? 'active' : ''}`}
             onClick={() => setViewMode('preview')}
-            title="Önizleme"
+            title="Preview"
           >
             <FiEye size={14} />
           </button>
-          <button 
+          <button
             className={`btn btn-ghost btn-sm ${viewMode === 'grid' ? 'active' : ''}`}
             onClick={() => setViewMode('grid')}
-            title="Grid görünümü"
+            title="Grid view"
           >
             <FiGrid size={14} />
           </button>
@@ -150,20 +150,20 @@ function SubtitlePreview() {
       <div className="preview-stats">
         <div className="stat-item">
           <span className="stat-value">{stats.count}</span>
-          <span className="stat-label">Altyazı</span>
+          <span className="stat-label">Subtitles</span>
         </div>
         <div className="stat-item">
           <span className="stat-value">{stats.totalWords}</span>
-          <span className="stat-label">Kelime</span>
+          <span className="stat-label">Words</span>
         </div>
         <div className="stat-item">
           <span className="stat-value">{stats.avgDuration}s</span>
-          <span className="stat-label">Ort. Süre</span>
+          <span className="stat-label">Avg. Duration</span>
         </div>
         {stats.isRTL && (
           <div className="stat-item rtl-indicator">
             <span className="stat-value">RTL</span>
-            <span className="stat-label">{stats.hasArabic ? 'Arapça' : 'İbranice'}</span>
+            <span className="stat-label">{stats.hasArabic ? 'Arabic' : 'Hebrew'}</span>
           </div>
         )}
       </div>
@@ -171,14 +171,14 @@ function SubtitlePreview() {
       {/* Format Section */}
       <div className="preview-section">
         <div className="section-header" onClick={() => toggleSection('format')}>
-          <span>📐 Format Ayarları</span>
+          <span>📐 Format Settings</span>
           {expandedSection.format ? <FiChevronUp size={14} /> : <FiChevronDown size={14} />}
         </div>
         {expandedSection.format && (
           <div className="section-content">
             <div className="info-grid">
               <div className="info-item">
-                <span className="info-label">Çözünürlük:</span>
+                <span className="info-label">Resolution:</span>
                 <span className="info-value">{formatInfo.resolution}</span>
               </div>
               <div className="info-item">
@@ -263,7 +263,7 @@ function SubtitlePreview() {
                   }}
                 >
                   <span style={getPreviewStyle()}>
-                    {subtitles[previewIndex]?.text?.substring(0, 40) || 'Örnek altyazı'}
+                    {subtitles[previewIndex]?.text?.substring(0, 40) || 'Sample subtitle'}
                     {(subtitles[previewIndex]?.text?.length || 0) > 40 ? '...' : ''}
                   </span>
                 </div>
@@ -336,7 +336,7 @@ function SubtitlePreview() {
       {/* Subtitles Section */}
       <div className="preview-section subtitles-section">
         <div className="section-header" onClick={() => toggleSection('subtitles')}>
-          <span>📝 Altyazılar ({subtitles.length})</span>
+          <span>📝 Subtitles ({subtitles.length})</span>
           {expandedSection.subtitles ? <FiChevronUp size={14} /> : <FiChevronDown size={14} />}
         </div>
         {expandedSection.subtitles && (

@@ -73,14 +73,14 @@ function VideoPreview() {
     setLoadError(null);
   }, [mediaUrl]);
 
-  // Find active subtitle - end dahil değil, çakışma önlenir
+  // Find active subtitle - end excluded to prevent overlap
   const activeSubtitle = useMemo(() => {
     return subtitles.find(
       sub => effectiveCurrentTime >= sub.start && effectiveCurrentTime < sub.end
     );
   }, [subtitles, effectiveCurrentTime]);
 
-  // Aktif subtitle'ın index'i
+  // Index of the active subtitle
   const activeSubtitleIndex = useMemo(() => {
     if (!activeSubtitle || !subtitles.length) return -1;
     return subtitles.findIndex(s => s.id === activeSubtitle.id);
@@ -91,7 +91,7 @@ function VideoPreview() {
     if (!settings?.dualSubtitleEnabled) return null;
     if (!secondarySubtitle?.subtitles?.length) return null;
     
-    // Current time'a göre aktif ikincil altyazıyı bul
+    // Find secondary subtitle active at current time
     const translation = secondarySubtitle.subtitles.find(sub =>
       effectiveCurrentTime >= sub.start && effectiveCurrentTime < sub.end
     );
@@ -312,7 +312,7 @@ function VideoPreview() {
           </div>
         )}
         
-        {/* DEBUG: Her zaman görünür test */}
+        {/* DEBUG: Always visible test */}
         <div 
           style={{
             position: 'absolute',
@@ -350,7 +350,7 @@ function VideoPreview() {
               WebkitTextStroke: `1px ${secondarySubtitle?.style?.borderColor || '#000'}`,
               paintOrder: 'stroke fill',
             }}>
-              {secondaryText || `[Test: ${secondarySubtitle?.subtitles?.length || 0} çeviri mevcut]`}
+              {secondaryText || `[Test: ${secondarySubtitle?.subtitles?.length || 0} translations available]`}
             </span>
           </div>
         )}
@@ -391,7 +391,7 @@ function VideoPreview() {
               cursor: 'pointer',
             }}
           >
-            <span>Altyazı Zaman Çizelgesi</span>
+            <span>Subtitle Timeline</span>
             {timelineCollapsed ? <FiChevronDown size={14} /> : <FiChevronUp size={14} />}
           </button>
           {!timelineCollapsed && (

@@ -39,7 +39,7 @@ function SubtitleEditor() {
   // Show notification when audio mixer is enabled
   useEffect(() => {
     if (audioMixer.enabled && Object.keys(audioMixer.tracks).length > 0) {
-      setMixerNotification('✓ Ses katmanı çizelgesi etkinleştirildi');
+      setMixerNotification('✓ Audio layer timeline enabled');
       const timer = setTimeout(() => setMixerNotification(null), 4000);
       return () => clearTimeout(timer);
     }
@@ -87,7 +87,7 @@ function SubtitleEditor() {
     const result = await exportLyrics(format);
     if (result?.success) {
       const savedTo = result.source_copy_path || result.output_path || result.download_filename;
-      const msg = result.message || `${result.download_filename || format} kaydedildi`;
+      const msg = result.message || `${result.download_filename || format} saved`;
       setExportStatus({
         success: true,
         format,
@@ -107,14 +107,14 @@ function SubtitleEditor() {
   const handleEmbedSYLT = async () => {
     if (!isMp3 || subtitles.length === 0) return;
     setSyltStatus('loading');
-    setSyltMessage("MP3'ye SYLT yazılıyor...");
+    setSyltMessage("Writing SYLT to MP3...");
     try {
       const result = await exportLyrics('id3', {});
       if (result?.success && result?.sylt_written) {
         setSyltStatus('success');
         const count = result?.verification?.sylt_entries;
         const location = result?.source_location || 'unknown location';
-        const message = `✓ ${count} SYLT entry gömüldü → ${location}`;
+        const message = `✓ ${count} SYLT entry embedded → ${location}`;
         setSyltMessage(message);
         console.log(`SYLT embedded: ${count} entries into ${result.source_file}`);
         if (result.verification?.sylt_sample) {
@@ -122,12 +122,12 @@ function SubtitleEditor() {
         }
       } else {
         setSyltStatus('error');
-        setSyltMessage(`Hata: ${result?.error || 'SYLT gömme başarısız'}`);
+        setSyltMessage(`Error: ${result?.error || 'SYLT embedding failed'}`);
         console.error('SYLT embed failed:', result?.error || 'unknown');
       }
     } catch (err) {
       setSyltStatus('error');
-      setSyltMessage(`Hata: ${err.message || 'SYLT gömme başarısız'}`);
+      setSyltMessage(`Error: ${err.message || 'SYLT embedding failed'}`);
       console.error('SYLT embed error:', err);
     }
     setTimeout(() => {
@@ -199,7 +199,7 @@ function SubtitleEditor() {
               className="btn btn-sm"
               onClick={handleEmbedSYLT}
               disabled={isProcessing || syltStatus === 'loading'}
-              title="MP3 dosyasına senkronize lirik (SYLT) göm"
+              title="Embed synchronized lyrics (SYLT) into MP3 file"
               style={{
                 background: syltStatus === 'success' ? 'var(--accent-success)' :
                            syltStatus === 'error' ? 'var(--accent-error)' :
@@ -212,10 +212,10 @@ function SubtitleEditor() {
               }}
             >
               <FiDisc size={13} />
-              {syltStatus === 'loading' ? 'Gömülüyor...' :
-               syltStatus === 'success' ? 'Gömüldü!' :
-               syltStatus === 'error' ? 'Hata!' :
-               'MP3\'e Göm'}
+              {syltStatus === 'loading' ? 'Embedding...' :
+               syltStatus === 'success' ? 'Embedded!' :
+               syltStatus === 'error' ? 'Error!' :
+               'Embed to MP3'}
             </button>
           )}
 
@@ -338,10 +338,10 @@ function SubtitleEditor() {
                                exportStatus.success ? 'rgba(16,185,129,0.3)' :
                                'rgba(239,68,68,0.3)'}`,
         }}>
-          {exportStatus.loading && `${exportStatus.format} dışa aktarılıyor...`}
+          {exportStatus.loading && `Exporting ${exportStatus.format}...`}
           {exportStatus.success && (
             <span>
-              {exportStatus.message || `${exportStatus.format} başarıyla kaydedildi`}
+              {exportStatus.message || `${exportStatus.format} saved successfully`}
               {exportStatus.sourceCopy && (
                 <span style={{ display: 'block', fontSize: 10, marginTop: 2, opacity: 0.8, wordBreak: 'break-all' }}>
                   {exportStatus.sourceCopy}
@@ -349,7 +349,7 @@ function SubtitleEditor() {
               )}
             </span>
           )}
-          {exportStatus.error && `Hata: ${exportStatus.error}`}
+          {exportStatus.error && `Error: ${exportStatus.error}`}
         </div>
       )}
 
@@ -374,16 +374,16 @@ function SubtitleEditor() {
           alignItems: 'center',
           gap: 8,
         }}>
-          {syltStatus === 'loading' && <span>⏳ MP3 dosyaya SYLT yazılıyor...</span>}
+          {syltStatus === 'loading' && <span>⏳ Writing SYLT to MP3...</span>}
           {syltStatus === 'success' && (
             <span>
               {syltMessage}
               <span style={{ display: 'block', fontSize: 10, marginTop: 2, opacity: 0.8 }}>
-                ID3 tags başarıyla yazıldı
+                ID3 tags written successfully
               </span>
             </span>
           )}
-          {syltStatus === 'error' && <span>❌ {syltMessage || 'SYLT gömme başarısız'}</span>}
+          {syltStatus === 'error' && <span>❌ {syltMessage || 'SYLT embedding failed'}</span>}
         </div>
       )}
 

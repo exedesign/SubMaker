@@ -468,7 +468,7 @@ The main hook of the song...`}
             lyrics={parsedLines.filter(l => l.include).map(l => l.cleaned)}
             onAnalysisComplete={(voiceSegments) => {
               console.log('Voice segments detected:', voiceSegments);
-              // Burada voice segment'leri lyrics ile eşleştirebiliriz
+              // Here we could match voice segments with lyrics
             }}
           />
         </div>

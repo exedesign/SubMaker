@@ -423,7 +423,7 @@ const FlexibleTimeline = () => {
       ctx.fillStyle = '#4ade80'
       ctx.font = 'bold 12px Arial'
       ctx.textAlign = 'right'
-      ctx.fillText('🎵 Ses izi aktif', width - 10, 20)
+      ctx.fillText('🎵 Audio track active', width - 10, 20)
     } else {
       // Enhanced placeholder with better messaging
       ctx.fillStyle = '#a0aec0'
@@ -439,18 +439,18 @@ const FlexibleTimeline = () => {
         if (audioFile && duration > 0) {
           ctx.fillText(`🎵 ${fileName}`, width / 2, height / 2 - 15)
           ctx.fillText(`⏱️ Duration: ${formatTime(duration)}`, width / 2, height / 2)
-          ctx.fillText('🎯 Ses izi hazır - Altyazı ekleyin', width / 2, height / 2 + 15)
+          ctx.fillText('🎯 Audio ready — add subtitles', width / 2, height / 2 + 15)
         } else if (audioFile) {
           ctx.fillText(`📁 ${fileName}`, width / 2, height / 2 - 15)
-          ctx.fillText('🔄 Ses metadata yükleniyor...', width / 2, height / 2)
-          ctx.fillText('Lütfen birkaç saniye bekleyin', width / 2, height / 2 + 15)
+          ctx.fillText('🔄 Loading audio metadata...', width / 2, height / 2)
+          ctx.fillText('Please wait a moment', width / 2, height / 2 + 15)
         } else {
           ctx.fillText(`📁 ${fileName}`, width / 2, height / 2 - 10)
-          ctx.fillText('⏳ Ses dosyası işleniyor...', width / 2, height / 2 + 10)
+          ctx.fillText('⏳ Processing audio...', width / 2, height / 2 + 10)
         }
       } else {
-        ctx.fillText('📂 Medya dosyası seçin', width / 2, height / 2 - 10)
-        ctx.fillText('Dosya > Aç ile ses/video dosyası yükleyin', width / 2, height / 2 + 10)
+        ctx.fillText('📂 Select a media file', width / 2, height / 2 - 10)
+        ctx.fillText('Load an audio/video file via File > Open', width / 2, height / 2 + 10)
       }
     }
   }, [waveformData, audioFile, duration, formatTime, mediaFile])
@@ -821,7 +821,7 @@ const FlexibleTimeline = () => {
       const timeDiff = currentTime - dragState.startTime
       
       if (dragState.isMultiDrag) {
-        // Multi-drag: tüm seçili altyazıları birlikte hareket ettir
+        // Multi-drag: Move all selected subtitles together
         const updatedPositions = {}
         const idsToDrag = dragState.subtitlesToDrag || []
         
@@ -1354,10 +1354,10 @@ const FlexibleTimeline = () => {
         paddingBottom: '15px'
       }}>
         <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '500' }}>
-          ✂️ Zaman Çizelgesi ({validSubtitles.length} altyazı)
+          ✂️ Timeline ({validSubtitles.length} subtitles)
           {duration && duration > 0 && <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}> • {formatTime(duration)}</span>}
           <span style={{ color: 'var(--accent-secondary)', fontSize: '14px', marginLeft: '10px' }}>📏 {zoom.toFixed(1)}x</span>
-          {splitMode && <span style={{ color: 'var(--accent-primary)', marginLeft: '10px' }}>✂️ Kesim Modu</span>}
+          {splitMode && <span style={{ color: 'var(--accent-primary)', marginLeft: '10px' }}>✂️ Split Mode</span>}
         </h2>
       </div>
 
@@ -1383,14 +1383,14 @@ const FlexibleTimeline = () => {
             borderRadius: '6px',
             fontSize: '12px'
           }}>
-            <span style={{ fontWeight: '600' }}>Kaynak:</span>
+            <span style={{ fontWeight: '600' }}>Source:</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <div style={{ width: '16px', height: '16px', background: 'var(--bg-hover)', borderRadius: '3px' }} />
-              <span>Transkript</span>
+              <span>Transcript</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <div style={{ width: '16px', height: '16px', background: '#9333ea', borderRadius: '3px' }} />
-              <span>Şarkı Sözü</span>
+              <span>Lyrics</span>
             </div>
           </div>
         )}
@@ -1410,7 +1410,7 @@ const FlexibleTimeline = () => {
             fontWeight: splitMode ? 'bold' : 'normal'
           }}
         >
-          ✂️ {splitMode ? 'Kesim Modundan Çık' : 'Kesim Modu'}
+          ✂️ {splitMode ? 'Exit Split Mode' : 'Split Mode'}
         </button>
         
         {/* Multi-Selection Indicator and Clear Button */}
@@ -1426,7 +1426,7 @@ const FlexibleTimeline = () => {
             color: 'white',
             fontWeight: '500'
           }}>
-            <span>🔵 {selectedSubtitleIds.length} seçili</span>
+            <span>🔵 {selectedSubtitleIds.length} selected</span>
             <button
               onClick={() => setSelectedSubtitleIds([])}
               style={{
@@ -1440,7 +1440,7 @@ const FlexibleTimeline = () => {
                 fontWeight: '600'
               }}
             >
-              Temizle
+              Clear
             </button>
           </div>
         )}
@@ -1503,7 +1503,7 @@ const FlexibleTimeline = () => {
               opacity: zoom <= 0.5 ? 0.5 : 1
             }}
             disabled={zoom <= 0.5}
-            title="Uzaklaştır (Zoom Out)"
+            title="Zoom Out"
           >
             ➖
           </button>
@@ -1530,7 +1530,7 @@ const FlexibleTimeline = () => {
               opacity: zoom >= 8 ? 0.5 : 1
             }}
             disabled={zoom >= 8}
-            title="Yakınlaştır (Zoom In)"
+            title="Zoom In"
           >
             ➕
           </button>
@@ -1546,7 +1546,7 @@ const FlexibleTimeline = () => {
               cursor: 'pointer',
               fontSize: '10px'
             }}
-            title="Varsayılan boyut (100%)"
+            title="Reset zoom (100%)"
           >
             🎯
           </button>
@@ -1816,11 +1816,11 @@ const FlexibleTimeline = () => {
                   }}
                   title={`${formatTime(subtitle.start)} - ${formatTime(subtitle.end)}: ${subtitle.text}
 
-Sol kenar: Başlangıç ayarla
-Sağ kenar: Bitiş ayarla
-Orta: Tüm bloğu taşı
-S + tıklama: Kelime bazında böl
-Shift + tıklama: Çoklu seçim`}
+Left edge: Adjust start
+Right edge: Adjust end
+Center: Move entire block
+S + click: Split by word
+Shift + click: Multi-select`}
                 >
                   {/* Left Resize Handle - Invisible */}
                   <div
@@ -1834,7 +1834,7 @@ Shift + tıklama: Çoklu seçim`}
                       cursor: 'ew-resize',
                       zIndex: 3
                     }}
-                    title="Sol kenar: Başlangıç ayarla"
+                    title="Left edge: Adjust start"
                   />
                   
                   {/* Move Area */}
@@ -1871,7 +1871,7 @@ Shift + tıklama: Çoklu seçim`}
                       cursor: 'ew-resize',
                       zIndex: 3
                     }}
-                    title="Sağ kenar: Bitiş ayarla"
+                    title="Right edge: Adjust end"
                   />
                 </div>
               )
@@ -1890,9 +1890,9 @@ Shift + tıklama: Çoklu seçim`}
                 pointerEvents: 'none'
               }}>
                 <div style={{ fontSize: '24px', marginBottom: '8px' }}>✂️</div>
-                <div>Altyazı yokken buraya gelecek</div>
+                <div>Add subtitles to see them here</div>
                 <div style={{ fontSize: '12px', marginTop: '4px', opacity: 0.7 }}>
-                  Kenarlara sürükle: Genişlet/Daralt • Orta: Taşı • S: Böl
+                  Drag edges: Expand/Shrink • Center: Move • S: Split
                 </div>
               </div>
             )}
@@ -1930,7 +1930,7 @@ Shift + tıklama: Çoklu seçim`}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ margin: '0 0 16px 0', color: 'var(--text-primary)' }}>
-              ✏️ Altyazı Metnini Düzenle
+              ✏️ Edit Subtitle Text
             </h3>
             
             <textarea
@@ -1976,7 +1976,7 @@ Shift + tıklama: Çoklu seçim`}
                   fontSize: '14px'
                 }}
               >
-                İptal (Esc)
+                Cancel (Esc)
               </button>
               <button
                 onClick={handleSaveEdit}
@@ -1991,7 +1991,7 @@ Shift + tıklama: Çoklu seçim`}
                   fontWeight: '600'
                 }}
               >
-                Kaydet (Ctrl+Enter)
+                Save (Ctrl+Enter)
               </button>
             </div>
           </div>
@@ -2010,17 +2010,17 @@ Shift + tıklama: Çoklu seçim`}
         {mediaFile ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <div>
-              🎵 {originalFileName || audioFile?.name || (typeof mediaFile === 'string' ? mediaFile.split(/[\\/]/).pop() : 'Medya Dosyası')} 
+              🎵 {originalFileName || audioFile?.name || (typeof mediaFile === 'string' ? mediaFile.split(/[\\/]/).pop() : 'Media File')} 
               {duration > 0 && ` | ⏱️ ${formatTime(duration)}`}
               {zoom !== 1 && ` | 🔍 ${zoom.toFixed(1)}x`}
               {selectedSubtitleId && ` | Selected: ${Array.isArray(subtitles) ? subtitles.find(s => s.id === selectedSubtitleId)?.text?.substring(0, 30) : ''}...`}
             </div>
             <div style={{ fontSize: '10px', opacity: 0.7 }}>
-              ⌨️ Kontroller: S=Kesim Modu | ⟨⟩=Kenarları Sürükle | Shift+Sürükle=Hassas (0.1sn) | Mouse Wheel=Zoom
+              ⌨️ Controls: S=Split Mode | ⟨⟩=Drag Edges | Shift+Drag=Fine (0.1s) | Mouse Wheel=Zoom
             </div>
           </div>
         ) : (
-          <div>📂 Medya dosyası seçin ve timeline'da düzenleme yapın | ⟨⟩ Boyutlandır, Taşı, Böl</div>
+          <div>📂 Select a media file and edit on the timeline | ⟨⟩ Resize, Move, Split</div>
         )}
       </div>
     </div>
