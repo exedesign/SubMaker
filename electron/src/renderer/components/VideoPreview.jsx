@@ -141,7 +141,28 @@ function VideoPreview() {
       setCurrentTime(newTime);
     }
   }, [duration, mixerEnabled, effectiveDuration, mixer]);
-  
+
+  // Global keyboard shortcuts: Space = play/pause, Left/Right = seek
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.target.matches('input, textarea, [contenteditable]')) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        const step = settings?.seekStep ?? 5;
+        skip(-step);
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        const step = settings?.seekStep ?? 5;
+        skip(step);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [togglePlay, skip, settings?.seekStep]);
+
   // Toggle mute
   const toggleMute = useCallback(() => {
     if (audioRef.current) {

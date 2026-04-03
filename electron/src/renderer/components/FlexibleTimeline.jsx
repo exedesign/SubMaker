@@ -220,6 +220,7 @@ const FlexibleTimeline = () => {
     setTrackMuted,
     setTrackSolo,
     toggleTimelineTracks,
+    settings,
   } = useAppStore()
 
   // Audio State
@@ -1049,13 +1050,15 @@ const FlexibleTimeline = () => {
     const handleKeyDown = (e) => {
       if (!duration || duration <= 0) return
       
-      // Space key is handled by main media player
+      // Arrow keys: seek by configurable step
       if (e.code === 'ArrowLeft' && !e.target.matches('input,textarea')) {
         e.preventDefault()
-        seek(Math.max(0, currentTime - 5))
+        const step = settings?.seekStep ?? 5
+        seek(Math.max(0, currentTime - step))
       } else if (e.code === 'ArrowRight' && !e.target.matches('input,textarea')) {
         e.preventDefault()
-        seek(Math.min(duration, currentTime + 5))
+        const step = settings?.seekStep ?? 5
+        seek(Math.min(duration, currentTime + step))
       } else if (e.code === 'Home') {
         e.preventDefault()
         seek(0)
@@ -1070,7 +1073,7 @@ const FlexibleTimeline = () => {
     
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [audioFile, seek, currentTime, duration, splitMode])
+  }, [audioFile, seek, currentTime, duration, splitMode, settings?.seekStep])
 
   useEffect(() => {
     if (isDragging) {

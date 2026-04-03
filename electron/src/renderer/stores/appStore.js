@@ -158,6 +158,7 @@ export const useAppStore = create((set, get) => ({
   settings: {
     gifProvider: 'tenor', // 'tenor' or 'giphy'
     dualSubtitleEnabled: true, // Module toggle in settings - enabled by default
+    seekStep: 5, // Arrow key seek step in seconds
 
     // Audio Visualization Settings - Simplified and enabled by default
     audioVisualization: {
@@ -199,11 +200,10 @@ export const useAppStore = create((set, get) => ({
 
   // Vocal Isolation
   vocalIsolation: false,
-  vocalModelId: 'vocal_ep317', // 'vocal_ep317' (clean vocals), 'instrumental_resurrection' (clean music)
-  vocalSelectedStems: {
-    vocal_ep317: ['vocals', 'instrumental'],
-    instrumental_resurrection: ['vocals', 'instrumental'],
-  },
+  // EP317 → vocals (best vocal quality + Whisper input)
+  // Resurrection UNWA → instrumental (cleanest music for karaoke)
+  // Toggling stems via 'Stems to Extract' controls which models actually run
+  vocalSelectedStems: ['vocals', 'instrumental'],
   vocalSeparation: null,     // { stems: { vocals, instrumental, drums?, bass?, other? }, model_id, duration }
   vocalSeparating: false,    // true while separation is running
   vocalSeparationProgress: 0,
@@ -549,7 +549,7 @@ export const useAppStore = create((set, get) => ({
       language: sourceLanguage,
       model_settings: modelSettings,
       enable_vocal_isolation: skipVocalIsolation ? false : get().vocalIsolation,
-      vocal_model_id: get().vocalModelId,
+      vocal_model_id: 'vocal_ep317', // EP317 always used for Whisper transcription (best vocals)
       output_formats: get().exportFormats,
       whisper_params: Object.fromEntries(
         Object.entries(get().whisperParams).filter(([_, value]) => value !== null)
@@ -1210,17 +1210,16 @@ export const useAppStore = create((set, get) => ({
 
   // Vocal isolation
   setVocalIsolation: (enabled) => set({ vocalIsolation: enabled }),
-  setVocalModelId: (modelId) => set({ vocalModelId: modelId, vocalSeparation: null }),
 
-  // Toggle a stem on/off for the given model
-  toggleVocalStem: (modelId, stemName) => set((state) => {
-    const current = state.vocalSelectedStems[modelId] || [];
+  // Toggle a stem on/off (model auto-assigned per stem: EP317→vocals, UNWA→instrumental)
+  toggleVocalStem: (stemName) => set((state) => {
+    const current = state.vocalSelectedStems;
     const updated = current.includes(stemName)
       ? current.filter(s => s !== stemName)
       : [...current, stemName];
     // Must have at least one stem selected
     if (updated.length === 0) return state;
-    return { vocalSelectedStems: { ...state.vocalSelectedStems, [modelId]: updated } };
+    return { vocalSelectedStems: updated };
   }),
 
   // Use a separated stem as the active media file
@@ -1397,12 +1396,11 @@ export const useAppStore = create((set, get) => ({
   },
 
   // Run full vocal separation for preview/listening
+  // EP317 handles vocals, Resurrection UNWA handles instrumental — each runs only if its stem is selected
   separateVocals: async () => {
-    const { mediaFile, originalMediaPath, originalMediaFile, vocalModelId, vocalSelectedStems } = get();
+    const { mediaFile, originalMediaPath, originalMediaFile, vocalSelectedStems } = get();
     const filePath = originalMediaPath || originalMediaFile || mediaFile;
     if (!filePath) return;
-
-    const selectedStems = vocalSelectedStems[vocalModelId] || [];
 
     set({ vocalSeparating: true, vocalSeparationProgress: 0, vocalSeparationMessage: 'Starting...' });
 
@@ -1412,8 +1410,7 @@ export const useAppStore = create((set, get) => ({
 
       await streamJsonEvents(`${API_URL}/vocal-isolation/separate`, {
         file_path: filePath,
-        model_id: vocalModelId,
-        selected_stems: selectedStems,
+        selected_stems: vocalSelectedStems,
       }, (event) => {
         if (event.type === 'progress') {
           set({ vocalSeparationProgress: event.progress, vocalSeparationMessage: event.message || '' });

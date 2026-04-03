@@ -804,6 +804,137 @@ class VocalIsolator:
         result["model_id"] = model_id
         return result
 
+    def separate_dual_full(
+        self,
+        audio_path: str,
+        selected_stems: Optional[List[str]] = None,
+        progress_callback: Optional[Callable] = None,
+    ) -> Dict:
+        """
+        Dual-model separation: each model runs only for its specialized output.
+
+        EP317  (model_bs_roformer_ep_317_sdr_12.9755.ckpt)
+               → best vocal extraction + whisper_path (mono 16kHz)
+        UNWA   (bs_roformer_instrumental_resurrection_unwa.ckpt)
+               → cleanest instrumental output for karaoke
+
+        Args:
+            selected_stems: list of stems to extract, e.g. ['vocals', 'instrumental'].
+                            If None or empty, both models run.
+
+        Returns dict compatible with separate_full():
+        {
+            "whisper_path": "path/to/mono_16khz.wav",   # None if vocals not requested
+            "stems": {
+                "vocals":       "path/to/vocals_hq.wav",        # if requested
+                "instrumental": "path/to/instrumental_hq.wav",  # if requested
+            },
+            "duration": <total_elapsed_seconds>,
+            "model_id": "dual",
+            "cached": <bool>,
+        }
+        """
+        if selected_stems is None or len(selected_stems) == 0:
+            selected_stems = ["vocals", "instrumental"]
+
+        need_vocals = "vocals" in selected_stems
+        need_instrumental = "instrumental" in selected_stems
+
+        EP317_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+        UNWA_MODEL  = "bs_roformer_instrumental_resurrection_unwa.ckpt"
+
+        # ── cache check ──────────────────────────────────────────────────
+        vocals_cached_whisper = self._get_cached(audio_path, "vocal_ep317") if need_vocals else None
+        vocals_cached_full    = self._get_cached_full(audio_path, "vocal_ep317") if need_vocals else None
+        instr_cached_full     = self._get_cached_full(audio_path, "instrumental_resurrection") if need_instrumental else None
+
+        vocals_hq_cached   = (vocals_cached_full or {}).get("vocals") if vocals_cached_full else None
+        instr_hq_cached    = (instr_cached_full or {}).get("instrumental") if instr_cached_full else None
+
+        all_cached = (
+            (not need_vocals or (vocals_cached_whisper and vocals_hq_cached)) and
+            (not need_instrumental or instr_hq_cached)
+        )
+        if all_cached:
+            if progress_callback:
+                progress_callback(100, "Loaded from cache")
+            stems = {}
+            if need_vocals and vocals_hq_cached:
+                stems["vocals"] = vocals_hq_cached
+            if need_instrumental and instr_hq_cached:
+                stems["instrumental"] = instr_hq_cached
+            return {
+                "whisper_path": vocals_cached_whisper if need_vocals else None,
+                "stems": stems,
+                "duration": 0,
+                "model_id": "dual",
+                "cached": True,
+            }
+
+        # ── determine progress slices ─────────────────────────────────────
+        # vocals_cached_whisper / vocals_hq_cached may be partially cached
+        run_ep317 = need_vocals and not (vocals_cached_whisper and vocals_hq_cached)
+        run_unwa  = need_instrumental and not instr_hq_cached
+
+        both_run = run_ep317 and run_unwa
+        start_total = time.time()
+        result_stems: Dict = {}
+        whisper_path = vocals_cached_whisper  # may already be cached
+
+        # ── EP317: vocals ─────────────────────────────────────────────────
+        if run_ep317:
+            def ep317_progress(pct, msg=""):
+                if progress_callback:
+                    mapped = pct * 0.50 if both_run else pct
+                    progress_callback(int(mapped), msg)
+
+            logger.info("[dual] Running EP317 for vocals...")
+            ep317_result = self._separate_mdx(
+                audio_path, EP317_MODEL, ep317_progress, keep_full_quality=True
+            )
+            whisper_path = ep317_result.get("whisper_path")
+            ep317_stems  = ep317_result.get("stems", {})
+            if "vocals" in ep317_stems:
+                result_stems["vocals"] = ep317_stems["vocals"]
+            # Cache the whisper path under vocal_ep317 key
+        elif need_vocals and vocals_hq_cached:
+            result_stems["vocals"] = vocals_hq_cached
+
+        # ── UNWA: instrumental ────────────────────────────────────────────
+        if run_unwa:
+            def unwa_progress(pct, msg=""):
+                if progress_callback:
+                    mapped = 50 + pct * 0.50 if both_run else pct
+                    progress_callback(int(mapped), msg)
+
+            logger.info("[dual] Running Resurrection UNWA for instrumental...")
+            unwa_result = self._separate_mdx(
+                audio_path, UNWA_MODEL, unwa_progress, keep_full_quality=True
+            )
+            unwa_stems = unwa_result.get("stems", {})
+            # UNWA produces instrumental as primary output
+            inst_path = (
+                unwa_stems.get("instrumental")
+                or unwa_stems.get("vocals")   # fallback: some models label primary as vocals
+            )
+            if inst_path:
+                result_stems["instrumental"] = inst_path
+            # whisper_path from UNWA is NOT useful for Whisper (it's music-optimised)
+        elif need_instrumental and instr_hq_cached:
+            result_stems["instrumental"] = instr_hq_cached
+
+        elapsed = time.time() - start_total
+        if progress_callback:
+            progress_callback(100, f"Separation completed ({elapsed:.0f}s)")
+
+        return {
+            "whisper_path": whisper_path,
+            "stems": result_stems,
+            "duration": elapsed,
+            "model_id": "dual",
+            "cached": False,
+        }
+
     # ------------------------------------------------------------------
     # Audio utilities
     # ------------------------------------------------------------------

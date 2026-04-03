@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
 import {
   FiSliders,
-  FiVolume2, FiMusic, FiMic,
+  FiVolume2, FiMusic,
 } from 'react-icons/fi';
 
 // Faster-Whisper model list
@@ -53,28 +53,6 @@ const SUPPORTED_LANGUAGES = [
   { code: 'ko', name: 'Korean', description: 'Medium recommended' }
 ];
 
-// Vocal isolation models
-const VOCAL_MODELS = [
-  {
-    id: 'vocal_ep317',
-    label: 'BS-Roformer EP317 (Vocal)',
-    description: 'High quality vocal separation — SDR 12.97. Compatible with 8GB VRAM.',
-    icon: FiMic,
-    stems: ['vocals', 'instrumental'],
-    badge: 'Vocal',
-    badgeColor: 'rgba(168, 85, 247, 0.8)',
-  },
-  {
-    id: 'instrumental_resurrection',
-    label: 'Resurrection UNWA (Music)',
-    description: 'Cleanest instrumental output — minimal vocal leakage. Compatible with 8GB VRAM.',
-    icon: FiMusic,
-    stems: ['vocals', 'instrumental'],
-    badge: 'Music',
-    badgeColor: 'rgba(59, 130, 246, 0.8)',
-  },
-];
-
 // Stem display labels
 const STEM_LABELS = {
   vocals: { label: 'Vocals', icon: '🎤', color: 'rgba(168, 85, 247, 0.8)' },
@@ -95,8 +73,6 @@ function ModelSelector() {
     resetWhisperParams,
     vocalIsolation,
     setVocalIsolation,
-    vocalModelId,
-    setVocalModelId,
     vocalSelectedStems,
     toggleVocalStem,
     vocalSeparation,
@@ -124,7 +100,6 @@ function ModelSelector() {
   const currentModel = getModelForLanguage(selectedLanguage);
   const modelInfo = availableModels.find(m => m.value === currentModel) || availableModels[0];
   const currentBeamSize = whisperParams.beam_size ?? 5;
-  const selectedVocalModel = VOCAL_MODELS.find(m => m.id === vocalModelId) || VOCAL_MODELS[0];
 
   return (
     <div>
@@ -227,49 +202,24 @@ function ModelSelector() {
               <span style={{ fontWeight: 600 }}>Vocal Isolation</span>
             </label>
 
-            {/* Model Selection — always visible when enabled */}
+            {/* Auto model routing — no manual model selection needed */}
             {vocalIsolation && (
               <div style={{ marginTop: 10 }}>
-                <label className="label" style={{ fontSize: 11, marginBottom: 6 }}>Separation Model</label>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {VOCAL_MODELS.map((model) => {
-                    const isSelected = vocalModelId === model.id;
-                    const Icon = model.icon;
-                    return (
-                      <button
-                        key={model.id}
-                        className={`btn ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => setVocalModelId(model.id)}
-                        style={{
-                          flex: 1,
-                          flexDirection: 'column',
-                          padding: '8px 6px',
-                          position: 'relative',
-                          gap: 4,
-                        }}
-                      >
-                        <span style={{
-                          position: 'absolute',
-                          top: 3,
-                          right: 4,
-                          fontSize: 8,
-                          padding: '1px 5px',
-                          borderRadius: 6,
-                          background: model.badgeColor,
-                          color: '#fff',
-                          fontWeight: 600,
-                        }}>
-                          {model.badge}
-                        </span>
-                        <Icon size={16} />
-                        <span style={{ fontSize: 10, fontWeight: 600 }}>{model.label}</span>
-                      </button>
-                    );
-                  })}
+                {/* Info badge */}
+                <div style={{
+                  fontSize: 10,
+                  color: 'var(--text-muted)',
+                  marginBottom: 8,
+                  padding: '6px 8px',
+                  background: 'rgba(168, 85, 247, 0.06)',
+                  borderRadius: 4,
+                  border: '1px solid rgba(168, 85, 247, 0.18)',
+                  lineHeight: 1.6,
+                }}>
+                  <strong style={{ color: 'var(--text-secondary)' }}>Auto model routing:</strong><br />
+                  🎤 <strong>Vocals</strong> → BS-Roformer EP317&nbsp;&nbsp;·&nbsp;&nbsp;
+                  🎵 <strong>Instrumental</strong> → Resurrection UNWA
                 </div>
-                <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                  {selectedVocalModel.description}
-                </p>
 
                 {/* Stem Selection Checkboxes */}
                 <div style={{
@@ -283,10 +233,10 @@ function ModelSelector() {
                     Stems to Extract
                   </span>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {selectedVocalModel.stems.map((stemId) => {
+                    {['vocals', 'instrumental'].map((stemId) => {
                       const stemInfo = STEM_LABELS[stemId];
                       if (!stemInfo) return null;
-                      const checked = (vocalSelectedStems[vocalModelId] || []).includes(stemId);
+                      const checked = vocalSelectedStems.includes(stemId);
                       return (
                         <label key={stemId} style={{
                           display: 'flex',
@@ -303,7 +253,7 @@ function ModelSelector() {
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => toggleVocalStem(vocalModelId, stemId)}
+                            onChange={() => toggleVocalStem(stemId)}
                             style={{ width: 12, height: 12, margin: 0 }}
                           />
                           <span>{stemInfo.icon}</span>

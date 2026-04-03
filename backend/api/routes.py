@@ -773,8 +773,7 @@ def vocal_isolation_separate():
         return jsonify({"error": "Invalid request body"}), 400
 
     file_path = data.get("file_path")
-    model_id = data.get("model_id", "vocal_ep317")
-    selected_stems = data.get("selected_stems")
+    selected_stems = data.get("selected_stems")  # e.g. ['vocals', 'instrumental']
 
     if not file_path:
         return jsonify({"error": "file_path required"}), 400
@@ -803,11 +802,10 @@ def vocal_isolation_separate():
 
             def run_separation():
                 try:
-                    result_holder[0] = isolator.separate_full(
+                    result_holder[0] = isolator.separate_dual_full(
                         audio_path=file_path,
-                        model_id=model_id,
-                        progress_callback=progress_callback,
                         selected_stems=selected_stems if selected_stems else None,
+                        progress_callback=progress_callback,
                     )
                     progress_queue.put(('done', None, None))
                 except Exception as e:
@@ -842,7 +840,7 @@ def vocal_isolation_separate():
                         stem_urls[stem_name] = f"/api/media/temp/{rel}"
                         stem_paths[stem_name] = abs_path
 
-                    yield f"data: {json_module.dumps({'type': 'result', 'success': True, 'stems': stem_urls, 'stems_paths': stem_paths, 'original_path': file_path, 'model_id': model_id, 'duration': result.get('duration', 0), 'cached': result.get('cached', False)})}\n\n"
+                    yield f"data: {json_module.dumps({'type': 'result', 'success': True, 'stems': stem_urls, 'stems_paths': stem_paths, 'original_path': file_path, 'model_id': result.get('model_id', 'dual'), 'duration': result.get('duration', 0), 'cached': result.get('cached', False)})}\n\n"
                     return
                 elif msg_type == 'error':
                     yield f"data: {json_module.dumps({'type': 'error', 'error': text})}\n\n"

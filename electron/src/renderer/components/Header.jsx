@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile } from 'react-icons/fi';
+import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile, FiChevronsLeft } from 'react-icons/fi';
 import { useAppStore } from '../stores/appStore';
 
 function Header() {
@@ -356,6 +356,34 @@ function Header() {
                     </p>
                   </div>
                 )}
+              </div>
+
+              {/* Divider */}
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '20px 0' }} />
+
+              {/* Seek Step Setting */}
+              <div className="form-group">
+                <label className="label" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FiChevronsLeft size={16} />
+                  Keyboard Seek Step
+                </label>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                  How many seconds to skip when pressing the Left / Right arrow keys.
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <input
+                    type="range"
+                    min="1"
+                    max="30"
+                    step="1"
+                    value={settings.seekStep ?? 5}
+                    onChange={(e) => setSettings({ seekStep: parseInt(e.target.value) })}
+                    style={{ flex: 1 }}
+                  />
+                  <span style={{ fontSize: 13, minWidth: 48, textAlign: 'right', color: 'var(--text-primary)' }}>
+                    {settings.seekStep ?? 5} sec
+                  </span>
+                </div>
               </div>
             </div>
             
