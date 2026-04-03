@@ -114,16 +114,16 @@ AVAILABLE_MODELS = {
     "vocal_ep317": {
         "engine": "mdx",
         "model_file": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-        "label": "BS-Roformer EP317 (Vokal)",
-        "description": "Yüksek kalite vokal ayırma — SDR 12.97, BS-Roformer. 8GB VRAM uyumlu.",
+        "label": "BS-Roformer EP317 (Vocals)",
+        "description": "High quality vocal separation — SDR 12.97, BS-Roformer. Compatible with 8GB VRAM.",
         "stems": ["vocals", "instrumental"],
         "speed": "medium",
     },
     "instrumental_resurrection": {
         "engine": "mdx",
         "model_file": "bs_roformer_instrumental_resurrection_unwa.ckpt",
-        "label": "Resurrection UNWA (Müzik)",
-        "description": "En temiz enstrümantal çıkışı — vokal sızıntısı minimal. BS-Roformer dim=256, 8GB VRAM uyumlu.",
+        "label": "Resurrection UNWA (Music)",
+        "description": "Cleanest instrumental output — minimal vocal leakage. BS-Roformer dim=256, compatible with 8GB VRAM.",
         "stems": ["vocals", "instrumental"],
         "speed": "medium",
     },
@@ -771,7 +771,7 @@ class VocalIsolator:
         whisper_cached = self._get_cached(audio_path, model_id)
         if cached and whisper_cached:
             if progress_callback:
-                progress_callback(100, "Önbellekten yüklendi")
+                progress_callback(100, "Loaded from cache")
             stems = cached
             if selected_stems:
                 stems = {k: v for k, v in stems.items() if k in selected_stems}

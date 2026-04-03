@@ -496,7 +496,7 @@ function PreviewPanel() {
     return activeSecondary || null;
   }, [secondarySubtitle?.subtitles, playbackTime, settings?.dualSubtitleEnabled]);
 
-  // Animasyon ilerleme
+  // Animation progress
   const animationProgress = useMemo(() => {
     if (!activeSubtitle) return { progress: 0, phase: 'none' };
     

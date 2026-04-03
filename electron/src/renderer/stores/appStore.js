@@ -1026,7 +1026,7 @@ export const useAppStore = create((set, get) => ({
         if (isMulti) {
           set({
             batchRenderCurrent: i + 1,
-            processingStep: `${formatLabels[fmt]} render ediliyor... (${i + 1}/${formats.length})`,
+            processingStep: `${formatLabels[fmt]} rendering... (${i + 1}/${formats.length})`,
             videoFormat: fmt,
           });
         }
@@ -1036,8 +1036,8 @@ export const useAppStore = create((set, get) => ({
         if (visualizer.enabled && sourceMediaPath) {
           try {
             set({ processingStep: isMulti
-              ? `${formatLabels[fmt]} — Render ediliyor... (${i + 1}/${formats.length})`
-              : 'Render ediliyor...'
+              ? `${formatLabels[fmt]} — Rendering... (${i + 1}/${formats.length})`
+              : 'Rendering...'
             });
             const { exportVisualizerVideo } = await import('../services/visualizerFrameExporter');
             // Build audio URL from local or temp endpoint based on the original media path
@@ -1447,7 +1447,7 @@ export const useAppStore = create((set, get) => ({
         if (event.type === 'error') {
           separationSettled = true;
           console.error('Vocal separation error:', event.error);
-          set({ vocalSeparating: false, vocalSeparationMessage: `Hata: ${event.error}` });
+          set({ vocalSeparating: false, vocalSeparationMessage: `Error: ${event.error}` });
           separationError = new Error(event.error);
         }
       });
@@ -1461,7 +1461,7 @@ export const useAppStore = create((set, get) => ({
       }
     } catch (error) {
       console.error('Vocal separation failed:', error);
-      set({ vocalSeparating: false, vocalSeparationMessage: `Hata: ${error.message}` });
+      set({ vocalSeparating: false, vocalSeparationMessage: `Error: ${error.message}` });
     }
   },
 

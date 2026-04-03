@@ -207,11 +207,11 @@ function SubtitlePreview() {
                       }} />
                       {background.value}
                     </span>
-                  ) : background.type === 'transparent' ? 'Şeffaf' : 'Resim'}
+                  ) : background.type === 'transparent' ? 'Transparent' : 'Image'}
                 </span>
               </div>
               <div className="info-item">
-                <span className="info-label">Dil:</span>
+                <span className="info-label">Language:</span>
                 <span className="info-value">
                   {detectedLanguage || sourceLanguage || 'Otomatik'}
                 </span>
@@ -224,7 +224,7 @@ function SubtitlePreview() {
       {/* Style Section */}
       <div className="preview-section">
         <div className="section-header" onClick={() => toggleSection('style')}>
-          <span><FiType size={14} /> Stil Ayarları</span>
+          <span><FiType size={14} /> Style Settings</span>
           {expandedSection.style ? <FiChevronUp size={14} /> : <FiChevronDown size={14} />}
         </div>
         {expandedSection.style && (
@@ -313,12 +313,12 @@ function SubtitlePreview() {
                 </span>
               </div>
               <div className="info-item">
-                <span className="info-label">Kenarlık:</span>
+                <span className="info-label">Border:</span>
                 <span className="info-value">{style.borderWidth}px {style.borderColor}</span>
               </div>
               <div className="info-item">
-                <span className="info-label">Animasyon:</span>
-                <span className="info-value">{animation.type === 'none' ? 'Yok' : animation.type}</span>
+                <span className="info-label">Animation:</span>
+                <span className="info-value">{animation.type === 'none' ? 'None' : animation.type}</span>
               </div>
               <div className="info-item">
                 <span className="info-label">Hizalama:</span>
@@ -371,7 +371,7 @@ function SubtitlePreview() {
                     onClick={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
                     disabled={previewIndex === 0}
                   >
-                    ← Önceki
+                    ← Previous
                   </button>
                   <span className="preview-counter">
                     {previewIndex + 1} / {subtitles.length}

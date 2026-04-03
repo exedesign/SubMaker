@@ -174,7 +174,7 @@ function FloatingPreview() {
     };
   }, [secondarySubtitle?.style, scaleFactor]);
 
-  // Animasyon ilerleme hesaplama
+  // Animation progress calculation
   const animationProgress = useMemo(() => {
     if (!activeSubtitle) return { progress: 0, phase: 'none' };
     
@@ -459,7 +459,7 @@ function FloatingPreview() {
               <span className="info-val highlight">{style.fontSize}px</span>
             </div>
             <div className="info-row">
-              <span className="info-key">Animasyon:</span>
+              <span className="info-key">Animation:</span>
               <span className={`info-val animation-badge ${animation.type}`}>
                 {animation.type === 'karaoke' ? '🎤 Karaoke' : 
                  animation.type === 'fade' ? '✨ Fade' :

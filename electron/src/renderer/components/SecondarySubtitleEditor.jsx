@@ -39,10 +39,10 @@ const FONTS = [
 // Supported languages for translation
 const LANGUAGES = {
   'en': 'English',
-  'tr': 'Türkçe',
-  'es': 'Español',
-  'fr': 'Français',
-  'de': 'Deutsch',
+  'tr': 'Turkish',
+  'es': 'Spanish',
+  'fr': 'French',
+  'de': 'German',
   'it': 'Italiano',
   'pt': 'Português',
   'ru': 'Русский',

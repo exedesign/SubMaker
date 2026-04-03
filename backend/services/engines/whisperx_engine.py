@@ -66,13 +66,13 @@ FASTER_WHISPER_MODELS = [
         "id": "base",
         "name": "Base (74M)",
         "size_mb": 140,
-        "description": "Hızlı, orta doğruluk",
+        "description": "Fast, medium accuracy",
     },
     {
         "id": "tiny",
         "name": "Tiny (39M)",
         "size_mb": 75,
-        "description": "En hızlı, düşük doğruluk",
+        "description": "Fastest, low accuracy",
     },
 ]
 
@@ -109,7 +109,7 @@ class FasterWhisperEngine:
                 "id": "selimc/whisper-large-v3-turbo-turkish",
                 "name": "Turkish Fine-tuned (Turbo)",
                 "size_mb": 800,
-                "description": "Common Voice 17.0 Türkçe fine-tune, en iyi Türkçe doğruluk",
+                "description": "Common Voice 17.0 Turkish fine-tune, best Turkish accuracy",
                 "recommended": True,
             })
         return models
