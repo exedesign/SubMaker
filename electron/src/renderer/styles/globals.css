@@ -118,6 +118,10 @@ body.dragging-preview * {
   height: 24px;
 }
 
+.header-source-btn {
+  -webkit-app-region: no-drag;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
