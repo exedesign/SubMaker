@@ -236,11 +236,30 @@ MUSIC_GENRE_CONFIGS = {
 # FFmpeg settings
 FFMPEG_PATH = "ffmpeg"  # Use system ffmpeg or specify full path
 
-# Video settings - 4K Resolution Standard
+# Video settings - 4K Resolution Standard (used as ASS design resolution)
 VIDEO_FORMATS = {
     "horizontal": {"width": 3840, "height": 2160, "aspect": "16:9"},  # 4K UHD
     "vertical": {"width": 2160, "height": 3840, "aspect": "9:16"},    # 4K Vertical  
     "square": {"width": 2160, "height": 2160, "aspect": "1:1"}        # 4K Square
+}
+
+# Output resolution presets — aspect ratios preserved per format
+RESOLUTION_PRESETS = {
+    "1k": {
+        "horizontal": {"width": 1920, "height": 1080},
+        "vertical": {"width": 1080, "height": 1920},
+        "square": {"width": 1080, "height": 1080},
+    },
+    "2k": {
+        "horizontal": {"width": 2560, "height": 1440},
+        "vertical": {"width": 1440, "height": 2560},
+        "square": {"width": 1440, "height": 1440},
+    },
+    "4k": {
+        "horizontal": {"width": 3840, "height": 2160},
+        "vertical": {"width": 2160, "height": 3840},
+        "square": {"width": 2160, "height": 2160},
+    },
 }
 
 DEFAULT_FPS = 30

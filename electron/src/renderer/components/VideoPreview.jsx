@@ -47,6 +47,19 @@ function VideoPreview() {
       setIsPlaying(globalIsPlaying);
     }
   }, [mixerEnabled, globalIsPlaying]);
+
+  // Stop main media immediately when playlist becomes active — single audio source rule
+  const playlistIsActive = useAppStore(s => s.playlist.isActive);
+  useEffect(() => {
+    if (!playlistIsActive) return;
+    if (mixerEnabled) {
+      mixer.pause?.();
+    } else if (audioRef.current && !audioRef.current.paused) {
+      audioRef.current.pause();
+    }
+    setIsPlaying(false);
+    setGlobalIsPlaying(false);
+  }, [playlistIsActive]); // eslint-disable-line react-hooks/exhaustive-deps
   
   // Register global audio ref in store for other components to use
   // When mixer is active, use the mixer's proxy ref for cross-component compat
@@ -146,6 +159,11 @@ function VideoPreview() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.matches('input, textarea, [contenteditable]')) return;
+      // When playlist is active, let PlaylistPanel handle Space/Arrow
+      const pl = useAppStore.getState().playlist;
+      if (pl.isActive) return;
+      // When playlist has tracks but no media file loaded, yield Space to PlaylistPanel
+      if (e.code === 'Space' && pl.tracks.length > 0 && !useAppStore.getState().mediaFile) return;
       if (e.code === 'Space') {
         e.preventDefault();
         togglePlay();

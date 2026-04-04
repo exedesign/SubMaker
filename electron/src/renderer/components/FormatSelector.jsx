@@ -3,9 +3,15 @@ import { useAppStore } from '../stores/appStore';
 import { FiMonitor, FiSmartphone, FiSquare, FiCheck } from 'react-icons/fi';
 
 const FORMAT_OPTIONS = [
-  { value: 'horizontal', label: '16:9', desc: '1920×1080 - YouTube, Desktop', Icon: FiMonitor },
-  { value: 'vertical', label: '9:16', desc: '1080×1920 - TikTok, Reels, Shorts', Icon: FiSmartphone },
-  { value: 'square', label: '1:1', desc: '1080×1080 - Instagram, Facebook', Icon: FiSquare },
+  { value: 'horizontal', label: '16:9', desc: 'YouTube, Desktop', Icon: FiMonitor },
+  { value: 'vertical', label: '9:16', desc: 'TikTok, Reels, Shorts', Icon: FiSmartphone },
+  { value: 'square', label: '1:1', desc: 'Instagram, Facebook', Icon: FiSquare },
+];
+
+const RESOLUTION_OPTIONS = [
+  { value: '1k', label: '1K', desc: '1920×1080 / 1080×1920' },
+  { value: '2k', label: '2K', desc: '2560×1440 / 1440×2560' },
+  { value: '4k', label: '4K', desc: '3840×2160 / 2160×3840' },
 ];
 
 function FormatSelector() {
@@ -17,6 +23,8 @@ function FormatSelector() {
     setOutputFormat,
     quality,
     setQuality,
+    renderResolution,
+    setRenderResolution,
     background,
   } = useAppStore();
 
@@ -143,6 +151,26 @@ function FormatSelector() {
             Best
           </button>
         </div>
+      </div>
+
+      {/* Resolution */}
+      <div className="form-group">
+        <label className="label">Resolution</label>
+        <div className="tabs">
+          {RESOLUTION_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              className={`tab ${renderResolution === opt.value ? 'active' : ''}`}
+              onClick={() => setRenderResolution(opt.value)}
+              title={opt.desc}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+          {RESOLUTION_OPTIONS.find(r => r.value === renderResolution)?.desc}
+        </p>
       </div>
     </div>
   );

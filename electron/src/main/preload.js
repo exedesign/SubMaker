@@ -144,6 +144,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resolvePath: (path) => ipcRenderer.invoke('path:resolve', path),
   getBasename: (path) => ipcRenderer.invoke('path:basename', path),
 
+  // Window controls
+  minimizeWindow: () => ipcRenderer.send('window:minimize'),
+  maximizeWindow: () => ipcRenderer.send('window:maximize'),
+  closeWindow:    () => ipcRenderer.send('window:close'),
+  onMaximizeChange:  (cb) => ipcRenderer.on('window:maximize-change',  (_e, v) => cb(null, v)),
+  offMaximizeChange: (cb) => ipcRenderer.removeListener('window:maximize-change', cb),
+
+  // Preview window controls (used inside the second display window)
+  previewMinimize: () => ipcRenderer.send('preview-window:minimize'),
+  previewMaximize: () => ipcRenderer.send('preview-window:maximize'),
+  previewClose:    () => ipcRenderer.send('preview-window:close'),
+  // Request main window to broadcast current state immediately
+  requestPreviewState: () => ipcRenderer.send('preview:request-state'),
+  onPreviewBroadcastNow: (cb) => ipcRenderer.on('preview:broadcast-now', cb),
+  offPreviewBroadcastNow: (cb) => ipcRenderer.removeListener('preview:broadcast-now', cb),
+
+  // Second display preview
+  openPreviewOnSecondDisplay: () => ipcRenderer.invoke('preview:openOnSecondDisplay'),
+  closePreviewWindow: () => ipcRenderer.invoke('preview:close'),
+  onPreviewWindowOpened:  (cb) => ipcRenderer.on('preview:window-opened', cb),
+  offPreviewWindowOpened: (cb) => ipcRenderer.removeListener('preview:window-opened', cb),
+  onPreviewWindowClosed:  (cb) => ipcRenderer.on('preview:window-closed', cb),
+  offPreviewWindowClosed: (cb) => ipcRenderer.removeListener('preview:window-closed', cb),
+
+  // File system helpers
+  readTextFile: (filePath) => ipcRenderer.invoke('fs:readTextFile', filePath),
+  writeTextFile: (filePath, content) => ipcRenderer.invoke('fs:writeTextFile', filePath, content),
+  saveWithDialog: (options) => ipcRenderer.invoke('fs:saveWithDialog', options),
+
   // Drag-and-drop path capture (preload has privileged access to File.path)
   getDroppedPaths: () => [..._lastDroppedPaths],
 });

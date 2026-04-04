@@ -28,6 +28,28 @@ from services import (
 )
 from lyrics_parser import parse_suno_lyrics
 
+# ---------------------------------------------------------------------------
+# Startup: remove stale temp files from previous sessions
+# ---------------------------------------------------------------------------
+def _cleanup_stale_temp():
+    """Remove temp files left over from a previous (crashed/killed) session."""
+    try:
+        patterns = ["viz_*.mp4", "render_*.ass", "mix_*.wav"]
+        removed = 0
+        for pat in patterns:
+            for f in TEMP_DIR.glob(pat):
+                try:
+                    f.unlink()
+                    removed += 1
+                except Exception:
+                    pass
+        if removed:
+            print(f"[Startup] Temp cleanup: removed {removed} stale file(s) from {TEMP_DIR}")
+    except Exception as exc:
+        print(f"[Startup] Temp cleanup warning: {exc}")
+
+_cleanup_stale_temp()
+
 # Create Blueprint
 api = Blueprint("api", __name__)
 
@@ -485,7 +507,8 @@ def serve_local_media():
     ext = local_path.suffix.lower()
     allowed_exts = {
         '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac',
-        '.mp4', '.mkv', '.avi', '.mov', '.webm'
+        '.mp4', '.mkv', '.avi', '.mov', '.webm',
+        '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif',
     }
     if ext not in allowed_exts:
         return jsonify({"error": "Unsupported media type"}), 400
@@ -504,10 +527,36 @@ def serve_local_media():
             '.avi': 'video/x-msvideo',
             '.mov': 'video/quicktime',
             '.webm': 'video/webm',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.bmp': 'image/bmp',
+            '.avif': 'image/avif',
         }
         mime_type = mime_map.get(ext, 'application/octet-stream')
 
     return send_file(str(local_path), mimetype=mime_type, conditional=True)
+
+
+@api.route("/media/read-text", methods=["GET"])
+def read_text_file():
+    """Read a text file (M3U playlist) — only .m3u/.m3u8 extensions allowed"""
+    file_path = request.args.get('path', '').strip()
+    if not file_path:
+        return jsonify({'error': 'path is required'}), 400
+    resolved = Path(file_path).resolve()
+    ext = resolved.suffix.lower()
+    if ext not in ('.m3u', '.m3u8'):
+        return jsonify({'error': 'Only .m3u and .m3u8 files are allowed'}), 403
+    if not resolved.is_file():
+        return jsonify({'error': 'File not found'}), 404
+    try:
+        content = resolved.read_text(encoding='utf-8', errors='replace')
+        return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @api.route("/media/output/<path:filename>", methods=["GET"])
@@ -701,6 +750,40 @@ def upload_file():
         "original_name": raw_filename,   # unsanitized name for export naming
         "originalPath": None, # No original path in this case
     })
+
+
+# =============================================================================
+# Temp folder cleanup
+# =============================================================================
+
+@api.route("/temp/cleanup", methods=["POST"])
+def temp_cleanup():
+    """Remove non-essential temp files that are no longer in use."""
+    try:
+        removed = []
+        # Active job paths — don't touch files belonging to a running job
+        active_paths = set()
+        for job in _render_jobs.values():
+            if job.get("status") == "running":
+                for key in ("visualizer_video_path",):
+                    p = job.get(key)
+                    if p:
+                        active_paths.add(str(p))
+
+        patterns = ["viz_*.mp4", "render_*.ass", "mix_*.wav"]
+        for pat in patterns:
+            for f in TEMP_DIR.glob(pat):
+                if str(f) in active_paths:
+                    continue
+                try:
+                    f.unlink()
+                    removed.append(f.name)
+                except Exception:
+                    pass
+        print(f"[Temp Cleanup] Removed {len(removed)} file(s)")
+        return jsonify({"success": True, "removed": removed, "count": len(removed)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 # =============================================================================
@@ -1448,7 +1531,7 @@ def detect_rtl_from_subtitles(subtitles):
     return False
 
 def run_render_job(job_id, audio_path, subtitles, background, video_format,
-                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None):
+                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None, render_resolution=None):
     """Background render job"""
     global _render_jobs
 
@@ -1626,6 +1709,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         visualizer_video_path = None
         if visualizer and isinstance(visualizer, dict):
             visualizer_video_path = visualizer.get("videoPath")
+        _render_jobs[job_id]["visualizer_video_path"] = visualizer_video_path
 
         # Derive output path from original media location (not mixed temp path)
         source_dir = os.path.dirname(original_audio_path)
@@ -1655,6 +1739,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             visualizer_video_path=visualizer_video_path,
             visualizer_opacity=visualizer.get("opacity", 0.8) if visualizer else 0.8,
             cancel_check=cancel_check,
+            resolution=render_resolution,
         )
 
         _render_jobs[job_id]["progress"] = 98
@@ -1690,6 +1775,23 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             _render_jobs[job_id]["step"] = f"Error: {str(e)}"
         else:
             _render_jobs[job_id]["step"] = "Cancelled"
+        # Cleanup job-specific temp files on cancel / error
+        for _tmp in [
+            str(TEMP_DIR / f"render_{job_id}.ass"),
+            str(TEMP_DIR / f"mix_{job_id}.wav"),
+        ]:
+            try:
+                if os.path.exists(_tmp):
+                    os.remove(_tmp)
+            except Exception:
+                pass
+        _viz = _render_jobs[job_id].get("visualizer_video_path")
+        if _viz:
+            try:
+                if os.path.exists(_viz):
+                    os.remove(_viz)
+            except Exception:
+                pass
 
 
 @api.route("/render", methods=["POST"])
@@ -1751,13 +1853,16 @@ def render_video():
         # Original filename for correct output naming when source is temp
         original_name = data.get("original_name")
 
-        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}")
+        # Output resolution preset (1k/2k/4k)
+        render_resolution = data.get("render_resolution")
+
+        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, resolution={render_resolution}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}")
 
         # Start background thread
         thread = threading.Thread(
             target=run_render_job,
             args=(job_id, audio_path, subtitles, background, video_format,
-                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name)
+                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name, render_resolution)
         )
         thread.daemon = True
         thread.start()
@@ -2200,3 +2305,114 @@ def export_lyrics():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# Playlist — SYLT Read API
+# =============================================================================
+
+@api.route("/playlist/validate-mp3", methods=["POST"])
+def playlist_validate_mp3():
+    """Check if an MP3 file has embedded SYLT (synchronized lyrics)"""
+    data = request.json
+    mp3_path = data.get("path")
+
+    if not mp3_path or not os.path.isabs(mp3_path):
+        return jsonify({"error": "Absolute MP3 path required"}), 400
+
+    if not os.path.exists(mp3_path):
+        return jsonify({"error": f"File not found: {mp3_path}"}), 404
+
+    if not mp3_path.lower().endswith(".mp3"):
+        return jsonify({"error": "Only MP3 files are supported"}), 400
+
+    try:
+        from services.lyrics_tagger import get_lyrics_tagger
+        tagger = get_lyrics_tagger()
+        if not tagger.is_available():
+            return jsonify({"error": "mutagen library not installed"}), 500
+
+        sylt_data = tagger.read_sylt(mp3_path)
+        has_sylt = sylt_data is not None and len(sylt_data) > 0
+
+        # Get basic MP3 info
+        title = Path(mp3_path).stem
+        try:
+            from mutagen.id3 import ID3
+            tags = ID3(mp3_path)
+            tit2 = tags.getall("TIT2")
+            if tit2:
+                title = str(tit2[0])
+        except Exception:
+            pass
+
+        # Get duration
+        duration = 0
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(mp3_path)
+            duration = audio.info.length
+        except Exception:
+            pass
+
+        return jsonify({
+            "valid": has_sylt,
+            "path": mp3_path,
+            "title": title,
+            "duration": duration,
+            "sylt_entries": len(sylt_data) if sylt_data else 0,
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to read MP3: {str(e)}"}), 500
+
+
+@api.route("/playlist/read-sylt", methods=["POST"])
+def playlist_read_sylt():
+    """Read SYLT data from MP3 and return as subtitle-format entries"""
+    data = request.json
+    mp3_path = data.get("path")
+
+    if not mp3_path or not os.path.isabs(mp3_path):
+        return jsonify({"error": "Absolute MP3 path required"}), 400
+
+    if not os.path.exists(mp3_path):
+        return jsonify({"error": f"File not found: {mp3_path}"}), 404
+
+    from services.lyrics_tagger import get_lyrics_tagger
+    tagger = get_lyrics_tagger()
+    if not tagger.is_available():
+        return jsonify({"error": "mutagen library not installed"}), 500
+
+    sylt_data = tagger.read_sylt(mp3_path)
+    if not sylt_data or len(sylt_data) == 0:
+        return jsonify({"error": "No SYLT data found in file"}), 404
+
+    # Convert SYLT (text, timestamp_ms) pairs to subtitle format
+    subtitles = []
+    for i, (text, timestamp_ms) in enumerate(sylt_data):
+        clean_text = text.rstrip('\n').strip()
+        if not clean_text:
+            continue
+
+        start = timestamp_ms / 1000.0  # ms to seconds
+        # End time = next entry's start, or start + 3s for the last
+        if i + 1 < len(sylt_data):
+            end = sylt_data[i + 1][1] / 1000.0
+        else:
+            end = start + 3.0
+
+        subtitles.append({
+            "id": i + 1,
+            "text": clean_text,
+            "start": round(start, 3),
+            "end": round(end, 3),
+        })
+
+    return jsonify({
+        "success": True,
+        "subtitles": subtitles,
+        "count": len(subtitles),
+    })

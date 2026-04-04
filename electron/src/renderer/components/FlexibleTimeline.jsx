@@ -1049,6 +1049,9 @@ const FlexibleTimeline = () => {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (!duration || duration <= 0) return
+      // When playlist is active, let PlaylistPanel handle Arrow keys
+      const pl = useAppStore.getState().playlist
+      if (pl.isActive && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) return
       
       // Arrow keys: seek by configurable step
       if (e.code === 'ArrowLeft' && !e.target.matches('input,textarea')) {

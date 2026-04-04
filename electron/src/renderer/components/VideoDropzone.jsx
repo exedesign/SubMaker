@@ -208,6 +208,17 @@ function VideoDropzone() {
             }}>4</div>
             <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Export video</p>
           </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ 
+              width: 48, height: 48, borderRadius: '50%', 
+              background: 'var(--bg-tertiary)', 
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 8px',
+              color: 'var(--accent-primary)',
+              fontWeight: 'bold'
+            }}>5</div>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Karaoke</p>
+          </div>
         </div>
       </div>
     </div>

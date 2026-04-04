@@ -16,10 +16,16 @@ function StatusBar() {
     isProcessing,
     processingStep,
     processingProgress,
+    currentTranscriptText,
     outputPath,
     mediaDuration,
     cancelRender,
     renderJobId,
+    renderElapsedTime,
+    batchRenderActive,
+    batchRenderCurrent,
+    batchRenderTotal,
+    selectedFormats,
   } = useAppStore();
   
   const openOutputFolder = async () => {
@@ -69,6 +75,12 @@ function StatusBar() {
   const processType = getProcessType();
   
   if (isProcessing) {
+    const formatLabels = { horizontal: '16:9', vertical: '9:16', square: '1:1' };
+    const elapsedStr = renderElapsedTime > 0 ? formatDuration(renderElapsedTime) : null;
+    const batchLabel = batchRenderActive
+      ? ` (${formatLabels[selectedFormats[batchRenderCurrent - 1]] || ''} ${batchRenderCurrent}/${batchRenderTotal})`
+      : '';
+
     return (
       <div className="status-bar processing-mode">
         <div className="status-process-full">
@@ -81,10 +93,15 @@ function StatusBar() {
             
             <span className="process-title">
               {processType === 'transcribe' && 'Transcription'}
-              {processType === 'render' && 'Rendering Video'}
+              {processType === 'render' && `Rendering${batchLabel}`}
               {processType === 'upload' && 'Uploading File'}
               {processType === 'other' && 'Processing'}
             </span>
+            {elapsedStr && (
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>
+                <FiClock size={10} style={{ verticalAlign: 'middle', marginRight: 2 }} />{elapsedStr}
+              </span>
+            )}
           </div>
           
           {/* Progress bar */}
@@ -98,20 +115,22 @@ function StatusBar() {
             <span className="process-percent">{processingProgress || 0}%</span>
           </div>
           
-          {/* Durum mesajı */}
+          {/* Durum mesajı veya tanınan metin */}
           <div className="process-status">
-            <span className="process-step">{processingStep}</span>
+            <span className="process-step">
+              {currentTranscriptText ? `"${currentTranscriptText}"` : processingStep}
+            </span>
           </div>
           
-          {renderJobId && (
-            <button
-              className="process-cancel-btn"
-              onClick={cancelRender}
-              title="Cancel"
-            >
-              <FiX size={14} />
-            </button>
-          )}
+          <button
+            className="process-cancel-btn"
+            onClick={cancelRender}
+            title="Cancel"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, width: 'auto', padding: '0 10px', fontSize: 11, fontWeight: 500 }}
+          >
+            <FiX size={14} />
+            <span>Cancel {processType === 'transcribe' ? 'Transcription' : processType === 'render' ? 'Render' : processType === 'upload' ? 'Upload' : 'Process'}</span>
+          </button>
         </div>
       </div>
     );

@@ -3,13 +3,14 @@ import { useAppStore } from '../stores/appStore';
 import {
   FiEye, FiEyeOff, FiMinimize2, FiMaximize2, FiMove,
   FiExternalLink, FiSidebar, FiX, FiMaximize,
-  FiChevronDown, FiChevronRight, FiMenu
+  FiChevronDown, FiChevronRight, FiMenu, FiMonitor
 } from 'react-icons/fi';
 import LogoOverlay from './LogoOverlay';
 import ButterchurnCanvas from './ButterchurnCanvas';
 import AnimationSelector from './AnimationSelector';
 import BackgroundSelector from './BackgroundSelector';
 import FormatSelector from './FormatSelector';
+import PlaylistPanel from './PlaylistPanel';
 
 // Utility function to convert backend file paths to HTTP URLs
 const getImageUrl = (imagePath) => {
@@ -55,15 +56,25 @@ function PreviewPanel() {
     previewMode,
     setPreviewMode,
     logo,
+    logos,
     settings,
     secondarySubtitle,
     visualizer,
     globalAudioRef,
+    cycleVisualizerPreset,
+    playlist,
   } = useAppStore();
+
+  // When playlist is active, use playlist's time & subtitles for karaoke display
+  const effectivePlaybackTime = playlist.isActive ? playlist.playbackTime : playbackTime;
+  const effectiveSubtitles = playlist.isActive && playlist.currentTrackIndex >= 0
+    ? (playlist.tracks[playlist.currentTrackIndex]?.subtitles || [])
+    : subtitles;
 
   const [isMinimized, setIsMinimized] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isSecondDisplayOpen, setIsSecondDisplayOpen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(300); // Docked panel width
   const [collapsedSections, setCollapsedSections] = useState({ format: true, background: true, animation: true });
 
@@ -77,6 +88,7 @@ function PreviewPanel() {
     { id: 'format', title: 'Video Format', Component: FormatSelector },
     { id: 'background', title: 'Background', Component: BackgroundSelector },
     { id: 'animation', title: 'Animation', Component: AnimationSelector },
+    { id: 'playlist', title: 'Playlist', Component: PlaylistPanel },
   ];
   const PREVIEW_DEFAULT_ORDER = PREVIEW_SECTIONS_DEF.map(s => s.id);
   const PREVIEW_ORDER_KEY = 'submaker-preview-order';
@@ -391,6 +403,65 @@ function PreviewPanel() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, [isFullscreen]);
 
+  // ArrowUp/ArrowDown to cycle visualizer presets when visualizer is enabled
+  useEffect(() => {
+    if (!visualizer.enabled) return;
+    const handleKeyDown = (e) => {
+      if (e.target.matches('input, textarea, select, [contenteditable]')) return;
+      if (e.code === 'ArrowUp') {
+        e.preventDefault();
+        cycleVisualizerPreset(-1);
+      } else if (e.code === 'ArrowDown') {
+        e.preventDefault();
+        cycleVisualizerPreset(1);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [visualizer.enabled, cycleVisualizerPreset]);
+
+  // Mouse wheel to cycle visualizer presets on preview frame
+  useEffect(() => {
+    if (!visualizer.enabled) return;
+    const el = previewFrameRef.current;
+    if (!el) return;
+    const handleWheel = (e) => {
+      e.preventDefault();
+      cycleVisualizerPreset(e.deltaY > 0 ? 1 : -1);
+    };
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [visualizer.enabled, cycleVisualizerPreset]);
+
+  // Open preview on second display
+  const handleOpenSecondScreen = useCallback(async () => {
+    if (window.electronAPI?.openPreviewOnSecondDisplay) {
+      const result = await window.electronAPI.openPreviewOnSecondDisplay();
+      if (result?.error === 'no_second_display') {
+        alert('İkinci ekran bulunamadı. Lütfen bir monitör daha bağlayın.');
+      } else if (result?.success) {
+        setIsSecondDisplayOpen(true);
+      }
+    } else {
+      const url = window.location.origin + window.location.pathname + '?previewScreen=1';
+      window.open(url, '_blank', 'width=1280,height=720');
+      setIsSecondDisplayOpen(true);
+    }
+  }, []);
+
+  // Track second display window open/close
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const onOpened = () => setIsSecondDisplayOpen(true);
+    const onClosed = () => setIsSecondDisplayOpen(false);
+    window.electronAPI.onPreviewWindowOpened?.(onOpened);
+    window.electronAPI.onPreviewWindowClosed?.(onClosed);
+    return () => {
+      window.electronAPI.offPreviewWindowOpened?.(onOpened);
+      window.electronAPI.offPreviewWindowClosed?.(onClosed);
+    };
+  }, []);
+
   // Format bilgileri
   const formatInfo = useMemo(() => ({
     width: videoFormat === 'vertical' ? 1080 : videoFormat === 'square' ? 1080 : 1920,
@@ -473,15 +544,15 @@ function PreviewPanel() {
 
   // Active subtitle - only one at a time, precisely timed
   const activeSubtitle = useMemo(() => {
-    if (!subtitles.length) return null;
+    if (!effectiveSubtitles.length) return null;
 
     // playbackTime >= start AND playbackTime < end (end excluded to prevent overlap)
-    const active = subtitles.find(sub => 
-      playbackTime >= sub.start && playbackTime < sub.end
+    const active = effectiveSubtitles.find(sub => 
+      effectivePlaybackTime >= sub.start && effectivePlaybackTime < sub.end
     );
     
     return active || null;
-  }, [subtitles, playbackTime]);
+  }, [effectiveSubtitles, effectivePlaybackTime]);
 
   // Active secondary subtitle (translation) - same time-based logic
   const activeSecondarySubtitle = useMemo(() => {
@@ -490,18 +561,18 @@ function PreviewPanel() {
 
     // Secondary subtitle lookup by playbackTime
     const activeSecondary = secondarySubtitle.subtitles.find(sub => 
-      playbackTime >= sub.start && playbackTime < sub.end
+      effectivePlaybackTime >= sub.start && effectivePlaybackTime < sub.end
     );
     
     return activeSecondary || null;
-  }, [secondarySubtitle?.subtitles, playbackTime, settings?.dualSubtitleEnabled]);
+  }, [secondarySubtitle?.subtitles, effectivePlaybackTime, settings?.dualSubtitleEnabled]);
 
   // Animation progress
   const animationProgress = useMemo(() => {
     if (!activeSubtitle) return { progress: 0, phase: 'none' };
     
     const duration = activeSubtitle.end - activeSubtitle.start;
-    const elapsed = playbackTime - activeSubtitle.start;
+    const elapsed = effectivePlaybackTime - activeSubtitle.start;
     const progress = Math.min(100, Math.max(0, (elapsed / duration) * 100));
     
     const fadeInDuration = animation.fadeIn / 1000;
@@ -510,12 +581,12 @@ function PreviewPanel() {
     let opacity = 1;
     if (elapsed < fadeInDuration) {
       opacity = elapsed / fadeInDuration;
-    } else if (playbackTime > activeSubtitle.end - fadeOutDuration) {
-      opacity = (activeSubtitle.end - playbackTime) / fadeOutDuration;
+    } else if (effectivePlaybackTime > activeSubtitle.end - fadeOutDuration) {
+      opacity = (activeSubtitle.end - effectivePlaybackTime) / fadeOutDuration;
     }
     
     return { progress, opacity: Math.max(0, Math.min(1, opacity)), elapsed, duration };
-  }, [activeSubtitle, playbackTime, animation.fadeIn, animation.fadeOut]);
+  }, [activeSubtitle, effectivePlaybackTime, animation.fadeIn, animation.fadeOut]);
 
   // Typewriter
   const typewriterChars = useMemo(() => {
@@ -610,11 +681,97 @@ function PreviewPanel() {
     wordWrap: 'break-word',
   }), [style, fsScaleFactor]);
 
-  // Only show live preview once the app has moved beyond transcription.
-  if (!mediaFile || !['edit', 'style', 'render'].includes(currentStep)) {
-    return null;
-  }
+  // BroadcastChannel — sync preview state to second display window
+  // Must be after displayText, formatInfo, animationProgress, activeSecondarySubtitle are all defined
+  useEffect(() => {
+    let channel;
+    try { channel = new BroadcastChannel('submaker-preview-sync'); } catch { return; }
+    const buildState = () => ({
+      type: 'PREVIEW_STATE',
+      displayText,
+      style: {
+        fontName: style.fontName,
+        fontSize: style.fontSize,
+        color: style.color,
+        bold: style.bold,
+        italic: style.italic,
+        shadowDepth: style.shadowDepth,
+        borderWidth: style.borderWidth,
+        borderColor: style.borderColor,
+        alignment: style.alignment,
+        marginVertical: style.marginVertical,
+      },
+      background,
+      animation: { type: animation.type, highlightColor: animation.highlightColor },
+      animationProgress: animationProgress.progress,
+      fmtWidth: formatInfo.width,
+      fmtHeight: formatInfo.height,
+      secondaryText: settings?.dualSubtitleEnabled ? (activeSecondarySubtitle?.translatedText || null) : null,
+      secondaryStyle: secondarySubtitle?.style || null,
+      visualizer: {
+        enabled: visualizer.enabled,
+        presetName: visualizer.presetName,
+        opacity: visualizer.opacity,
+        sensitivity: visualizer.sensitivity,
+      },
+      logos: (logos || []).filter(l => l.enabled && l.imageData).map(l => ({
+        id: l.id,
+        imageData: l.imageData,
+        position: l.position,
+        size: l.size,
+        opacity: l.opacity,
+      })),
+    });
+    const state = buildState();
+    channel.postMessage(state);
+    try { localStorage.setItem('submaker-preview-state', JSON.stringify(state)); } catch {}
+    return () => channel.close();
+  }, [displayText, style, background, animation, animationProgress.progress, formatInfo, settings?.dualSubtitleEnabled, activeSecondarySubtitle?.translatedText, secondarySubtitle?.style, visualizer.enabled, visualizer.presetName, visualizer.opacity, visualizer.sensitivity, logos]);
 
+  // When preview window asks for immediate state (on mount), broadcast right away
+  useEffect(() => {
+    if (!window.electronAPI?.onPreviewBroadcastNow) return;
+    const handler = () => {
+      let channel;
+      try { channel = new BroadcastChannel('submaker-preview-sync'); } catch { return; }
+      const state = {
+        type: 'PREVIEW_STATE',
+        displayText,
+        style: {
+          fontName: style.fontName, fontSize: style.fontSize, color: style.color,
+          bold: style.bold, italic: style.italic, shadowDepth: style.shadowDepth,
+          borderWidth: style.borderWidth, borderColor: style.borderColor,
+          alignment: style.alignment, marginVertical: style.marginVertical,
+        },
+        background,
+        animation: { type: animation.type, highlightColor: animation.highlightColor },
+        animationProgress: animationProgress.progress,
+        fmtWidth: formatInfo.width, fmtHeight: formatInfo.height,
+        secondaryText: settings?.dualSubtitleEnabled ? (activeSecondarySubtitle?.translatedText || null) : null,
+        secondaryStyle: secondarySubtitle?.style || null,
+        visualizer: {
+          enabled: visualizer.enabled,
+          presetName: visualizer.presetName,
+          opacity: visualizer.opacity,
+          sensitivity: visualizer.sensitivity,
+        },
+        logos: (logos || []).filter(l => l.enabled && l.imageData).map(l => ({
+          id: l.id,
+          imageData: l.imageData,
+          position: l.position,
+          size: l.size,
+          opacity: l.opacity,
+        })),
+      };
+      channel.postMessage(state);
+      try { localStorage.setItem('submaker-preview-state', JSON.stringify(state)); } catch {}
+      channel.close();
+    };
+    window.electronAPI.onPreviewBroadcastNow(handler);
+    return () => window.electronAPI.offPreviewBroadcastNow?.(handler);
+  }, [displayText, style, background, animation, animationProgress, formatInfo, settings?.dualSubtitleEnabled, activeSecondarySubtitle?.translatedText, secondarySubtitle?.style, visualizer, logos]);
+
+  // Only show live preview when media is loaded or playlist has tracks
   // Hidden state toggle button (floating only)
   if (!isVisible && previewMode === 'floating') {
     return (
@@ -759,14 +916,14 @@ function PreviewPanel() {
           <div
             key={id}
             className={`sidebar-section${isDragging ? ' dragging' : ''}${isDragOver ? ' drag-over' : ''}${isCollapsed ? ' collapsed' : ''}`}
-            draggable
-            onDragStart={(e) => handleSectionDragStart(e, id)}
-            onDragEnd={handleSectionDragEnd}
             onDragOver={(e) => handleSectionDragOver(e, id)}
             onDrop={(e) => handleSectionDrop(e, id)}
           >
             <h3
               className="sidebar-section-title"
+              draggable
+              onDragStart={(e) => handleSectionDragStart(e, id)}
+              onDragEnd={handleSectionDragEnd}
               onClick={() => toggleSection(id)}
             >
               <span
@@ -781,7 +938,12 @@ function PreviewPanel() {
                 {isCollapsed ? <FiChevronRight size={14} /> : <FiChevronDown size={14} />}
               </span>
             </h3>
-            {!isCollapsed && (
+            {/* Playlist section stays mounted even when collapsed to keep audio alive */}
+            {id === 'playlist' ? (
+              <div className="sidebar-section-body" style={isCollapsed ? { display: 'none' } : {}}>
+                <Component />
+              </div>
+            ) : !isCollapsed && (
               <div className="sidebar-section-body">
                 <Component />
               </div>
@@ -817,19 +979,10 @@ function PreviewPanel() {
           setIsFullscreen(false);
         }}
       >
-        {/* Close button - auto-hides */}
-        <button
-          className="preview-fullscreen-close"
-          onClick={() => {
-            if (document.fullscreenElement) {
-              document.exitFullscreen().catch(() => {});
-            }
-            setIsFullscreen(false);
-          }}
-          title="Kapat (ESC)"
-        >
-          <FiX size={18} />
-        </button>
+        {/* PlaylistPanel hidden but mounted — keeps audio element and keyboard handlers alive in fullscreen */}
+        <div style={{ display: 'none', position: 'absolute', pointerEvents: 'none' }} aria-hidden="true">
+          <PlaylistPanel />
+        </div>
 
         {/* Pure video frame - fills screen */}
         <div
@@ -958,6 +1111,12 @@ function PreviewPanel() {
           </span>
           <div className="preview-actions">
             <button
+              onClick={handleOpenSecondScreen}
+              title="Open on second display"
+            >
+              <FiMonitor size={12} />
+            </button>
+            <button
               onClick={toggleFullscreen}
               title="Fullscreen"
             >
@@ -1009,6 +1168,12 @@ function PreviewPanel() {
             title={isMinimized ? 'Expand' : 'Collapse'}
           >
             {isMinimized ? <FiMaximize2 size={10} /> : <FiMinimize2 size={10} />}
+          </button>
+          <button
+            onClick={handleOpenSecondScreen}
+            title="Open on second display"
+          >
+            <FiMonitor size={10} />
           </button>
           <button
             onClick={toggleFullscreen}

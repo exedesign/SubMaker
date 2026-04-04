@@ -127,7 +127,8 @@ class SubtitleEngine:
         text: str,
         animation: AnimationConfig,
         duration: float,
-        words: Optional[List] = None
+        words: Optional[List] = None,
+        sub_start: float = 0.0
     ) -> str:
         """Apply animation effects to subtitle text"""
         
@@ -149,38 +150,44 @@ class SubtitleEngine:
         if animation.type == "karaoke" and words:
             # Debug karaoke animation
             print(f"[KARAOKE DEBUG] Applying karaoke animation: words={words}, type={type(words)}")
-            # Simplified karaoke effect - performance optimized for 4K
             karaoke_parts = []
             
-            # Process words with minimal ASS complexity
             word_list = list(words)
             
             # For RTL languages, reverse the word order for karaoke effect
             if animation.rtl:
                 word_list = list(reversed(word_list))
             
+            # Track cumulative time relative to subtitle start.
+            # Each \kf duration covers from the end of the previous syllable
+            # to the end of the current syllable (including any gap before it).
+            cumulative_cs = 0
+            
             for word_data in word_list:
-                # Handle both dict format and string format for words
                 if isinstance(word_data, dict):
-                    word = word_data.get("word", "")
-                    word_duration = word_data.get("end", 0) - word_data.get("start", 0)
+                    word = word_data.get("word", "").strip()
+                    word_end = word_data.get("end", 0)
+                    word_start = word_data.get("start", 0)
+                    # Calculate this word's \kf duration:
+                    # From where the previous word ended (cumulative) to this word's end
+                    word_end_rel_cs = int((word_end - sub_start) * 100)
+                    duration_cs = max(20, word_end_rel_cs - cumulative_cs)
+                    cumulative_cs += duration_cs
                 else:
-                    # word_data is a string
-                    word = str(word_data) + " "
-                    # Estimate word duration based on total duration and word count
-                    word_duration = duration / len(words) if words else 0
-                
-                # Use optimized timing for better performance (minimum 20cs per word)
-                duration_cs = max(20, int(word_duration * 100))  # Minimum 200ms per word
-                
-                # Simple karaoke tags without complex inline styling
+                    word = str(word_data).strip()
+                    duration_cs = max(20, int((duration / len(words)) * 100))
+                    cumulative_cs += duration_cs
+
+                # Ensure trailing space between words
+                if word and not word.endswith(' '):
+                    word += ' '
+
                 karaoke_parts.append(f"{{\\kf{duration_cs}}}{word}")
             
             # For RTL, reverse back to get correct visual order
             if animation.rtl:
                 karaoke_parts = list(reversed(karaoke_parts))
                 
-            # Simple style override - much faster than complex inline styling
             return "".join(karaoke_parts)
         
         elif animation.type == "karaoke" and not words:
@@ -273,8 +280,12 @@ class SubtitleEngine:
 
         # Simplified karaoke style handling - avoid complex style duplication
         if animation.type == "karaoke" and style:
-            # Create optimized karaoke style with secondary color set to highlight
-            style.secondary_color = animation.highlight_color
+            # In ASS, \kf fills text FROM SecondaryColour TO PrimaryColour.
+            # So PrimaryColour = highlight (what filled words become) = yellow
+            #    SecondaryColour = unfilled (what waiting words show as) = original text color
+            original_primary = style.primary_color
+            style.primary_color = animation.highlight_color
+            style.secondary_color = original_primary
         
         style = self.styles.get(style.name, style) if style else self.default_style
 
@@ -315,7 +326,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             duration = sub["end"] - sub["start"]
             
             # Apply animation
-            animated_text = self._apply_animation(text, animation, duration, words)
+            animated_text = self._apply_animation(text, animation, duration, words, sub["start"])
             
             # Escape special characters
             animated_text = animated_text.replace("\n", "\\N")

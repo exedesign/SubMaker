@@ -48,6 +48,8 @@ if (swiftshaderActive) {
 }
 app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('disable-gpu-sandbox');
+// Suppress unsupported DevTools Autofill protocol errors (harmless noise)
+app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication');
 
 // Keep references to prevent garbage collection
 let mainWindow = null;
@@ -207,8 +209,11 @@ function createWindow() {
     console.log('\u2705 [MAIN] Window is responsive again');
   });
 
-  // Handle window close
+  // Handle window close — also close the preview window if open
   mainWindow.on('closed', () => {
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.close();
+    }
     mainWindow = null;
   });
 }
@@ -644,6 +649,123 @@ ipcMain.handle('backend:restart', () => {
   stopPythonBackend();
   setTimeout(startPythonBackend, 1000);
   return true;
+});
+
+// =============================================================================
+// Second Display Preview Window
+// =============================================================================
+let previewWindow = null;
+
+ipcMain.handle('preview:openOnSecondDisplay', async () => {
+  const { screen } = require('electron');
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  const second = displays.find(d => d.id !== primary.id);
+
+  if (!second) {
+    return { error: 'no_second_display' };
+  }
+
+  // Close existing preview window if open
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    previewWindow.close();
+    previewWindow = null;
+  }
+
+  const { x, y, width, height } = second.bounds;
+
+  previewWindow = new BrowserWindow({
+    x, y, width, height,
+    minWidth: 400,
+    minHeight: 300,
+    fullscreen: false,
+    frame: false,        // custom titlebar in renderer
+    resizable: true,
+    movable: true,
+    backgroundColor: '#000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+
+  const devPort = process.env.VITE_DEV_PORT || '5173';
+  const devHost = process.env.VITE_DEV_HOST || 'localhost';
+
+  if (isDev) {
+    await previewWindow.loadURL(`http://${devHost}:${devPort}/?previewScreen=1`);
+  } else {
+    await previewWindow.loadFile(path.join(__dirname, '../../dist/index.html'), {
+      query: { previewScreen: '1' },
+    });
+  }
+
+  // Ensure it stays on the target display
+  previewWindow.setBounds({ x, y, width, height });
+
+  previewWindow.on('closed', () => {
+    previewWindow = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('preview:window-closed');
+    }
+  });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('preview:window-opened');
+  }
+  return { success: true };
+});
+
+// Window controls for the PREVIEW window (sent from PreviewScreenOutput)
+ipcMain.on('preview-window:minimize', () => { if (previewWindow && !previewWindow.isDestroyed()) previewWindow.minimize(); });
+ipcMain.on('preview-window:maximize', () => {
+  if (!previewWindow || previewWindow.isDestroyed()) return;
+  if (previewWindow.isMaximized() || previewWindow.isFullScreen()) {
+    previewWindow.setFullScreen(false);
+    previewWindow.setAlwaysOnTop(false);
+    previewWindow.unmaximize();
+  } else {
+    previewWindow.setFullScreen(true);
+    previewWindow.setAlwaysOnTop(true, 'screen-saver');
+  }
+});
+ipcMain.on('preview-window:close', () => { if (previewWindow && !previewWindow.isDestroyed()) previewWindow.close(); });
+
+// Main window broadcasts current state to preview window on request
+ipcMain.on('preview:request-state', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('preview:broadcast-now');
+  }
+});
+
+ipcMain.handle('preview:close', () => {
+  if (previewWindow && !previewWindow.isDestroyed()) previewWindow.close();
+  return true;
+});
+
+// =============================================================================
+// File System helpers (used by M3U import/export)
+// =============================================================================
+ipcMain.handle('fs:readTextFile', (event, filePath) => {
+  const resolved = path.resolve(filePath);
+  return fs.readFileSync(resolved, 'utf-8');
+});
+
+ipcMain.handle('fs:writeTextFile', (event, filePath, content) => {
+  const resolved = path.resolve(filePath);
+  fs.writeFileSync(resolved, content, 'utf-8');
+  return true;
+});
+
+// Save file dialog + write
+ipcMain.handle('fs:saveWithDialog', async (event, options) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: options.defaultPath || 'playlist.m3u',
+    filters: options.filters || [{ name: 'M3U Playlist', extensions: ['m3u'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  fs.writeFileSync(result.filePath, options.content || '', 'utf-8');
+  return { filePath: result.filePath };
 });
 
 // =============================================================================

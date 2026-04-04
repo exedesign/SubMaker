@@ -1,9 +1,11 @@
-import React, { useState, useCallback } from 'react';
-import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile, FiChevronsLeft } from 'react-icons/fi';
+import React, { useState, useCallback, useEffect } from 'react';
+import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2 } from 'react-icons/fi';
 import { useAppStore } from '../stores/appStore';
 
 function Header() {
   const [showSettings, setShowSettings] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
+  const isElectron = !!window.electronAPI;
   const {
     settings, setSettings, setDualSubtitleEnabled, secondarySubtitle, updateAudioVisualization,
     mediaFile, originalFileName, mediaType, uploadFile,
@@ -55,6 +57,18 @@ function Header() {
   const displayName = originalFileName
     ? (originalFileName.length > 25 ? originalFileName.substring(0, 22) + '...' : originalFileName)
     : null;
+
+  // Maximize state sync
+  useEffect(() => {
+    if (!isElectron) return;
+    const handler = (_e, maximized) => setIsMaximized(maximized);
+    window.electronAPI.onMaximizeChange?.(handler);
+    return () => window.electronAPI.offMaximizeChange?.(handler);
+  }, [isElectron]);
+
+  const handleMinimize = () => window.electronAPI?.minimizeWindow?.();
+  const handleMaximize = () => window.electronAPI?.maximizeWindow?.();
+  const handleClose   = () => window.electronAPI?.closeWindow?.();
 
   return (
     <>
@@ -110,6 +124,21 @@ function Header() {
             <FiSettings />
           </button>
         </div>
+
+        {/* Window controls — only in Electron */}
+        {isElectron && (
+          <div className="window-controls">
+            <button className="wc-btn wc-minimize" onClick={handleMinimize} title="Küçült">
+              <FiMinus size={14} />
+            </button>
+            <button className="wc-btn wc-maximize" onClick={handleMaximize} title={isMaximized ? 'Küçült' : 'Büyüt'}>
+              {isMaximized ? <FiSquare size={13} /> : <FiMaximize2 size={13} />}
+            </button>
+            <button className="wc-btn wc-close" onClick={handleClose} title="Kapat">
+              <FiX size={14} />
+            </button>
+          </div>
+        )}
       </header>
       
       {/* Settings Modal */}
@@ -131,7 +160,10 @@ function Header() {
             borderRadius: 12,
             width: '90%',
             maxWidth: 450,
+            maxHeight: '85vh',
             overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
           }}>
             {/* Modal Header */}
             <div style={{
@@ -155,7 +187,7 @@ function Header() {
             </div>
             
             {/* Settings Content */}
-            <div style={{ padding: 20 }}>
+            <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
               {/* GIF Provider */}
               <div className="form-group">
                 <label className="label" style={{ marginBottom: 8, display: 'block' }}>
@@ -170,53 +202,50 @@ function Header() {
                     onClick={() => setSettings({ gifProvider: 'tenor' })}
                     style={{ 
                       flex: 1, 
-                      padding: '12px 16px',
+                      padding: '8px 12px',
                       display: 'flex',
-                      flexDirection: 'column',
                       alignItems: 'center',
-                      gap: 4,
+                      justifyContent: 'center',
+                      gap: 6,
                     }}
                   >
-                    <span style={{ fontSize: 20 }}>🎬</span>
-                    <span style={{ fontWeight: 600 }}>Tenor</span>
-                    <span style={{ fontSize: 10, opacity: 0.7 }}>by Google</span>
+                    <span style={{ fontSize: 14 }}>🎬</span>
+                    <span style={{ fontWeight: 600, fontSize: 12 }}>Tenor</span>
                   </button>
                   <button
                     className={`btn ${settings.gifProvider === 'giphy' ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={() => setSettings({ gifProvider: 'giphy' })}
                     style={{ 
                       flex: 1, 
-                      padding: '12px 16px',
+                      padding: '8px 12px',
                       display: 'flex',
-                      flexDirection: 'column',
                       alignItems: 'center',
-                      gap: 4,
+                      justifyContent: 'center',
+                      gap: 6,
                     }}
                   >
-                    <span style={{ fontSize: 20 }}>🎥</span>
-                    <span style={{ fontWeight: 600 }}>Giphy</span>
-                    <span style={{ fontSize: 10, opacity: 0.7 }}>Popular</span>
+                    <span style={{ fontSize: 14 }}>🎥</span>
+                    <span style={{ fontWeight: 600, fontSize: 12 }}>Giphy</span>
                   </button>
                 </div>
               </div>
               
               {/* Info */}
               <div style={{ 
-                marginTop: 20, 
-                padding: 12, 
+                marginTop: 12, 
+                padding: 8, 
                 background: 'var(--bg-secondary)', 
-                borderRadius: 8,
-                fontSize: 12,
+                borderRadius: 6,
+                fontSize: 11,
                 color: 'var(--text-secondary)',
               }}>
-                <strong style={{ color: 'var(--text-primary)' }}>💡 Tip:</strong><br/>
-                Both services offer free GIF search. Try switching services for different results.
+                <strong style={{ color: 'var(--text-primary)' }}>💡 Tip:</strong> Both services offer free GIF search. Try switching for different results.
               </div>
               
               {/* Divider */}
               <div style={{ height: 1, background: 'var(--border-color)', margin: '20px 0' }} />
               
-              {/* Dual Subtitle Module Toggle */}
+              {/* Secondary Subtitle Module Toggle */}
               <div className="form-group">
                 <div style={{ 
                   display: 'flex', 
@@ -226,7 +255,7 @@ function Header() {
                 }}>
                   <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <FiGlobe size={16} />
-                    Dual Language Subtitles
+                    Secondary Subtitle
                   </label>
                   <button
                     className="btn btn-ghost"
@@ -255,7 +284,7 @@ function Header() {
                       <span style={{ fontSize: 13 }}>Active</span>
                     </div>
                     <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '8px 0 0' }}>
-                      Configure settings from the "Dual Language" tab in the style panel.
+                      Configure settings from the Secondary Subtitle section in the sidebar.
                     </p>
                   </div>
                 )}

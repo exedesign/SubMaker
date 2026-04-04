@@ -27,8 +27,8 @@ function LoadingOverlay() {
         </div>
       )}
 
-      {/* Cancel button — visible as soon as render job starts */}
-      {renderJobId && (
+      {/* Cancel button — visible immediately when processing starts */}
+      {isProcessing && (
         <button
           onClick={cancelRender}
           style={{

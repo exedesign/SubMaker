@@ -147,7 +147,7 @@ export async function fetchArrayBuffer(url, options = {}) {
   return response.arrayBuffer();
 }
 
-export async function streamJsonEvents(url, body, onEvent) {
+export async function streamJsonEvents(url, body, onEvent, signal) {
   if (window.electronAPI?.streamViaMain) {
     return window.electronAPI.streamViaMain({ url, body }, onEvent);
   }
@@ -156,6 +156,7 @@ export async function streamJsonEvents(url, body, onEvent) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -168,6 +169,10 @@ export async function streamJsonEvents(url, body, onEvent) {
   let buffer = '';
 
   while (true) {
+    if (signal?.aborted) {
+      reader.cancel();
+      break;
+    }
     const { done, value } = await reader.read();
     if (done) break;
 

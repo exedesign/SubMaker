@@ -148,11 +148,6 @@ function Sidebar() {
   SECTIONS.forEach(s => { sectionMap[s.id] = s; });
   const orderedSections = sectionOrder.map(id => sectionMap[id]).filter(Boolean);
 
-  // Don't show sidebar on upload step
-  if (currentStep === 'upload' || !mediaFile) {
-    return null;
-  }
-
   return (
     <aside className="sidebar" style={{ width: sidebarWidth, minWidth: 250, maxWidth: 450 }}>
       <div className="sidebar-content">
@@ -166,14 +161,14 @@ function Sidebar() {
             <div
               key={section.id}
               className={`sidebar-section${isDragging ? ' dragging' : ''}${isDragOver ? ' drag-over' : ''}${isCollapsed ? ' collapsed' : ''}`}
-              draggable
-              onDragStart={(e) => handleDragStart(e, section.id)}
-              onDragEnd={handleDragEnd}
               onDragOver={(e) => handleDragOver(e, section.id)}
               onDrop={(e) => handleDrop(e, section.id)}
             >
               <h3
                 className="sidebar-section-title"
+                draggable
+                onDragStart={(e) => handleDragStart(e, section.id)}
+                onDragEnd={handleDragEnd}
                 onClick={() => toggleCollapse(section.id)}
               >
                 <span

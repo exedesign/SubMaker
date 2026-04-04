@@ -12,7 +12,7 @@
 import { fetchJson, fetchArrayBuffer, fetchFormData } from './electronTransport';
 
 const API_URL = window.API_URL || 'http://localhost:5000/api';
-const FRAME_BATCH_SIZE = 150;
+const FRAME_BATCH_SIZE = 90;
 
 // ─── Shared helpers ───────────────────────────────────────────────────
 
@@ -146,6 +146,7 @@ export async function exportVisualizerVideo({
   presetName,
   fps = 30,
   onProgress,
+  signal,
 }) {
   console.log(`[VizExport] Starting: ${width}x${height}, ${duration}s, fps=${fps}`);
 
@@ -161,7 +162,7 @@ export async function exportVisualizerVideo({
   console.log(`[VizExport] Preset: ${name}, Frames: ${totalFrames}, duration=${actualDuration.toFixed(1)}s (requested=${duration}s)`);
 
   return await renderFrames(butterchurn, presets, preset, name, audioBuffer, {
-    width, height, fps, totalFrames, actualDuration, onProgress,
+    width, height, fps, totalFrames, actualDuration, onProgress, signal,
   });
 }
 
@@ -292,7 +293,7 @@ function getAudioLevelsAtTime(audioBuffer, time) {
 // ─── Sequential frame rendering ──────────────────────────────────────
 
 async function renderFrames(butterchurn, presets, preset, presetName, audioBuffer, opts) {
-  const { width, height, fps, totalFrames, actualDuration, onProgress } = opts;
+  const { width, height, fps, totalFrames, actualDuration, onProgress, signal } = opts;
   console.log(`[VizExport] Rendering ${totalFrames} frames, ${actualDuration.toFixed(1)}s`);
 
   const canvas = document.createElement('canvas');
@@ -300,6 +301,7 @@ async function renderFrames(butterchurn, presets, preset, presetName, audioBuffe
   canvas.height = height;
 
   // Pre-create WebGL2 context WITH preserveDrawingBuffer before butterchurn gets it.
+  // Use powerPreference: 'high-performance' to hint the GPU and reduce context loss.
   const gl = canvas.getContext('webgl2', {
     preserveDrawingBuffer: true,
     alpha: false,
@@ -307,12 +309,16 @@ async function renderFrames(butterchurn, presets, preset, presetName, audioBuffe
     depth: false,
     stencil: false,
     premultipliedAlpha: false,
+    powerPreference: 'high-performance',
   });
 
   // Detect WebGL context loss
   let contextLost = false;
   canvas.addEventListener('webglcontextlost', (e) => {
-    e.preventDefault();
+    // Do NOT call e.preventDefault() — that signals "I will restore the context"
+    // but we have no restoration code.  Without preventDefault the browser
+    // immediately invalidates the GL state so gl.finish() / gl.readPixels()
+    // return as no-ops instead of potentially hanging.
     contextLost = true;
     console.error('[VizExport] ⚠ WebGL context LOST!');
   });
@@ -356,8 +362,23 @@ async function renderFrames(butterchurn, presets, preset, presetName, audioBuffe
   const t0 = performance.now();
 
   for (let i = 0; i < totalFrames; i++) {
-    if (contextLost) {
-      console.error(`[VizExport] Context lost at frame ${i}, stopping render`);
+    if (signal?.aborted) {
+      cleanupWebGL(canvas);
+      const abortErr = new Error('Render cancelled by user');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+
+    // Check context loss both via event flag AND synchronous gl.isContextLost().
+    // gl.isContextLost() catches loss that occurred DURING the previous iteration
+    // before the async webglcontextlost DOM event had a chance to fire.
+    if (contextLost || gl.isContextLost()) {
+      if (!contextLost) {
+        contextLost = true;
+        console.warn(`[VizExport] Context lost detected via gl.isContextLost() at frame ${i}`);
+      } else {
+        console.warn(`[VizExport] Context lost (event flag) at frame ${i}, stopping render`);
+      }
       break;
     }
 
@@ -373,15 +394,50 @@ async function renderFrames(butterchurn, presets, preset, presetName, audioBuffe
     } catch (e) {
       renderErrors++;
       if (renderErrors <= 5) console.warn(`[VizExport] Frame ${i} render error:`, e.message);
+      // Check if the render threw because the context is gone
+      if (gl.isContextLost()) {
+        contextLost = true;
+        console.warn(`[VizExport] Context lost during viz.render() at frame ${i}`);
+        break;
+      }
       continue;
     }
 
-    // Force GPU to finish all pending operations before reading pixels
-    gl.finish();
+    // Synchronous context loss check BEFORE gl.finish() — some GPU drivers
+    // hang indefinitely on gl.finish() after context loss instead of returning.
+    if (gl.isContextLost()) {
+      contextLost = true;
+      console.warn(`[VizExport] Context lost before gl.finish() at frame ${i}, stopping`);
+      break;
+    }
+
+    // Force GPU to finish all pending operations before reading pixels.
+    // Wrapped in try-catch: on some Chromium/NVIDIA combos gl.finish()
+    // can throw after context loss even though we checked isContextLost() above.
+    try {
+      gl.finish();
+    } catch (glErr) {
+      contextLost = true;
+      console.warn(`[VizExport] gl.finish() threw at frame ${i}: ${glErr.message}, stopping`);
+      break;
+    }
+
+    // Double-check after finish — context may have been lost during the GPU sync.
+    if (gl.isContextLost()) {
+      contextLost = true;
+      console.warn(`[VizExport] Context lost after gl.finish() at frame ${i}, stopping`);
+      break;
+    }
 
     // Synchronous pixel capture — reads directly from GPU framebuffer.
     // This is immune to preserveDrawingBuffer and async timing issues.
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf);
+    try {
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf);
+    } catch (glErr) {
+      contextLost = true;
+      console.warn(`[VizExport] gl.readPixels() threw at frame ${i}: ${glErr.message}, stopping`);
+      break;
+    }
 
     // Quick pixel hash to detect frozen/identical frames
     let pixelHash = 0;
@@ -443,18 +499,27 @@ async function renderFrames(butterchurn, presets, preset, presetName, audioBuffe
     await uploadFrameBatch(sessionId, batchNum, batch);
   }
 
+  // Cleanup WebGL before assembly — prevents GPU holding resources during FFmpeg
+  cleanupWebGL(canvas);
+
   const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
   console.log(
     `[VizExport] Done: ${capturedFrames} captured, ${skippedFrames} empty, ${renderErrors} errors, ` +
     `contextLost=${contextLost}, frozenStreak=${frozenCount} | ${elapsed}s`
   );
+
+  if (capturedFrames === 0) {
+    throw new Error('Visualizer export failed: no frames were captured (WebGL context lost immediately)');
+  }
+
+  if (contextLost) {
+    console.warn(`[VizExport] Context was lost — assembling partial video with ${capturedFrames}/${totalFrames} frames`);
+  }
+
   if (onProgress) onProgress(80);
 
   // Assemble video on backend via FFmpeg
   const result = await assembleFrames(sessionId, fps, capturedFrames);
-
-  // Cleanup
-  cleanupWebGL(canvas);
 
   if (onProgress) onProgress(100);
   console.log(`[VizExport] Video: ${result.videoPath}`);

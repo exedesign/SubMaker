@@ -5,9 +5,12 @@ import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import StatusBar from './components/StatusBar';
 import PreviewPanel from './components/PreviewPanel';
-import LoadingOverlay from './components/LoadingOverlay';
+import PreviewScreenOutput from './components/PreviewScreenOutput';
 
-function App() {
+// Detect if this window is the second-display preview output
+const isPreviewScreen = new URLSearchParams(window.location.search).has('previewScreen');
+
+function MainApp() {
   const { checkBackendHealth, backendStatus, previewMode } = useAppStore();
   const fastPollRef = useRef(null);
 
@@ -47,9 +50,13 @@ function App() {
       </div>
       <StatusBar />
       {previewMode === 'floating' && <PreviewPanel />}
-      <LoadingOverlay />
     </div>
   );
+}
+
+function App() {
+  if (isPreviewScreen) return <PreviewScreenOutput />;
+  return <MainApp />;
 }
 
 export default App;

@@ -106,7 +106,7 @@ function SecondarySubtitleEditor() {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <FiGlobe size={16} style={{ color: 'var(--primary-color)' }} />
-          <span style={{ fontWeight: 600, fontSize: 13 }}>Dual Language Subtitles</span>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Secondary Subtitle</span>
           {hasTranslation && (
             <span style={{
               fontSize: 11,
@@ -173,12 +173,12 @@ function SecondarySubtitleEditor() {
           <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
             <label className="label" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
               <FiType size={14} />
-              Secondary Subtitle Style
+              2. Subtitle Style
             </label>
             
             {/* Font */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Font</label>
+              <label className="label" style={{ fontSize: 11 }}>2. Font</label>
               <select
                 className="select"
                 value={style.fontName}
@@ -194,7 +194,7 @@ function SecondarySubtitleEditor() {
             
             {/* Font Size */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Size: {style.fontSize}px</label>
+              <label className="label" style={{ fontSize: 11 }}>2. Size: {style.fontSize}px</label>
               <input
                 type="range"
                 className="slider"
@@ -208,7 +208,7 @@ function SecondarySubtitleEditor() {
             {/* Colors Row */}
             <div className="form-row">
               <div className="form-group">
-                <label className="label" style={{ fontSize: 11 }}>Text Color</label>
+                <label className="label" style={{ fontSize: 11 }}>2. Text Color</label>
                 <input
                   type="color"
                   value={style.color}
@@ -217,7 +217,7 @@ function SecondarySubtitleEditor() {
                 />
               </div>
               <div className="form-group">
-                <label className="label" style={{ fontSize: 11 }}>Border</label>
+                <label className="label" style={{ fontSize: 11 }}>2. Border</label>
                 <input
                   type="color"
                   value={style.borderColor}
@@ -229,7 +229,7 @@ function SecondarySubtitleEditor() {
             
             {/* Border Width */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Border Width: {style.borderWidth}px</label>
+              <label className="label" style={{ fontSize: 11 }}>2. Border Width: {style.borderWidth}px</label>
               <input
                 type="range"
                 className="slider"
@@ -242,7 +242,7 @@ function SecondarySubtitleEditor() {
             
             {/* Vertical Margin (Position) */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Vertical Position: {style.marginVertical}px</label>
+              <label className="label" style={{ fontSize: 11 }}>2. Vertical Position: {style.marginVertical}px</label>
               <input
                 type="range"
                 className="slider"
@@ -258,7 +258,7 @@ function SecondarySubtitleEditor() {
             
             {/* Position Controls */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Position</label>
+              <label className="label" style={{ fontSize: 11 }}>2. Position</label>
               <div style={{ 
                 display: 'grid', 
                 gridTemplateColumns: 'repeat(3, 1fr)', 
@@ -281,7 +281,7 @@ function SecondarySubtitleEditor() {
             
             {/* Margin from edge */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Margin from edge: {style.marginVertical}px</label>
+              <label className="label" style={{ fontSize: 11 }}>2. Margin from edge: {style.marginVertical}px</label>
               <input
                 type="range"
                 className="slider"
@@ -294,7 +294,7 @@ function SecondarySubtitleEditor() {
             
             {/* Fine-tune Offset Controls */}
             <div className="form-group">
-              <label className="label" style={{ fontSize: 11 }}>Fine Adjustment</label>
+              <label className="label" style={{ fontSize: 11 }}>2. Fine Adjustment</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>

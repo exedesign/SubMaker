@@ -378,6 +378,26 @@ class VocalIsolator:
             progress_callback(20, "Starting vocal separation...")
 
         logger.info(f"Starting separation: {audio_path}")
+
+        # Clean up any leftover intermediate files from a previous interrupted run.
+        # audio-separator skips files that already exist and returns [] when it does so,
+        # which causes a false "no vocals output" error on retry after cancellation.
+        audio_stem = Path(audio_path).stem
+        try:
+            for existing in self.cache_dir.iterdir():
+                name_lower = existing.name.lower()
+                # Match audio-separator output pattern: contains the input filename stem
+                # and one of the standard stem keywords (not our _hq archival copies)
+                if (audio_stem.lower() in name_lower
+                        and existing.suffix.lower() in ('.wav', '.flac', '.mp3')
+                        and '_hq' not in name_lower
+                        and ('vocal' in name_lower or 'instrumental' in name_lower
+                             or 'no_vocal' in name_lower)):
+                    logger.info(f"Removing stale separator output: {existing.name}")
+                    existing.unlink(missing_ok=True)
+        except Exception as clean_err:
+            logger.warning(f"Pre-separation cleanup failed (non-fatal): {clean_err}")
+
         try:
             output_files = sep.separate(audio_path)
         except SystemExit as e:
@@ -421,6 +441,27 @@ class VocalIsolator:
             raise RuntimeError(f"Separation failed: {e}") from e
         logger.info(f"Separation complete, output files: {output_files}")
 
+        # If audio-separator returned an empty list, try to find the output files ourselves.
+        # This can happen when files weren't properly cleaned up before the call.
+        if not output_files:
+            logger.warning("sep.separate() returned empty list — scanning output dir for results")
+            audio_stem = Path(audio_path).stem
+            found = []
+            try:
+                for candidate in self.cache_dir.iterdir():
+                    n = candidate.name.lower()
+                    if (audio_stem.lower() in n
+                            and candidate.suffix.lower() in ('.wav', '.flac', '.mp3')
+                            and '_hq' not in n):
+                        found.append(str(candidate))
+            except Exception:
+                pass
+            if found:
+                logger.info(f"Fallback scan found: {found}")
+                output_files = found
+            else:
+                raise RuntimeError(f"MDX separation produced no output files for: {audio_path}")
+
         if progress_callback:
             progress_callback(80, "Processing vocals...")
 
@@ -450,7 +491,7 @@ class VocalIsolator:
             instrumental_path = resolved_files[1]
 
         if not vocals_path or not Path(vocals_path).exists():
-            raise RuntimeError(f"MDX separation produced no vocals output: {resolved_files}")
+            raise RuntimeError(f"MDX separation found no usable vocals file. Resolved: {resolved_files}")
 
         result = {}
 

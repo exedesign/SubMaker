@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from config import (
-    FFMPEG_PATH, TEMP_DIR, OUTPUT_DIR, VIDEO_FORMATS,
+    FFMPEG_PATH, TEMP_DIR, OUTPUT_DIR, VIDEO_FORMATS, RESOLUTION_PRESETS,
     DEFAULT_FPS, DEFAULT_VIDEO_CODEC, DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_BITRATE, OUTPUT_FORMATS, ENABLE_GPU_ACCELERATION,
     HARDWARE_CODECS, BACKGROUND_IMAGE_OPTIMIZATION, BACKGROUND_QUALITY,
@@ -27,6 +27,7 @@ class VideoGenerator:
         self.ffmpeg_path = ffmpeg_path
         self.hardware_codec = None
         self.gpu_type = None
+        self.has_cuda_filters = False
         self._verify_ffmpeg()
         if ENABLE_GPU_ACCELERATION:
             self._detect_gpu_support()
@@ -86,6 +87,83 @@ class VideoGenerator:
             
         except Exception as e:
             print(f"⚠️ GPU detection failed: {e}, falling back to CPU encoding")
+        
+        # Detect CUDA filter support for overlay/scale acceleration
+        self.has_cuda_filters = False
+        if self.gpu_type == "nvidia":
+            self._detect_cuda_filters()
+    
+    def _detect_cuda_filters(self):
+        """Detect if FFmpeg has overlay_cuda and scale_cuda filters"""
+        try:
+            result = subprocess.run(
+                [self.ffmpeg_path, "-filters"],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            if result.returncode == 0:
+                filters_output = result.stdout.lower()
+                has_overlay = "overlay_cuda" in filters_output
+                has_scale = "scale_cuda" in filters_output
+                self.has_cuda_filters = has_overlay and has_scale
+                if self.has_cuda_filters:
+                    print(f"🚀 CUDA filters available (overlay_cuda + scale_cuda)")
+                else:
+                    print(f"ℹ️ CUDA filters not available (overlay_cuda={has_overlay}, scale_cuda={has_scale}), using CPU filters")
+        except Exception as e:
+            print(f"⚠️ CUDA filter detection failed: {e}")
+            self.has_cuda_filters = False
+    
+    def _preconvert_gif_to_mp4(self, gif_path: str, target_width: int, video_duration: float) -> str:
+        """
+        Pre-convert an animated GIF to a looped MP4 matching the video duration.
+        MP4 decode is ~5-10x faster than GIF decode in FFmpeg filter chains.
+        Also pre-scales to target width to eliminate scale filter in filter_complex.
+        
+        Returns path to the temporary MP4 file.
+        """
+        temp_mp4 = str(TEMP_DIR / f"gif_{uuid.uuid4().hex[:8]}.mp4")
+        
+        cmd = [
+            self.ffmpeg_path, "-y",
+            "-ignore_loop", "0",        # Read all GIF loop frames
+            "-stream_loop", "-1",        # Loop input indefinitely
+            "-i", gif_path,
+            "-t", str(video_duration),   # Trim to video duration
+            "-vf", f"scale={target_width}:-1:flags=lanczos,format=yuva420p",
+            "-c:v", "libx264",
+            "-crf", "18",
+            "-preset", "fast",
+            "-movflags", "+faststart",
+            "-an",                       # No audio
+            temp_mp4
+        ]
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=60
+            )
+            if result.returncode == 0 and os.path.exists(temp_mp4):
+                gif_size = os.path.getsize(gif_path)
+                mp4_size = os.path.getsize(temp_mp4)
+                print(f"[VideoGen] GIF→MP4: {gif_path} ({gif_size//1024}KB) → {temp_mp4} ({mp4_size//1024}KB)")
+                return temp_mp4
+            else:
+                print(f"[VideoGen] GIF→MP4 conversion failed: {result.stderr[-500:]}")
+                return gif_path  # Fallback to original GIF
+        except subprocess.TimeoutExpired:
+            print(f"[VideoGen] GIF→MP4 conversion timed out, using original GIF")
+            return gif_path
+        except Exception as e:
+            print(f"[VideoGen] GIF→MP4 conversion error: {e}, using original GIF")
+            return gif_path
     
     def get_audio_duration(self, audio_path: str) -> float:
         """Get duration of audio file in seconds"""
@@ -110,8 +188,12 @@ class VideoGenerator:
             return h * 3600 + m * 60 + s + ms / 100
         return 0
     
-    def _get_resolution(self, format_type: str) -> Tuple[int, int]:
-        """Get resolution for format type"""
+    def _get_resolution(self, format_type: str, resolution: str = None) -> Tuple[int, int]:
+        """Get resolution for format type, optionally using a resolution preset (1k/2k/4k)"""
+        if resolution and resolution in RESOLUTION_PRESETS:
+            preset = RESOLUTION_PRESETS[resolution]
+            if format_type in preset:
+                return preset[format_type]["width"], preset[format_type]["height"]
         format_config = VIDEO_FORMATS.get(format_type, VIDEO_FORMATS["horizontal"])
         return format_config["width"], format_config["height"]
     
@@ -507,279 +589,250 @@ class VideoGenerator:
         visualizer_video_path: Optional[str] = None,
         visualizer_opacity: float = 0.8,
         cancel_check: Optional[callable] = None,
+        resolution: str = None,
     ) -> Dict[str, Any]:
         """
-        Generate video with burned-in subtitles
-        
-        Args:
-            audio_path: Path to audio file
-            subtitle_path: Path to ASS/SRT subtitle file
-            output_path: Output video path
-            background_type: 'color', 'image', or 'transparent'
-            background_value: Hex color or image path
-            background_image: Path to background image
-            format_type: Video format
-            output_format: Output format
-            quality: Quality level
-            font_path: Path to custom font file
-            logo: Dict with logo settings (imagePath, position {x,y}, size, opacity)
-            progress_callback: Progress callback
-            background_value: Hex color or image path
-            background_image: Path to background image
-            format_type: Video format
-            output_format: Output format
-            quality: Quality level
-            font_path: Path to custom font file
-            progress_callback: Progress callback
-            
-        Returns:
-            Dict with output path and metadata
+        Generate video with burned-in subtitles in a single FFmpeg pass.
+        Background + audio + visualizer + logos + subtitles → final output in one encode.
+        GIF logos are pre-converted to MP4 for ~5-10x faster decoding.
         """
         # Determine actual background value
         actual_bg_value = background_value
         if background_type == "image" and background_image:
             actual_bg_value = background_image
         
-        # First generate base video
-        temp_video = str(TEMP_DIR / f"temp_{uuid.uuid4().hex}.{output_format}")
+        # Validate inputs
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
         
-        result = self.generate_video(
-            audio_path=audio_path,
-            output_path=temp_video,
-            background_type=background_type,
-            background_value=actual_bg_value,
-            format_type=format_type,
-            output_format=output_format,
-            quality=quality,
-            progress_callback=lambda p, m: progress_callback(p // 2, m) if progress_callback else None,
-            cancel_check=cancel_check,
-        )
+        # Handle blob URLs gracefully
+        if background_type == "image":
+            if actual_bg_value.startswith("blob:") or not os.path.exists(actual_bg_value):
+                print(f"⚠️ Invalid image path: {actual_bg_value}, falling back to black")
+                background_type = "color"
+                actual_bg_value = "#000000"
+        
+        self._cleanup_temp_images()
+        
+        width, height = self._get_resolution(format_type, resolution)
+        duration = self.get_audio_duration(audio_path)
+        fps = DEFAULT_FPS
 
         # Generate output path if not provided
         if output_path is None:
             output_filename = f"submaker_{uuid.uuid4().hex[:8]}.{output_format}"
             output_path = str(OUTPUT_DIR / output_filename)
         
-        # Build optimized subtitle filter for 4K performance  
-        subtitle_path_escaped = subtitle_path.replace("\\", "/").replace(":", r"\:")
+        # Track temp files for cleanup
+        temp_files = []
         
-        if subtitle_path.endswith(".ass"):
-            # Highly optimized ASS filter for 4K karaoke performance
-            subtitle_filter = f"ass='{subtitle_path_escaped}'"
-            
-            if ASS_PERFORMANCE_MODE:
-                # Performance optimizations for 4K ASS rendering
-                if ASS_SHAPER_SIMPLE:
-                    subtitle_filter += ":shaping=simple"  # Faster text shaping
-                if not ASS_FONT_CACHE:
-                    subtitle_filter += ":fontsdir=0"      # Disable font directory scanning
-        else:
-            subtitle_filter = f"subtitles='{subtitle_path_escaped}'"
-            if font_path:
-                font_path_escaped = font_path.replace("\\", "/")
-                subtitle_filter += f":fontsdir='{os.path.dirname(font_path_escaped)}'"
+        if progress_callback:
+            progress_callback(5, "Preparing render...")
         
-        # Build complex filter chain
-        filter_parts = []
-        input_count = 1  # temp_video is [0]
-
-        # Visualizer video overlay (rendered by frontend Butterchurn)
-        viz_input_args = []
+        # ── Build single-pass FFmpeg command ──────────────────────────
+        cmd = [self.ffmpeg_path, "-y"]
+        
+        # Hardware acceleration — use GPU for encoding only (h264_nvenc).
+        # CUDA filters (scale_cuda/overlay_cuda) are incompatible with ASS subtitle
+        # filter which requires CPU-accessible frames, so we disable them.
+        use_cuda_filters = False  # ASS subtitle filter is CPU-only
+        if self.hardware_codec and self.gpu_type == "nvidia":
+            cmd.extend(["-hwaccel", "auto"])
+            print("🚀 NVIDIA GPU acceleration: hwaccel=auto + h264_nvenc encoding")
+        
+        # Threading
+        cpu_count = os.cpu_count() or 4
+        cmd.extend(["-threads", str(min(cpu_count, 8))])
+        cmd.extend(["-thread_queue_size", "1024" if self.hardware_codec else "2048"])
+        
+        # ── Input 0: Background ───────────────────────────────────────
+        bg_input = self._build_background_input(
+            background_type, actual_bg_value, width, height, fps, duration
+        )
+        cmd.extend(bg_input)
+        input_count = 1  # background is [0]
+        
+        # ── Input 1: Audio ────────────────────────────────────────────
+        cmd.extend(["-i", audio_path])
+        audio_idx = input_count
+        input_count += 1
+        
+        # ── Input: Visualizer video (optional) ────────────────────────
+        viz_input_idx = None
         if visualizer_video_path and os.path.exists(str(visualizer_video_path)):
-            viz_input_args = ["-i", str(visualizer_video_path)]
+            cmd.extend(["-i", str(visualizer_video_path)])
             viz_input_idx = input_count
             input_count += 1
-            # Scale visualizer to match video, apply opacity, overlay on base
-            width_viz, height_viz = self._get_resolution(format_type)
-            viz_opacity = max(0.0, min(1.0, visualizer_opacity))
-            filter_parts.append(
-                f"[{viz_input_idx}:v]scale={width_viz}:{height_viz},format=rgba,"
-                f"colorchannelmixer=aa={viz_opacity}[viz_alpha]"
-            )
-            filter_parts.append(
-                f"[0:v][viz_alpha]overlay=0:0:shortest=1[vwithviz]"
-            )
-            print(f"[VideoGen] Visualizer overlay added: {visualizer_video_path}, opacity={viz_opacity}")
-        else:
-            if visualizer_video_path:
-                print(f"[VideoGen] WARNING: Visualizer video file not found: {visualizer_video_path}")
-
-        # Collect all logos (support both single logo and logos array)
+            print(f"[VideoGen] Visualizer input added: {visualizer_video_path}")
+        elif visualizer_video_path:
+            print(f"[VideoGen] WARNING: Visualizer video not found: {visualizer_video_path}")
+        
+        # ── Collect & prepare logos ───────────────────────────────────
         all_logos = []
         if logos and len(logos) > 0:
             all_logos = logos
         elif logo and logo.get('enabled'):
             all_logos = [logo]
         
-        # Process multiple logos
-        logo_input_args = []
-        logo_paths = []
-        has_gif = False
+        logo_entries = []  # (input_path, logo_config, was_gif_converted)
         
         for i, single_logo in enumerate(all_logos):
             if not single_logo.get('enabled', True):
                 continue
-                
-            # Try to get logo path
+            
+            # A10: Prefer imagePath over base64
             logo_path = single_logo.get('imagePath')
             
-            # If no valid path, check if we have imageData (base64)
             if not logo_path or not os.path.exists(str(logo_path)):
                 image_data = single_logo.get('imageData')
                 if image_data and image_data.startswith('data:'):
-                    # Save base64 to temp file
                     try:
                         import base64
-                        # Parse data URL
                         header, data = image_data.split(',', 1)
-                        # Determine extension
                         ext = '.gif' if 'gif' in header else '.png'
                         temp_logo_path = TEMP_DIR / f"logo_{uuid.uuid4().hex[:8]}{ext}"
-                        
                         with open(temp_logo_path, 'wb') as f:
                             f.write(base64.b64decode(data))
-                        
                         logo_path = str(temp_logo_path)
-                        print(f"[VideoGen] Saved logo {i+1} from base64 to: {logo_path}")
+                        temp_files.append(logo_path)
+                        print(f"[VideoGen] Logo {i+1} saved from base64: {logo_path}")
                     except Exception as e:
                         print(f"[VideoGen] Failed to save logo {i+1} from base64: {e}")
                         continue
             
-            if logo_path and os.path.exists(logo_path):
-                logo_paths.append((logo_path, single_logo))
-                if logo_path.lower().endswith('.gif'):
-                    has_gif = True
-                print(f"[VideoGen] Logo {i+1} ready: {logo_path}")
-            else:
+            if not logo_path or not os.path.exists(logo_path):
                 print(f"[VideoGen] Logo {i+1} path not found: {logo_path}")
-        
-        # Build filter for multiple logos
-        if logo_paths:
-            # Get video dimensions
-            width, height = self._get_resolution(format_type)
+                continue
             
-            # Add all logo inputs with proper options for GIFs
-            for logo_path, _ in logo_paths:
-                if logo_path.lower().endswith('.gif'):
-                    # For GIF: add ignore_loop to loop forever
-                    logo_input_args.extend(["-ignore_loop", "0", "-i", logo_path])
-                else:
-                    logo_input_args.extend(["-i", logo_path])
+            # A1-A2: Pre-convert GIF to MP4 with target size (A9: pre-scale)
+            logo_size_pct = single_logo.get('size', 15)
+            target_logo_width = int(width * logo_size_pct / 100)
+            was_gif = logo_path.lower().endswith('.gif')
             
-            logo_base_idx = input_count  # logos start after temp_video + optional visualizer
-            input_count += len(logo_paths)
-
-            # Build overlay chain — start from visualizer output if present
-            current_output = "[vwithviz]" if viz_input_args else "[0:v]"
-
-            for idx, (logo_path, single_logo) in enumerate(logo_paths):
-                input_idx = logo_base_idx + idx
-                
-                # Calculate logo position and size from percentages
-                logo_pos_x = single_logo.get('position', {}).get('x', 50)
-                logo_pos_y = single_logo.get('position', {}).get('y', 50)
-                logo_size = single_logo.get('size', 15)  # % of video width
-                logo_opacity = single_logo.get('opacity', 100) / 100
-                
-                # Logo width as percentage of video width
-                logo_width = int(width * logo_size / 100)
-                
-                # Calculate position (convert % to pixels, accounting for logo center)
-                pos_x = f"(main_w*{logo_pos_x}/100)-(overlay_w/2)"
-                pos_y = f"(main_h*{logo_pos_y}/100)-(overlay_h/2)"
-                
-                # Check if it's an animated GIF
-                is_gif = logo_path.lower().endswith('.gif')
-                
-                # Output label for this overlay
-                if idx == len(logo_paths) - 1:
-                    # Last logo outputs to [vlogo]
-                    output_label = "[vlogo]"
-                else:
-                    output_label = f"[vlogo{idx}]"
-                
-                # Build filter for this logo
-                logo_label = f"[logo{idx}]"
-                scale_filter = f"[{input_idx}:v]scale={logo_width}:-1,format=rgba,colorchannelmixer=aa={logo_opacity}{logo_label}"
-                
-                # Use eof_action=repeat for GIFs to keep them looping, shortest=0 to use main video length
-                if is_gif:
-                    overlay_filter = f"{current_output}{logo_label}overlay={pos_x}:{pos_y}:eof_action=repeat:shortest=0{output_label}"
-                else:
-                    overlay_filter = f"{current_output}{logo_label}overlay={pos_x}:{pos_y}{output_label}"
-                
-                filter_parts.append(scale_filter)
-                filter_parts.append(overlay_filter)
-                
-                # Next overlay uses this output as input
-                current_output = output_label
-                
-                print(f"[VideoGen] Logo {idx+1} filter added: pos=({logo_pos_x},{logo_pos_y}), size={logo_size}%, opacity={logo_opacity}")
+            if was_gif:
+                converted_path = self._preconvert_gif_to_mp4(logo_path, target_logo_width, duration)
+                if converted_path != logo_path:
+                    temp_files.append(converted_path)
+                logo_entries.append((converted_path, single_logo, True))
+                print(f"[VideoGen] Logo {i+1} (GIF→MP4): {converted_path}")
+            else:
+                logo_entries.append((logo_path, single_logo, False))
+                print(f"[VideoGen] Logo {i+1} ready: {logo_path}")
         
-        # Add subtitle filter — output to [vout]
-        has_complex_filter = bool(filter_parts)
-        if logo_paths and filter_parts:
-            filter_parts.append(f"[vlogo]{subtitle_filter}[vout]")
-        elif filter_parts:
-            filter_parts.append(f"[vwithviz]{subtitle_filter}[vout]")
+        # Add logo inputs to FFmpeg command
+        logo_base_idx = input_count
+        for logo_path, _, was_gif in logo_entries:
+            # A3: No need for -ignore_loop since GIFs are pre-converted to MP4
+            cmd.extend(["-i", logo_path])
+            input_count += 1
+        
+        # ── Build filter_complex ──────────────────────────────────────
+        filter_parts = []
+        
+        # Scale function names based on GPU availability
+        scale_fn = "scale_cuda" if use_cuda_filters else "scale"
+        overlay_fn = "overlay_cuda" if use_cuda_filters else "overlay"
+        
+        # Background: ensure correct format and size
+        bg_needs_scale = (background_type == "image" and self.hardware_codec and self.gpu_type == "nvidia")
+        if bg_needs_scale:
+            filter_parts.append(f"[0:v]format=yuv420p,{scale_fn}={width}:{height}[bg]")
+            current_output = "[bg]"
         else:
-            filter_parts.append(f"[0:v]{subtitle_filter}[vout]")
-            has_complex_filter = True
-
-        video_out_label = "[vout]"
-
+            current_output = "[0:v]"
+        
+        # Visualizer overlay
+        if viz_input_idx is not None:
+            viz_opacity = max(0.0, min(1.0, visualizer_opacity))
+            filter_parts.append(
+                f"[{viz_input_idx}:v]{scale_fn}={width}:{height},format=rgba,"
+                f"colorchannelmixer=aa={viz_opacity}[viz_alpha]"
+            )
+            filter_parts.append(
+                f"{current_output}[viz_alpha]{overlay_fn}=0:0:shortest=1[vwithviz]"
+            )
+            current_output = "[vwithviz]"
+            print(f"[VideoGen] Visualizer overlay: opacity={viz_opacity}")
+        
+        # Logo overlays
+        for idx, (logo_path, single_logo, was_gif) in enumerate(logo_entries):
+            input_idx = logo_base_idx + idx
+            
+            logo_pos_x = single_logo.get('position', {}).get('x', 50)
+            logo_pos_y = single_logo.get('position', {}).get('y', 50)
+            logo_size_pct = single_logo.get('size', 15)
+            logo_opacity = single_logo.get('opacity', 100) / 100
+            logo_width = int(width * logo_size_pct / 100)
+            
+            pos_x = f"(main_w*{logo_pos_x}/100)-(overlay_w/2)"
+            pos_y = f"(main_h*{logo_pos_y}/100)-(overlay_h/2)"
+            
+            output_label = "[vlogo]" if idx == len(logo_entries) - 1 else f"[vlogo{idx}]"
+            logo_label = f"[logo{idx}]"
+            
+            # A9: GIF→MP4 was already pre-scaled; static images still need scale
+            if was_gif:
+                # Already scaled in _preconvert_gif_to_mp4 — only format + opacity
+                scale_filter = f"[{input_idx}:v]format=rgba,colorchannelmixer=aa={logo_opacity}{logo_label}"
+            else:
+                scale_filter = f"[{input_idx}:v]{scale_fn}={logo_width}:-1,format=rgba,colorchannelmixer=aa={logo_opacity}{logo_label}"
+            
+            # A3: No eof_action=repeat needed for pre-converted MP4 (already loops to full duration)
+            overlay_filter = f"{current_output}{logo_label}{overlay_fn}={pos_x}:{pos_y}{output_label}"
+            
+            filter_parts.append(scale_filter)
+            filter_parts.append(overlay_filter)
+            current_output = output_label
+            
+            print(f"[VideoGen] Logo {idx+1} filter: pos=({logo_pos_x},{logo_pos_y}), size={logo_size_pct}%, opacity={logo_opacity}, gif_converted={was_gif}")
+        
+        # Subtitle filter — always last in the chain
+        subtitle_path_escaped = subtitle_path.replace("\\", "/").replace(":", r"\:")
+        if subtitle_path.endswith(".ass"):
+            subtitle_filter = f"ass='{subtitle_path_escaped}'"
+            if ASS_PERFORMANCE_MODE:
+                if ASS_SHAPER_SIMPLE:
+                    subtitle_filter += ":shaping=simple"
+                if not ASS_FONT_CACHE:
+                    subtitle_filter += ":fontsdir=0"
+        else:
+            subtitle_filter = f"subtitles='{subtitle_path_escaped}'"
+            if font_path:
+                font_path_escaped = font_path.replace("\\", "/")
+                subtitle_filter += f":fontsdir='{os.path.dirname(font_path_escaped)}'"
+        
+        filter_parts.append(f"{current_output}{subtitle_filter}[vout]")
+        
         full_filter = ";".join(filter_parts)
         
-        # Build FFmpeg command for subtitle burning with compatibility
-        cmd = [
-            self.ffmpeg_path, "-y"
-        ]
-        
-        # Auto hardware acceleration for subtitle processing
-        if self.hardware_codec and self.gpu_type == "nvidia":
-            cmd.extend(["-hwaccel", "auto"])
-            print("🚀 Auto Hardware Acceleration for subtitle burning")
-        
-        cmd.extend(["-i", temp_video])
-
-        # Add visualizer video input if present
-        if viz_input_args:
-            cmd.extend(viz_input_args)
-
-        # Add logo inputs if needed (GIF ignore_loop already added per input)
-        if logo_input_args:
-            cmd.extend(logo_input_args)
-        
-        # Debug: Print full FFmpeg command
-        if filter_parts:
-            print(f"[VideoGen] Filter complex: {full_filter}")
-        
-        # Add filter — always use -filter_complex now
-        cmd.extend(["-filter_complex", full_filter, "-map", video_out_label, "-map", "0:a"])
+        # ── Filter + mapping ──────────────────────────────────────────
+        cmd.extend(["-filter_complex", full_filter])
+        cmd.extend(["-map", "[vout]", "-map", f"{audio_idx}:a"])
         cmd.extend(["-c:a", DEFAULT_AUDIO_CODEC, "-b:a", DEFAULT_AUDIO_BITRATE])
         
-        # Add video codec settings with NVENC optimization
+        # Video codec
         if output_format == "webm":
             cmd.extend(["-c:v", "libvpx-vp9"])
         elif output_format == "mov":
             cmd.extend(["-c:v", "prores_ks", "-profile:v", "4444"])
-        else:  # mp4 - NVENC optimized for subtitle burn-in
+        else:  # mp4
             if self.hardware_codec and self.gpu_type == "nvidia":
-                cmd.extend(["-c:v", "h264_nvenc"])
-                cmd.extend(["-preset", "fast"])
-                cmd.extend(["-cq", "20"])  # High quality for subtitle clarity
+                cmd.extend(["-c:v", "h264_nvenc", "-preset", "fast", "-cq", "20"])
+            elif self.hardware_codec:
+                cmd.extend(["-c:v", self.hardware_codec])
             else:
                 cmd.extend(["-c:v", DEFAULT_VIDEO_CODEC])
         
+        cmd.extend(["-shortest"])
         cmd.append(output_path)
-
-        # Debug: Print full FFmpeg command
-        print(f"[VideoGen] FFmpeg command: {' '.join(cmd)}")
+        
+        # ── Execute ───────────────────────────────────────────────────
+        print(f"[VideoGen] Single-pass render command: {' '.join(cmd)}")
+        print(f"[VideoGen] Filter complex: {full_filter}")
         
         if progress_callback:
-            progress_callback(60, "Burning subtitles...")
+            progress_callback(10, "Rendering video...")
         
-        # Run FFmpeg with progress tracking
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -788,55 +841,72 @@ class VideoGenerator:
             errors='replace'
         )
         
-        # Parse stderr for progress (FFmpeg outputs time= field)
         import re as _re
-        total_duration = result.get("duration", 0)
         stderr_lines = []
         for line in process.stderr:
             stderr_lines.append(line)
-            if total_duration > 0 and "time=" in line:
+            if duration > 0 and "time=" in line:
                 time_match = _re.search(r"time=(\d+):(\d+):(\d+)\.(\d+)", line)
                 if time_match:
                     h, m, s, cs = map(int, time_match.groups())
                     current_time = h * 3600 + m * 60 + s + cs / 100
-                    burn_progress = min(1.0, current_time / total_duration)
-                    scaled = 60 + int(burn_progress * 35)
+                    render_progress = min(0.95, current_time / duration)
+                    scaled = 10 + int(render_progress * 85)  # 10-95%
                     if progress_callback:
-                        progress_callback(scaled, "Burning subtitles...")
-
-            # Check for cancellation
+                        progress_callback(scaled, "Rendering video...")
+            
             if cancel_check and cancel_check():
                 process.kill()
                 process.wait()
-                try:
-                    os.remove(temp_video)
-                except Exception:
-                    pass
-                try:
-                    os.remove(output_path)
-                except Exception:
-                    pass
+                for tf in temp_files:
+                    try: os.remove(tf)
+                    except: pass
+                try: os.remove(output_path)
+                except: pass
                 raise RuntimeError("Render cancelled")
         
         process.wait()
         stderr = "".join(stderr_lines)
         
-        # Clean up temp file
-        try:
-            os.remove(temp_video)
-        except:
-            pass
+        # ── Cleanup temp files ────────────────────────────────────────
+        for tf in temp_files:
+            try:
+                os.remove(tf)
+                print(f"🗑️ Cleaned up temp: {os.path.basename(tf)}")
+            except:
+                pass
+        
+        # Cleanup temp background image if created
+        if background_type == "image":
+            try:
+                for f in os.listdir(TEMP_DIR):
+                    if f.startswith("bg_") and f.endswith("_temp.jpg"):
+                        p = TEMP_DIR / f
+                        if p.exists():
+                            p.unlink()
+            except:
+                pass
         
         if process.returncode != 0:
-            raise RuntimeError(f"FFmpeg subtitle burn failed: {stderr}")
-
+            raise RuntimeError(f"FFmpeg render failed: {stderr}")
+        
         if progress_callback:
             progress_callback(100, "Complete!")
         
-        result["output_path"] = output_path
-        result["subtitle_path"] = subtitle_path
+        gpu_info = f" ({self.gpu_type.upper()} GPU)" if self.hardware_codec else " (CPU)"
+        cuda_info = " + CUDA filters" if use_cuda_filters else ""
+        gif_info = f", {sum(1 for _,_,g in logo_entries if g)} GIF→MP4" if logo_entries else ""
+        print(f"[VideoGen] ✅ Single-pass render complete{gpu_info}{cuda_info}{gif_info}")
         
-        return result
+        return {
+            "output_path": output_path,
+            "duration": duration,
+            "width": width,
+            "height": height,
+            "format": output_format,
+            "background_type": background_type,
+            "subtitle_path": subtitle_path,
+        }
 
 
 # Singleton instance

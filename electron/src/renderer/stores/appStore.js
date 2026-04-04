@@ -93,6 +93,7 @@ export const useAppStore = create((set, get) => ({
   selectedFormats: ['horizontal'], // formats to render (multi-select)
   outputFormat: 'mp4', // 'mp4', 'webm', 'mov'
   quality: 'low', // 'high', 'medium', 'low' - Default low for faster karaoke rendering
+  renderResolution: '4k', // '1k', '2k', '4k' — output resolution preset
   
   // Language
   sourceLanguage: null, // null for auto-detect
@@ -114,6 +115,8 @@ export const useAppStore = create((set, get) => ({
     italic: false,
     alignment: 2, // bottom center
     marginVertical: 100, // Increased margin for 4K
+    offsetX: 0, // Horizontal fine adjustment
+    offsetY: 0, // Vertical fine adjustment
   },
   
   // Animation settings
@@ -255,6 +258,15 @@ export const useAppStore = create((set, get) => ({
   // Output
   outputPath: null,
 
+  // Playlist (Karaoke Player)
+  playlist: {
+    tracks: [],            // [{ id, path, title, duration, syltEntries, subtitles }]
+    currentTrackIndex: -1, // -1 = no track selected
+    isActive: false,       // true when playlist is driving playback
+    isPlaying: false,      // playlist-local play state
+    playbackTime: 0,       // playlist-local playback time
+  },
+
   // Loading state
   isLoading: false,
   loadingMessage: '',
@@ -368,6 +380,22 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  // Cycle visualizer preset by direction (+1 = next, -1 = previous)
+  cycleVisualizerPreset: async (direction) => {
+    try {
+      const { getPresetKeys } = await import('../components/ButterchurnCanvas');
+      const keys = await getPresetKeys();
+      if (!keys || keys.length === 0) return;
+      const current = get().visualizer.presetName;
+      let idx = keys.indexOf(current);
+      if (idx === -1) idx = 0;
+      else idx = (idx + direction + keys.length) % keys.length;
+      set((state) => ({ visualizer: { ...state.visualizer, presetName: keys[idx] } }));
+    } catch (e) {
+      console.error('Failed to cycle preset:', e);
+    }
+  },
+
   // Format settings
   setVideoFormat: (format) => set({ videoFormat: format }),
   toggleSelectedFormat: (format) => set((state) => {
@@ -388,6 +416,7 @@ export const useAppStore = create((set, get) => ({
   }),
   setOutputFormat: (format) => set({ outputFormat: format }),
   setQuality: (quality) => set({ quality }),
+  setRenderResolution: (renderResolution) => set({ renderResolution }),
   
   // Language settings
   setSourceLanguage: (lang) => set({ sourceLanguage: lang }),
@@ -508,6 +537,9 @@ export const useAppStore = create((set, get) => ({
       return null;
     }
 
+    const abortController = new AbortController();
+    set({ renderAbortController: abortController });
+
     // If vocal isolation is enabled but stems don't exist yet, run separation first
     const hasVocalsTrack = audioMixer.enabled && audioMixer.tracks.vocals;
     if (vocalIsolation && !hasVocalsTrack) {
@@ -518,7 +550,7 @@ export const useAppStore = create((set, get) => ({
         processingProgress: 0,
       });
       try {
-        await get().separateVocals();
+        await get().separateVocals(abortController.signal);
       } catch (sepErr) {
         console.error('[Transcribe] Vocal separation failed, continuing with original:', sepErr);
       }
@@ -621,8 +653,14 @@ export const useAppStore = create((set, get) => ({
       };
 
       console.log('[Transcribe] Sending to /api/transcribe/stream, file_path:', transcriptionPath);
-      streamJsonEvents(`${API_URL}/transcribe/stream`, requestBody, handleStreamEvent).then(() => {
+      streamJsonEvents(`${API_URL}/transcribe/stream`, requestBody, handleStreamEvent, abortController.signal).then(() => {
         if (streamSettled) return;
+        // If cancelled, the signal is aborted — resolve silently
+        if (abortController.signal.aborted) {
+          set({ isProcessing: false, currentTranscriptText: '', renderAbortController: null });
+          resolve(null);
+          return;
+        }
 
         set({
           error: 'Transcription connection closed unexpectedly',
@@ -631,6 +669,13 @@ export const useAppStore = create((set, get) => ({
         reject(new Error('Stream ended unexpectedly'));
       }).catch((error) => {
         if (streamSettled) return;
+
+        // If cancelled by user, resolve silently — don't fall back or show errors
+        if (error.name === 'AbortError') {
+          set({ isProcessing: false, currentTranscriptText: '', renderAbortController: null });
+          resolve(null);
+          return;
+        }
 
         console.log('[Transcribe] Streaming failed, using regular API:', error.message);
         set({ processingStep: 'Falling back to standard API...' });
@@ -881,13 +926,14 @@ export const useAppStore = create((set, get) => ({
   // Active render job
   renderJobId: null,
   renderPolling: null,
+  renderAbortController: null,  // AbortController — aborted by cancelRender()
   
   // Internal: render a single format and return a Promise that resolves on completion
   _renderOneFormat: (format, visualizerData, secondarySubData) => {
     const {
       mediaFile, originalMediaPath, subtitles, background,
       outputFormat, quality, style, animation, logos,
-      sourceLanguage, detectedLanguage,
+      sourceLanguage, detectedLanguage, renderResolution,
       getMixerConfigForRender,
     } = get();
 
@@ -898,6 +944,11 @@ export const useAppStore = create((set, get) => ({
     const renderAudioPath = originalMediaPath || mediaFile;
 
     return new Promise(async (resolve, reject) => {
+      // Bail out immediately if cancelled during preparation phase
+      if (!get().isProcessing) {
+        reject(new Error('Render cancelled'));
+        return;
+      }
       try {
         const response = await api.post('/render', {
           audio_path: renderAudioPath,
@@ -914,6 +965,7 @@ export const useAppStore = create((set, get) => ({
           secondarySubtitle: secondarySubData,
           visualizer: visualizerData,
           audio_mixer: mixerConfig,
+          render_resolution: renderResolution,
         });
 
         if (!response.data.success || !response.data.job_id) {
@@ -986,9 +1038,11 @@ export const useAppStore = create((set, get) => ({
     const isMulti = formats.length > 1;
     const startTime = Date.now();
     const results = [];
+    const abortController = new AbortController();
 
     set({
       isProcessing: true,
+      renderAbortController: abortController,
       processingStep: 'Starting render...',
       processingProgress: 0,
       outputPath: null,
@@ -1062,20 +1116,30 @@ export const useAppStore = create((set, get) => ({
             const vizVideoPath = await exportVisualizerVideo({
               audioUrl,
               duration: get().mediaDuration || 180,
+              // Keep at 1080p — 4K WebGL rendering is too slow and causes context loss.
+              // Backend upscale (1080p→4K) in filter_complex is cheap compared to
+              // rendering 4× more pixels per frame in WebGL + readPixels + JPEG encode.
               width: fmt === 'vertical' ? 1080 : fmt === 'square' ? 1080 : 1920,
               height: fmt === 'vertical' ? 1920 : fmt === 'square' ? 1080 : 1080,
               presetName: renderPresetName,
               fps: 30,
               onProgress: (p) => set({ processingProgress: Math.round(p * 0.3) }),
+              signal: abortController.signal,
             });
             visualizerData = { ...visualizer, videoPath: vizVideoPath };
             console.log(`Visualizer pre-rendered for ${fmt}:`, vizVideoPath);
           } catch (vizErr) {
-            console.error('Visualizer pre-render failed:', vizErr);
-            console.warn('[Render] Visualizer export failed, rendering without visualizer');
+            // AbortError = user cancelled — propagate upward
+            if (vizErr.name === 'AbortError') throw vizErr;
+            console.error('Visualizer pre-render failed:', vizErr.message);
+            console.warn('[Render] Visualizer export failed (WebGL context loss?), rendering without visualizer');
+            set({ processingStep: 'Visualizer unavailable, rendering without...' });
             visualizerData = null;
           }
         }
+
+        // Check cancellation after potentially-long visualizer export
+        if (!get().isProcessing) break;
 
         // Render this format
         try {
@@ -1121,9 +1185,16 @@ export const useAppStore = create((set, get) => ({
       const { renderTimer } = get();
       if (renderTimer) clearInterval(renderTimer);
 
+      // Don't show error message when user explicitly cancelled
+      if (error.name === 'AbortError') {
+        set({ isProcessing: false, renderAbortController: null, renderTimer: null, batchRenderActive: false });
+        return null;
+      }
+
       set({
         error: error.response?.data?.error || error.message,
         isProcessing: false,
+        renderAbortController: null,
         renderTimer: null,
         batchRenderActive: false,
       });
@@ -1131,9 +1202,14 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
-  // Cancel render
+  // Cancel render — aborts everything in-flight: visualizer export, SSE streams, vocal separation
   cancelRender: async () => {
-    const { renderJobId, renderPolling, renderTimer } = get();
+    const { renderJobId, renderPolling, renderTimer, renderAbortController } = get();
+
+    // Abort all in-flight fetch/SSE connections (visualizer export, transcription, vocal separation)
+    if (renderAbortController) {
+      renderAbortController.abort();
+    }
 
     if (renderPolling) clearInterval(renderPolling);
     if (renderTimer) clearInterval(renderTimer);
@@ -1148,12 +1224,15 @@ export const useAppStore = create((set, get) => ({
 
     set({
       isProcessing: false,
+      renderAbortController: null,
       renderJobId: null,
       renderPolling: null,
       renderTimer: null,
       processingProgress: 0,
       processingStep: '',
       batchRenderActive: false,
+      vocalSeparating: false,
+      vocalSeparationMessage: 'Cancelled',
     });
   },
 
@@ -1397,7 +1476,7 @@ export const useAppStore = create((set, get) => ({
 
   // Run full vocal separation for preview/listening
   // EP317 handles vocals, Resurrection UNWA handles instrumental — each runs only if its stem is selected
-  separateVocals: async () => {
+  separateVocals: async (signal) => {
     const { mediaFile, originalMediaPath, originalMediaFile, vocalSelectedStems } = get();
     const filePath = originalMediaPath || originalMediaFile || mediaFile;
     if (!filePath) return;
@@ -1447,7 +1526,7 @@ export const useAppStore = create((set, get) => ({
           set({ vocalSeparating: false, vocalSeparationMessage: `Error: ${event.error}` });
           separationError = new Error(event.error);
         }
-      });
+      }, signal);
 
       if (separationError) {
         throw separationError;
@@ -1457,6 +1536,10 @@ export const useAppStore = create((set, get) => ({
         throw new Error('Vocal separation stream ended unexpectedly');
       }
     } catch (error) {
+      if (error.name === 'AbortError') {
+        set({ vocalSeparating: false, vocalSeparationMessage: 'Cancelled' });
+        return;
+      }
       console.error('Vocal separation failed:', error);
       set({ vocalSeparating: false, vocalSeparationMessage: `Error: ${error.message}` });
     }
@@ -1615,6 +1698,145 @@ export const useAppStore = create((set, get) => ({
       subtitles: []
     }
   })),
+
+  // ==========================================================================
+  // Playlist (Karaoke Player) Actions
+  // ==========================================================================
+
+  // Add MP3 to playlist — validates and optionally reads SYLT
+  addToPlaylist: async (mp3Path) => {
+    try {
+      // 1. Validate MP3 and check for SYLT
+      const valRes = await api.post('/playlist/validate-mp3', { path: mp3Path });
+      const info = valRes.data;
+
+      // 2. Read SYLT subtitles if available
+      let subtitles = [];
+      if (info.valid && info.sylt_entries > 0) {
+        try {
+          const syltRes = await api.post('/playlist/read-sylt', { path: mp3Path });
+          subtitles = syltRes.data.subtitles || [];
+        } catch {}
+      }
+
+      const track = {
+        id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        path: mp3Path,
+        title: info.title,
+        duration: info.duration,
+        syltEntries: info.sylt_entries || 0,
+        hasSylt: info.valid,
+        subtitles,
+      };
+
+      set((state) => ({
+        playlist: {
+          ...state.playlist,
+          tracks: [...state.playlist.tracks, track],
+        },
+      }));
+      return { success: true, track };
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message;
+      return { error: msg };
+    }
+  },
+
+  removeFromPlaylist: (trackId) => set((state) => {
+    const tracks = state.playlist.tracks.filter(t => t.id !== trackId);
+    let idx = state.playlist.currentTrackIndex;
+    // Adjust index if needed
+    if (tracks.length === 0) {
+      idx = -1;
+    } else if (idx >= tracks.length) {
+      idx = tracks.length - 1;
+    }
+    return {
+      playlist: {
+        ...state.playlist,
+        tracks,
+        currentTrackIndex: idx,
+        isActive: tracks.length > 0 ? state.playlist.isActive : false,
+      },
+    };
+  }),
+
+  reorderPlaylist: (fromIndex, toIndex) => set((state) => {
+    const tracks = [...state.playlist.tracks];
+    const [moved] = tracks.splice(fromIndex, 1);
+    tracks.splice(toIndex, 0, moved);
+    // Adjust currentTrackIndex
+    let idx = state.playlist.currentTrackIndex;
+    if (idx === fromIndex) idx = toIndex;
+    else if (fromIndex < idx && toIndex >= idx) idx--;
+    else if (fromIndex > idx && toIndex <= idx) idx++;
+    return { playlist: { ...state.playlist, tracks, currentTrackIndex: idx } };
+  }),
+
+  setCurrentTrack: (index) => set((state) => ({
+    playlist: {
+      ...state.playlist,
+      currentTrackIndex: index,
+      isActive: index >= 0,
+      playbackTime: 0,
+    },
+  })),
+
+  nextTrack: () => set((state) => {
+    const { tracks, currentTrackIndex } = state.playlist;
+    if (tracks.length === 0) return {};
+    const next = (currentTrackIndex + 1) % tracks.length;
+    return { playlist: { ...state.playlist, currentTrackIndex: next, playbackTime: 0 } };
+  }),
+
+  prevTrack: () => set((state) => {
+    const { tracks, currentTrackIndex } = state.playlist;
+    if (tracks.length === 0) return {};
+    const prev = (currentTrackIndex - 1 + tracks.length) % tracks.length;
+    return { playlist: { ...state.playlist, currentTrackIndex: prev, playbackTime: 0 } };
+  }),
+
+  setPlaylistPlaying: (isPlaying) => set((state) => ({
+    playlist: { ...state.playlist, isPlaying },
+  })),
+
+  setPlaylistPlaybackTime: (time) => set((state) => ({
+    playlist: { ...state.playlist, playbackTime: time },
+  })),
+
+  clearPlaylist: () => set((state) => ({
+    playlist: {
+      tracks: [],
+      currentTrackIndex: -1,
+      isActive: false,
+      isPlaying: false,
+      playbackTime: 0,
+    },
+  })),
+
+  // Save playlist to localStorage (paths + metadata only, no subtitles)
+  savePlaylist: () => {
+    const { tracks } = get().playlist;
+    const serializable = tracks.map(t => ({ path: t.path, title: t.title, duration: t.duration, syltEntries: t.syltEntries }));
+    try {
+      localStorage.setItem('submaker-playlist', JSON.stringify(serializable));
+    } catch {}
+  },
+
+  // Load playlist from localStorage — re-validates & reads SYLT for each track
+  loadPlaylist: async () => {
+    try {
+      const raw = localStorage.getItem('submaker-playlist');
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!Array.isArray(saved) || saved.length === 0) return;
+
+      for (const item of saved) {
+        if (!item.path) continue;
+        await get().addToPlaylist(item.path);
+      }
+    } catch {}
+  },
   
   // Reset project
   resetProject: () => set({
@@ -1651,6 +1873,13 @@ export const useAppStore = create((set, get) => ({
         marginVertical: 240,  // Increased for 4K
       },
       isTranslating: false,
+    },
+    playlist: {
+      tracks: [],
+      currentTrackIndex: -1,
+      isActive: false,
+      isPlaying: false,
+      playbackTime: 0,
     },
   }),
 }));

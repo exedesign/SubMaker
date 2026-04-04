@@ -46,7 +46,7 @@ const LOGO_ANCHORS = [
 ];
 
 function StyleEditor() {
-  const { style, setStyle, logos, selectedLogoId, setLogoImage, clearLogo, clearAllLogos, updateLogo, setLogoAnchor, selectLogo, settings } = useAppStore();
+  const { style, setStyle, logos, selectedLogoId, setLogoImage, clearLogo, clearAllLogos, updateLogo, setLogoAnchor, selectLogo, settings, secondarySubtitle, setSecondaryStyle } = useAppStore();
   const logoInputRef = useRef(null);
   
   // Get selected logo
@@ -127,7 +127,6 @@ function StyleEditor() {
       if (response.data.success) {
         // Set the GIF as logo using base64 data URL for display
         setLogoImage(response.data.data_url, response.data.file_path);
-        setLogo({ enabled: true });
         setShowGifSearch(false);
       }
     } catch (err) {
@@ -137,6 +136,9 @@ function StyleEditor() {
       setGifLoading(false);
     }
   };
+  
+  const isDual = settings.dualSubtitleEnabled;
+  const secStyle = isDual ? secondarySubtitle.style : null;
   
   return (
     <div>
@@ -155,6 +157,22 @@ function StyleEditor() {
           ))}
         </select>
       </div>
+      {isDual && (
+        <div className="form-group">
+          <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Font</label>
+          <select
+            className="select"
+            value={secStyle.fontName}
+            onChange={(e) => setSecondaryStyle({ fontName: e.target.value })}
+          >
+            {FONTS.map((font) => (
+              <option key={font} value={font} style={{ fontFamily: font }}>
+                {font}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       
       {/* Font Size */}
       <div className="form-group">
@@ -168,6 +186,19 @@ function StyleEditor() {
           onChange={(e) => setStyle({ fontSize: parseInt(e.target.value) })}
         />
       </div>
+      {isDual && (
+        <div className="form-group">
+          <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Size: {secStyle.fontSize}px</label>
+          <input
+            type="range"
+            className="slider"
+            min={18}
+            max={72}
+            value={secStyle.fontSize}
+            onChange={(e) => setSecondaryStyle({ fontSize: parseInt(e.target.value) })}
+          />
+        </div>
+      )}
       
       {/* Colors */}
       <div className="form-row">
@@ -190,6 +221,28 @@ function StyleEditor() {
           />
         </div>
       </div>
+      {isDual && (
+        <div className="form-row">
+          <div className="form-group">
+            <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Text Color</label>
+            <input
+              type="color"
+              value={secStyle.color}
+              onChange={(e) => setSecondaryStyle({ color: e.target.value })}
+              style={{ width: '100%', height: 36, border: 'none', borderRadius: 6, cursor: 'pointer' }}
+            />
+          </div>
+          <div className="form-group">
+            <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Border Color</label>
+            <input
+              type="color"
+              value={secStyle.borderColor}
+              onChange={(e) => setSecondaryStyle({ borderColor: e.target.value })}
+              style={{ width: '100%', height: 36, border: 'none', borderRadius: 6, cursor: 'pointer' }}
+            />
+          </div>
+        </div>
+      )}
       
       {/* Border & Shadow */}
       <div className="form-row">
@@ -218,6 +271,19 @@ function StyleEditor() {
           />
         </div>
       </div>
+      {isDual && (
+        <div className="form-group">
+          <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Border: {secStyle.borderWidth}px</label>
+          <input
+            type="range"
+            className="slider"
+            min={0}
+            max={6}
+            value={secStyle.borderWidth}
+            onChange={(e) => setSecondaryStyle({ borderWidth: parseInt(e.target.value) })}
+          />
+        </div>
+      )}
       
       {/* Bold & Italic */}
       <div className="form-group">
@@ -238,41 +304,138 @@ function StyleEditor() {
           </button>
         </div>
       </div>
+      {isDual && (
+        <div className="form-group">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className={`btn ${secStyle.bold ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setSecondaryStyle({ bold: !secStyle.bold })}
+              style={{ flex: 1, fontWeight: 'bold' }}
+            >
+              2. B
+            </button>
+            <button
+              className={`btn ${secStyle.italic ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setSecondaryStyle({ italic: !secStyle.italic })}
+              style={{ flex: 1, fontStyle: 'italic' }}
+            >
+              2. I
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Alignment */}
-      <div className="form-group">
-        <label className="label">Position</label>
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(3, 1fr)', 
-          gap: 4,
-          maxWidth: 120,
-        }}>
-          {ALIGNMENTS.map((align) => (
-            <button
-              key={align.value}
-              className={`btn ${style.alignment === align.value ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setStyle({ alignment: align.value })}
-              style={{ padding: '6px 0', fontSize: 14 }}
-            >
-              {align.label}
-            </button>
-          ))}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+        <div className="form-group" style={{ flex: 'none' }}>
+          <label className="label">Position</label>
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(3, 1fr)', 
+            gap: 4,
+            width: 100,
+          }}>
+            {ALIGNMENTS.map((align) => (
+              <button
+                key={align.value}
+                className={`btn ${style.alignment === align.value ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setStyle({ alignment: align.value })}
+                style={{ padding: '6px 0', fontSize: 14 }}
+              >
+                {align.label}
+              </button>
+            ))}
+          </div>
         </div>
+        {isDual && (
+          <div className="form-group" style={{ flex: 'none' }}>
+            <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Position</label>
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(3, 1fr)', 
+              gap: 4,
+              width: 100,
+            }}>
+              {ALIGNMENTS.map((align) => (
+                <button
+                  key={align.value}
+                  className={`btn ${(secStyle.alignment || 5) === align.value ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setSecondaryStyle({ alignment: align.value })}
+                  style={{ padding: '6px 0', fontSize: 14 }}
+                >
+                  {align.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       
-      {/* Margin */}
+      {/* Fine Adjustment */}
       <div className="form-group">
-        <label className="label">Margin from edge: {style.marginVertical}px</label>
-        <input
-          type="range"
-          className="slider"
-          min={10}
-          max={200}
-          value={style.marginVertical}
-          onChange={(e) => setStyle({ marginVertical: parseInt(e.target.value) })}
-        />
+        <label className="label">Fine Adjustment</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              Horizontal: {style.offsetX || 0}px
+            </label>
+            <input
+              type="range"
+              min="-50"
+              max="50"
+              value={style.offsetX || 0}
+              onChange={(e) => setStyle({ offsetX: parseInt(e.target.value) })}
+              className="slider"
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              Vertical: {style.offsetY || 0}px
+            </label>
+            <input
+              type="range"
+              min="-50"
+              max="50"
+              value={style.offsetY || 0}
+              onChange={(e) => setStyle({ offsetY: parseInt(e.target.value) })}
+              className="slider"
+            />
+          </div>
+        </div>
       </div>
+      {isDual && (
+        <div className="form-group">
+          <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Fine Adjustment</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                Horizontal: {secStyle.offsetX || 0}px
+              </label>
+              <input
+                type="range"
+                min="-50"
+                max="50"
+                value={secStyle.offsetX || 0}
+                onChange={(e) => setSecondaryStyle({ offsetX: parseInt(e.target.value) })}
+                className="slider"
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                Vertical: {secStyle.offsetY || 0}px
+              </label>
+              <input
+                type="range"
+                min="-50"
+                max="50"
+                value={secStyle.offsetY || 0}
+                onChange={(e) => setSecondaryStyle({ offsetY: parseInt(e.target.value) })}
+                className="slider"
+              />
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Logo / Watermark Section */}
       <div className="form-group" style={{ marginTop: 24, borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>

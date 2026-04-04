@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiGlobe, FiArrowRight, FiRefreshCw, FiAlertCircle, FiInfo } from 'react-icons/fi';
-import SecondarySubtitleEditor from './SecondarySubtitleEditor';
+import { FiGlobe, FiArrowRight, FiRefreshCw, FiAlertCircle, FiInfo, FiLoader } from 'react-icons/fi';
 
-// Common languages
+// Common languages for source
 const LANGUAGES = [
   { code: null, name: 'Auto Detect' },
   { code: 'en', name: 'English' },
@@ -27,6 +26,26 @@ const LANGUAGES = [
   { code: 'uk', name: 'Ukrainian' },
 ];
 
+// Target languages for translation
+const TARGET_LANGUAGES = {
+  'en': 'English',
+  'tr': 'Turkish',
+  'es': 'Spanish',
+  'fr': 'French',
+  'de': 'German',
+  'it': 'Italiano',
+  'pt': 'Português',
+  'ru': 'Русский',
+  'ja': '日本語',
+  'ko': '한국어',
+  'zh': '中文',
+  'ar': 'العربية',
+  'hi': 'हिन्दी',
+  'nl': 'Nederlands',
+  'pl': 'Polski',
+  'sv': 'Svenska',
+};
+
 function LanguageSelector() {
   const { 
     sourceLanguage, 
@@ -36,6 +55,10 @@ function LanguageSelector() {
     clearSubtitles,
     subtitles,
     isProcessing,
+    settings,
+    secondarySubtitle,
+    setSecondaryLanguage,
+    translateToSecondary,
   } = useAppStore();
   
   const [showRetranscribe, setShowRetranscribe] = useState(false);
@@ -107,8 +130,65 @@ function LanguageSelector() {
         </div>
       )}
       
-      {/* Secondary Subtitle Settings */}
-      <SecondarySubtitleEditor />
+      {/* Target Language & Translate (Secondary Subtitle) */}
+      {settings.dualSubtitleEnabled && (
+        <>
+          <div className="form-group" style={{ marginTop: 8 }}>
+            <label className="label">Target Language</label>
+            <select
+              className="select"
+              value={secondarySubtitle.targetLanguage}
+              onChange={(e) => setSecondaryLanguage(e.target.value)}
+            >
+              {Object.entries(TARGET_LANGUAGES).map(([code, name]) => (
+                <option key={code} value={code}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', marginTop: 4 }}
+            onClick={async () => {
+              if (subtitles.length === 0) {
+                alert('Please generate main subtitles first');
+                return;
+              }
+              await translateToSecondary();
+            }}
+            disabled={secondarySubtitle.isTranslating || subtitles.length === 0}
+          >
+            {secondarySubtitle.isTranslating ? (
+              <>
+                <FiLoader style={{ animation: 'spin 1s linear infinite' }} />
+                <span style={{ marginLeft: 8 }}>Translating...</span>
+              </>
+            ) : (
+              <>
+                <FiRefreshCw size={14} />
+                <span style={{ marginLeft: 8 }}>
+                  {secondarySubtitle.subtitles?.length > 0 ? 'Re-translate' : 'Translate All'}
+                </span>
+              </>
+            )}
+          </button>
+          
+          {secondarySubtitle.subtitles?.length > 0 && (
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 6, textAlign: 'center' }}>
+              ✓ {secondarySubtitle.subtitles.length} subtitles translated
+            </p>
+          )}
+          
+          <style>{`
+            @keyframes spin {
+              from { transform: rotate(0deg); }
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
+        </>
+      )}
     </div>
   );
 }
