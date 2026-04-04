@@ -78,44 +78,35 @@ function Header() {
           <span>SubMaker</span>
         </div>
 
-        {/* Source file indicator */}
-        {mediaFile && (
-          <button
-            className="btn btn-ghost header-source-btn"
-            onClick={handleChangeSource}
-            title={originalFileName ? `Source: ${originalFileName}\nClick to change` : 'Select source file'}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '4px 12px',
-              fontSize: 12,
-              color: 'var(--text-secondary)',
-              borderRadius: 6,
-              border: '1px solid var(--border-color)',
-              background: 'var(--bg-tertiary)',
-              maxWidth: 280,
-            }}
-          >
-            <FiFile size={12} style={{ flexShrink: 0, color: mediaType === 'audio' ? '#22c55e' : '#6366f1' }} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {displayName || 'Select Source'}
-            </span>
-            <FiUpload size={11} style={{ flexShrink: 0, opacity: 0.5 }} />
-          </button>
-        )}
+        {/* Source file indicator — always visible */}
+        <button
+          className="btn btn-ghost header-source-btn"
+          onClick={handleChangeSource}
+          title={originalFileName ? `Source: ${originalFileName}\nClick to change` : 'Select source file'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '4px 12px',
+            fontSize: 12,
+            color: 'var(--text-secondary)',
+            borderRadius: 6,
+            border: '1px solid var(--border-color)',
+            background: 'var(--bg-tertiary)',
+            maxWidth: 280,
+          }}
+        >
+          {mediaFile
+            ? <FiFile size={12} style={{ flexShrink: 0, color: mediaType === 'audio' ? '#22c55e' : '#6366f1' }} />
+            : <FiUpload size={12} style={{ flexShrink: 0 }} />
+          }
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {displayName || 'Select Source'}
+          </span>
+          {mediaFile && <FiUpload size={11} style={{ flexShrink: 0, opacity: 0.5 }} />}
+        </button>
 
         <div className="header-actions">
-          {/* Change source button (when no media loaded) */}
-          {!mediaFile && (
-            <button
-              className="btn btn-ghost btn-icon"
-              title="Select source file"
-              onClick={handleChangeSource}
-            >
-              <FiUpload />
-            </button>
-          )}
           <button
             className="btn btn-ghost btn-icon"
             title="Settings"
