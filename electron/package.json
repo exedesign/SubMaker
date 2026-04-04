@@ -46,7 +46,8 @@
       "src/main/**/*"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "public/icon.png"
     },
     "mac": {
       "target": "dmg",
