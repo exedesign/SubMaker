@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2 } from 'react-icons/fi';
+import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft } from 'react-icons/fi';
 import { useAppStore } from '../stores/appStore';
 
 function Header() {

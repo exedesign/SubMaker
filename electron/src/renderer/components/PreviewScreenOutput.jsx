@@ -166,6 +166,13 @@ export default function PreviewScreenOutput() {
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
 
+  // Body/html transparency when alpha mode active
+  useEffect(() => {
+    const isAlpha = state?.background?.type === 'transparent';
+    document.body.style.background = isAlpha ? 'transparent' : '';
+    document.documentElement.style.background = isAlpha ? 'transparent' : '';
+  }, [state?.background?.type]);
+
   // Window control handlers
   const handleMinimize = useCallback(() => {
     if (isElectron) window.electronAPI.previewMinimize?.();
@@ -207,6 +214,7 @@ export default function PreviewScreenOutput() {
   };
 
   const bg   = state?.background;
+  const isAlphaMode = bg?.type === 'transparent';
   const sty  = state?.style;
   const anim = state?.animation;
   const fmtW = state?.fmtWidth  || 1920;
@@ -242,7 +250,7 @@ export default function PreviewScreenOutput() {
   const marginV   = sty?.marginVertical ?? 80;
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#000', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: isAlphaMode ? 'transparent' : '#000', overflow: 'hidden' }}>
       {/* Custom titlebar  hidden in fullscreen */}
       {!isFullscreen && (
         <PreviewTitlebar
@@ -254,7 +262,7 @@ export default function PreviewScreenOutput() {
       )}
 
       {/* Preview frame area */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative', background: isAlphaMode ? 'transparent' : undefined }}>
         {/* Hover zone to reveal titlebar in fullscreen mode */}
         {isFullscreen && (
           <>
@@ -283,13 +291,10 @@ export default function PreviewScreenOutput() {
           style={{
             width: frameW, height: frameH,
             position: 'relative', overflow: 'hidden',
-            backgroundColor: bg?.type === 'color' ? bg.value : '#000000',
-            backgroundImage:
-              bg?.type === 'image' && bg.imagePath
-                ? `url(${getImageUrl(bg.imagePath)})`
-                : bg?.type === 'transparent'
-                ? 'repeating-conic-gradient(#808080 0% 25%, #404040 0% 50%)'
-                : 'none',
+            backgroundColor: isAlphaMode ? 'transparent' : bg?.type === 'color' ? bg.value : '#000000',
+            backgroundImage: !isAlphaMode && bg?.type === 'image' && bg.imagePath
+              ? `url(${getImageUrl(bg.imagePath)})`
+              : 'none',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
           }}

@@ -1548,6 +1548,41 @@ export const useAppStore = create((set, get) => ({
   // Export settings
   setExportFormats: (formats) => set({ exportFormats: formats }),
 
+  // Create karaoke MP3: instrumental stem + embedded SYLT lyrics → <name>-krk.mp3
+  createKaraokeMp3: async () => {
+    const { subtitles, originalMediaPath, originalFileName, audioMixer, language } = get();
+    const instrumentalTrack = audioMixer?.tracks?.instrumental;
+
+    if (!instrumentalTrack?.filePath) {
+      throw new Error('Instrumental track not available. Please run vocal separation first.');
+    }
+    if (!subtitles || subtitles.length === 0) {
+      throw new Error('No subtitles to embed.');
+    }
+    if (!originalMediaPath) {
+      throw new Error('Original media path is not available.');
+    }
+
+    set({ isLoading: true, loadingMessage: 'Creating Karaoke MP3...' });
+    try {
+      const result = await fetchJson(`${API_URL}/export/karaoke-mp3`, {
+        method: 'POST',
+        body: {
+          instrumental_path: instrumentalTrack.filePath,
+          subtitles,
+          original_path: originalMediaPath,
+          original_name: originalFileName || null,
+          language: language || 'und',
+        },
+      });
+      set({ isLoading: false });
+      return result;
+    } catch (err) {
+      set({ isLoading: false, error: `Karaoke MP3 failed: ${err.message}` });
+      throw err;
+    }
+  },
+
   // Export lyrics in various formats
   exportLyrics: async (format) => {
     const { subtitles, originalMediaPath, language } = get();

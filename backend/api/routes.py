@@ -2308,6 +2308,92 @@ def export_lyrics():
 
 
 # =============================================================================
+# Karaoke MP3 — instrumental stem + embedded SYLT in one shot
+# =============================================================================
+
+@api.route("/export/karaoke-mp3", methods=["POST"])
+def export_karaoke_mp3():
+    """
+    Create a karaoke MP3 from the instrumental stem with SYLT lyrics embedded.
+    - Converts instrumental WAV/FLAC → MP3 via ffmpeg (320 kbps)
+    - Names the file <original_stem>-krk.mp3 next to the original file
+    - Embeds synchronized lyrics (SYLT) using mutagen
+    """
+    data = request.json
+    instrumental_path = data.get("instrumental_path")  # abs path to instrumental WAV/MP3
+    subtitles          = data.get("subtitles")          # [{start, end, text}, ...]
+    original_path      = data.get("original_path")      # abs path to original media (for naming)
+    language           = data.get("language", "und")
+    original_name      = data.get("original_name")      # original filename (before temp upload)
+
+    if not instrumental_path or not subtitles or not original_path:
+        return jsonify({"error": "instrumental_path, subtitles, and original_path are required"}), 400
+
+    if not os.path.isabs(instrumental_path) or not os.path.exists(instrumental_path):
+        return jsonify({"error": f"Instrumental file not found: {instrumental_path}"}), 404
+
+    if not os.path.isabs(original_path) or not os.path.exists(original_path):
+        return jsonify({"error": f"Original file not found: {original_path}"}), 404
+
+    try:
+        from services.lyrics_tagger import get_lyrics_tagger
+        tagger = get_lyrics_tagger()
+        if not tagger.is_available():
+            return jsonify({"error": "mutagen library not installed — run: pip install mutagen"}), 500
+
+        # Determine output dir and stem name
+        source_dir = os.path.dirname(original_path)
+        if str(TEMP_DIR) in str(Path(original_path).resolve()):
+            source_dir = str(OUTPUT_DIR)
+
+        # Determine stem from original name (prefer original_name over temp path)
+        name_base = original_name if original_name else os.path.basename(original_path)
+        stem = Path(name_base).stem
+        output_path = os.path.join(source_dir, f"{stem}-krk.mp3")
+
+        ext = Path(instrumental_path).suffix.lower()
+
+        if ext == ".mp3":
+            # Already MP3 — just copy
+            import shutil
+            shutil.copy2(instrumental_path, output_path)
+        else:
+            # Convert to MP3 via ffmpeg (320 kbps CBR)
+            ffmpeg_path = str(FFMPEG_PATH) if FFMPEG_PATH else "ffmpeg"
+            cmd = [
+                ffmpeg_path, "-y",
+                "-i", instrumental_path,
+                "-codec:a", "libmp3lame",
+                "-b:a", "320k",
+                "-id3v2_version", "3",
+                output_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                raise RuntimeError(f"ffmpeg conversion failed:\n{result.stderr[-800:]}")
+
+        print(f"[Karaoke MP3] Wrote: {output_path}")
+
+        # Embed SYLT
+        embed_result = tagger.write_synced_lyrics(output_path, subtitles, language=language)
+
+        return jsonify({
+            "success": True,
+            "output_path": output_path,
+            "output_dir": os.path.dirname(output_path),
+            "filename": os.path.basename(output_path),
+            "sylt_written": embed_result.get("sylt", False),
+            "uslt_written": embed_result.get("uslt", False),
+            "subtitle_count": len(subtitles),
+        })
+
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(exc)}), 500
+
+
+# =============================================================================
 # Playlist — SYLT Read API
 # =============================================================================
 

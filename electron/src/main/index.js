@@ -680,9 +680,10 @@ ipcMain.handle('preview:openOnSecondDisplay', async () => {
     minHeight: 300,
     fullscreen: false,
     frame: false,        // custom titlebar in renderer
+    transparent: true,   // allows alpha/overlay mode
     resizable: true,
     movable: true,
-    backgroundColor: '#000000',
+    backgroundColor: '#00000000',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiTrash2, FiPlus, FiPlay, FiMic, FiRefreshCw, FiAlertCircle, FiGlobe, FiDownload, FiMusic, FiDisc } from 'react-icons/fi';
+import { FiTrash2, FiPlus, FiPlay, FiMic, FiRefreshCw, FiAlertCircle, FiGlobe, FiDownload, FiMusic, FiDisc, FiHeadphones } from 'react-icons/fi';
 import SimpleSunoImporter from './SimpleSunoImporter';
 
 function SubtitleEditor() {
@@ -27,6 +27,7 @@ function SubtitleEditor() {
     mediaDuration,
     setPlaybackTime,
     audioMixer,
+    createKaraokeMp3,
   } = useAppStore();
 
   const [showRetranscribeConfirm, setShowRetranscribeConfirm] = useState(false);
@@ -34,6 +35,8 @@ function SubtitleEditor() {
   const [exportStatus, setExportStatus] = useState(null);
   const [syltStatus, setSyltStatus] = useState(null); // null | 'loading' | 'success' | 'error'
   const [syltMessage, setSyltMessage] = useState(''); // Detailed message for SYLT embedding
+  const [karaokeStatus, setKaraokeStatus] = useState(null); // null | 'loading' | 'success' | 'error'
+  const [karaokeMessage, setKaraokeMessage] = useState('');
   const [mixerNotification, setMixerNotification] = useState(null); // Show when mixer is activated
   
   // Show notification when audio mixer is enabled
@@ -136,6 +139,30 @@ function SubtitleEditor() {
     }, 4000);
   };
 
+  const handleCreateKaraokeMp3 = async () => {
+    setKaraokeStatus('loading');
+    setKaraokeMessage('Creating karaoke MP3...');
+    try {
+      const result = await createKaraokeMp3();
+      if (result?.success) {
+        setKaraokeStatus('success');
+        setKaraokeMessage(`✓ Saved: ${result.filename}`);
+      } else {
+        setKaraokeStatus('error');
+        setKaraokeMessage(`Error: ${result?.error || 'Failed'}`);
+      }
+    } catch (err) {
+      setKaraokeStatus('error');
+      setKaraokeMessage(`Error: ${err.message || 'Failed'}`);
+    }
+    setTimeout(() => {
+      setKaraokeStatus(null);
+      setKaraokeMessage('');
+    }, 5000);
+  };
+
+  const hasInstrumental = !!audioMixer?.tracks?.instrumental?.filePath;
+
   if (subtitles.length === 0) {
     return (
       <div className="empty-state">
@@ -216,6 +243,32 @@ function SubtitleEditor() {
                syltStatus === 'success' ? 'Embedded!' :
                syltStatus === 'error' ? 'Error!' :
                'Embed to MP3'}
+            </button>
+          )}
+
+          {/* Karaoke MP3 Button — only when instrumental stem is available */}
+          {hasInstrumental && (
+            <button
+              className="btn btn-sm"
+              onClick={handleCreateKaraokeMp3}
+              disabled={isProcessing || karaokeStatus === 'loading'}
+              title="Create a new MP3 from the instrumental stem with embedded lyrics (-krk.mp3)"
+              style={{
+                background: karaokeStatus === 'success' ? 'var(--accent-success)' :
+                            karaokeStatus === 'error' ? 'var(--accent-error)' :
+                            'rgba(20, 184, 166, 0.9)',
+                color: '#fff',
+                fontSize: 11,
+                padding: '4px 10px',
+                gap: 4,
+                transition: 'background 0.2s',
+              }}
+            >
+              <FiHeadphones size={13} />
+              {karaokeStatus === 'loading' ? 'Creating...' :
+               karaokeStatus === 'success' ? 'Created!' :
+               karaokeStatus === 'error' ? 'Error!' :
+               'Karaoke MP3'}
             </button>
           )}
 
