@@ -1,7 +1,7 @@
 /**
  * SubMaker Electron Main Process
  */
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -721,13 +721,23 @@ ipcMain.handle('preview:openOnSecondDisplay', async () => {
 ipcMain.on('preview-window:minimize', () => { if (previewWindow && !previewWindow.isDestroyed()) previewWindow.minimize(); });
 ipcMain.on('preview-window:maximize', () => {
   if (!previewWindow || previewWindow.isDestroyed()) return;
-  if (previewWindow.isMaximized() || previewWindow.isFullScreen()) {
-    previewWindow.setFullScreen(false);
+  // Use pseudo-fullscreen (setBounds) instead of setFullScreen to avoid
+  // the Windows OS-level caption notification bar that appears on transparent windows.
+  if (previewWindow._pseudoFullscreen) {
+    previewWindow._pseudoFullscreen = false;
     previewWindow.setAlwaysOnTop(false);
-    previewWindow.unmaximize();
+    if (previewWindow._prevBounds) {
+      previewWindow.setBounds(previewWindow._prevBounds, true);
+      previewWindow._prevBounds = null;
+    } else {
+      previewWindow.unmaximize();
+    }
   } else {
-    previewWindow.setFullScreen(true);
+    previewWindow._prevBounds = previewWindow.getBounds();
+    const display = screen.getDisplayMatching(previewWindow.getBounds());
+    previewWindow._pseudoFullscreen = true;
     previewWindow.setAlwaysOnTop(true, 'screen-saver');
+    previewWindow.setBounds(display.bounds, true);
   }
 });
 ipcMain.on('preview-window:close', () => { if (previewWindow && !previewWindow.isDestroyed()) previewWindow.close(); });
