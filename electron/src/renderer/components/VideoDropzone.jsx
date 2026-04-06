@@ -4,59 +4,76 @@ import { useAppStore } from '../stores/appStore';
 import { FiUploadCloud, FiMusic, FiVideo } from 'react-icons/fi';
 
 function VideoDropzone() {
-  const { uploadFile, setMediaFile, error, clearError } = useAppStore();
+  const { uploadFile, setMediaFile, error, clearError, addToBatchQueue } = useAppStore();
 
   const isAbsolutePath = (p) => {
     if (!p || typeof p !== 'string') return false;
     if (/[\\/]fakepath[\\/]/i.test(p)) return false;
     return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/');
   };
+
+  // Resolve absolute paths for dropped files (multi-file aware)
+  const resolveDroppedPaths = async (acceptedFiles) => {
+    const paths = [];
+    // Try preload captured paths first
+    let preloadPaths = [];
+    if (window.electronAPI?.getDroppedPaths) {
+      preloadPaths = window.electronAPI.getDroppedPaths();
+    }
+    for (let i = 0; i < acceptedFiles.length; i++) {
+      const file = acceptedFiles[i];
+      let absPath = null;
+      // Strategy 1: Preload path
+      if (preloadPaths[i] && isAbsolutePath(preloadPaths[i])) {
+        absPath = preloadPaths[i];
+      }
+      // Strategy 2: file.path
+      if (!absPath && isAbsolutePath(file.path)) {
+        absPath = file.path;
+      }
+      // Strategy 3: IPC resolve
+      if (!absPath && file.path && window.electronAPI?.resolvePath) {
+        try {
+          const resolved = await window.electronAPI.resolvePath(file.path);
+          if (isAbsolutePath(resolved)) absPath = resolved;
+        } catch {}
+      }
+      paths.push({ file, absPath });
+    }
+    return paths;
+  };
   
   const onDrop = useCallback(async (acceptedFiles) => {
-    if (acceptedFiles.length > 0) {
-      try {
-        const file = acceptedFiles[0];
-        const localPath = file.path;
+    if (!acceptedFiles.length) return;
 
-        console.log('File dropped:', { name: file.name, path: localPath, size: file.size });
+    try {
+      const resolved = await resolveDroppedPaths(acceptedFiles);
 
-        // Strategy 1: Preload captured real absolute paths from the privileged context
-        let absolutePath = null;
-        if (window.electronAPI?.getDroppedPaths) {
-          const preloadPaths = window.electronAPI.getDroppedPaths();
-          console.log('Preload captured paths:', preloadPaths);
-          if (preloadPaths.length > 0 && isAbsolutePath(preloadPaths[0])) {
-            absolutePath = preloadPaths[0];
-          }
+      // Multi-file drop → batch queue
+      if (resolved.length > 1) {
+        const validPaths = resolved.map(r => r.absPath).filter(Boolean);
+        console.log(`[Drop] Resolved ${resolved.length} files, ${validPaths.length} with absolute paths:`, validPaths);
+        if (validPaths.length) {
+          addToBatchQueue(validPaths);
+          console.log(`[Drop] ${validPaths.length} files added to batch queue`);
+        } else {
+          console.warn('[Drop] No absolute paths resolved — falling back to single file upload');
+          // Fallback: upload first file normally
+          const { file, absPath } = resolved[0];
+          await uploadFile(file, { originalPath: absPath || null });
         }
-
-        // Strategy 2: file.path from renderer (works when sandbox is off)
-        if (!absolutePath && isAbsolutePath(localPath)) {
-          absolutePath = localPath;
-        }
-
-        // Strategy 3: Resolve relative path via IPC
-        if (!absolutePath && localPath && window.electronAPI?.resolvePath) {
-          try {
-            const resolved = await window.electronAPI.resolvePath(localPath);
-            if (isAbsolutePath(resolved)) {
-              absolutePath = resolved;
-            }
-          } catch (e) {
-            console.warn('Path resolve failed:', e);
-          }
-        }
-
-        console.log('Final absolute path:', absolutePath);
-
-        // If no absolute path, uploadFile falls through to FormData upload
-        await uploadFile(file, { originalPath: absolutePath || null });
-      } catch (err) {
-        console.error('Drop error:', err);
-        useAppStore.getState().setError(err.message || 'File drop failed');
+        return;
       }
+
+      // Single file → normal flow
+      const { file, absPath } = resolved[0];
+      console.log('File dropped:', { name: file.name, path: absPath, size: file.size });
+      await uploadFile(file, { originalPath: absPath || null });
+    } catch (err) {
+      console.error('Drop error:', err);
+      useAppStore.getState().setError(err.message || 'File drop failed');
     }
-  }, [uploadFile]);
+  }, [uploadFile, addToBatchQueue]);
   
   // In browser mode, disable click-to-open (browser file picker can't provide real paths)
   // Drag-and-drop still works for FormData upload fallback
@@ -68,7 +85,7 @@ function VideoDropzone() {
       'audio/*': ['.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac'],
       'video/*': ['.mp4', '.mkv', '.avi', '.mov', '.webm'],
     },
-    maxFiles: 1,
+    maxFiles: 100,
     noClick: true, // Always handle click manually — routes to Electron or backend dialog
   });
   

@@ -125,6 +125,18 @@ class FasterWhisperEngine:
             logger.info(f"Faster-Whisper model already loaded: {model_id}")
             return
 
+        # Preload PyTorch cuDNN DLLs to prevent version conflicts (same fix as vocal_isolator)
+        if device == "cuda":
+            try:
+                import torch
+                if torch.cuda.is_available() and os.name == "nt":
+                    torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+                    if os.path.isdir(torch_lib):
+                        os.add_dll_directory(torch_lib)
+                        logger.info(f"Added PyTorch DLL directory for cuDNN: {torch_lib}")
+            except Exception as e:
+                logger.warning(f"cuDNN preload failed: {e}")
+
         logger.info(f"Loading Faster-Whisper model: {model_id} on {device} ({compute_type})")
         self._model = WhisperModel(
             model_id,
@@ -180,16 +192,15 @@ class FasterWhisperEngine:
         )
 
         detected_language = info.language or language or "en"
-        logger.info(f"Faster-Whisper transcription started. Language: {detected_language}")
+        logger.info(f"Faster-Whisper transcription started. Language: {detected_language}, duration: {info.duration:.1f}s")
 
-        # --- 2) Consume generator and build segments ---
+        # --- 2) Iterate generator lazily for real-time progress ---
         if progress_callback:
-            progress_callback(65, "Processing segments...")
+            progress_callback(56, "Transcribing audio...")
 
         result_segments: List[SegmentResult] = []
-        raw_segments = list(segments_gen)  # Consume generator fully
-
-        for idx, seg in enumerate(raw_segments):
+        idx = 0
+        for seg in segments_gen:
             seg_data: SegmentResult = {
                 "id": idx + 1,
                 "start": round(seg.start, 3),
@@ -219,10 +230,11 @@ class FasterWhisperEngine:
 
             result_segments.append(seg_data)
 
-            # Progress
+            # Progress — report per segment as generator yields them
             if progress_callback and info.duration and info.duration > 0:
                 raw_pct = min(seg_data["end"] / info.duration, 1.0)
                 progress_callback(55 + int(raw_pct * 40), seg_data["text"][:40])
+            idx += 1
 
         # --- 3) Duration ---
         duration = info.duration or 0.0

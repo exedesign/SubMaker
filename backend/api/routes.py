@@ -16,7 +16,7 @@ import mimetypes
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from config import TEMP_DIR, OUTPUT_DIR, FONTS_DIR, SUPPORTED_LANGUAGES, TENOR_API_KEY, TENOR_CLIENT_KEY, GIPHY_API_KEY, FFMPEG_PATH, ENABLE_GPU_ACCELERATION
+from config import TEMP_DIR, OUTPUT_DIR, FONTS_DIR, SUPPORTED_LANGUAGES, TENOR_API_KEY, TENOR_CLIENT_KEY, GIPHY_API_KEY, FFMPEG_PATH, ENABLE_GPU_ACCELERATION, PRESETS_DIR, VOCAL_CACHE_DIR
 from services import (
     TranscriptionService,
     TranslationService,
@@ -34,7 +34,7 @@ from lyrics_parser import parse_suno_lyrics
 def _cleanup_stale_temp():
     """Remove temp files left over from a previous (crashed/killed) session."""
     try:
-        patterns = ["viz_*.mp4", "render_*.ass", "mix_*.wav"]
+        patterns = ["viz_*.mp4", "render_*.ass", "mix_*.wav", "gif_*.mp4", "logo_*.*", "bg_*_temp.jpg"]
         removed = 0
         for pat in patterns:
             for f in TEMP_DIR.glob(pat):
@@ -43,12 +43,22 @@ def _cleanup_stale_temp():
                     removed += 1
                 except Exception:
                     pass
+        # Clear stale vocal cache files
+        if VOCAL_CACHE_DIR.exists():
+            for f in VOCAL_CACHE_DIR.iterdir():
+                if f.is_file():
+                    try:
+                        f.unlink()
+                        removed += 1
+                    except Exception:
+                        pass
         if removed:
             print(f"[Startup] Temp cleanup: removed {removed} stale file(s) from {TEMP_DIR}")
     except Exception as exc:
         print(f"[Startup] Temp cleanup warning: {exc}")
 
-_cleanup_stale_temp()
+# Startup cleanup is now controlled by frontend settings via /temp/cleanup.
+# _cleanup_stale_temp()
 
 # Create Blueprint
 api = Blueprint("api", __name__)
@@ -756,9 +766,28 @@ def upload_file():
 # Temp folder cleanup
 # =============================================================================
 
+@api.route("/temp/cache-info", methods=["GET"])
+def temp_cache_info():
+    """Return total size of the temp directory tree in bytes."""
+    try:
+        total_bytes = 0
+        file_count = 0
+        if TEMP_DIR.exists():
+            for f in TEMP_DIR.rglob("*"):
+                if f.is_file():
+                    try:
+                        total_bytes += f.stat().st_size
+                        file_count += 1
+                    except Exception:
+                        pass
+        return jsonify({"size_bytes": total_bytes, "file_count": file_count})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @api.route("/temp/cleanup", methods=["POST"])
 def temp_cleanup():
-    """Remove non-essential temp files that are no longer in use."""
+    """Remove all files in the temp directory tree."""
     try:
         removed = []
         # Active job paths — don't touch files belonging to a running job
@@ -770,16 +799,21 @@ def temp_cleanup():
                     if p:
                         active_paths.add(str(p))
 
-        patterns = ["viz_*.mp4", "render_*.ass", "mix_*.wav"]
-        for pat in patterns:
-            for f in TEMP_DIR.glob(pat):
-                if str(f) in active_paths:
-                    continue
-                try:
-                    f.unlink()
-                    removed.append(f.name)
-                except Exception:
-                    pass
+        if TEMP_DIR.exists():
+            for f in TEMP_DIR.rglob("*"):
+                if f.is_file() and str(f) not in active_paths:
+                    try:
+                        f.unlink()
+                        removed.append(str(f.relative_to(TEMP_DIR)))
+                    except Exception:
+                        pass
+            # Remove empty subdirectories (bottom-up)
+            for d in sorted(TEMP_DIR.rglob("*"), reverse=True):
+                if d.is_dir():
+                    try:
+                        d.rmdir()  # only removes if empty
+                    except Exception:
+                        pass
         print(f"[Temp Cleanup] Removed {len(removed)} file(s)")
         return jsonify({"success": True, "removed": removed, "count": len(removed)})
     except Exception as exc:
@@ -1123,12 +1157,15 @@ def transcribe_stream():
                         except Exception as vi_err:
                             print(f"Vocal isolation failed, using original: {vi_err}")
 
+                    # Use frontend model_settings if provided
+                    model_override = model_settings.get(language) or model_settings.get('auto') if model_settings else None
                     result = service.transcribe(
                         audio_to_transcribe,
                         language=language,
                         word_timestamps=True,
                         progress_callback=progress_callback,
-                        user_params=whisper_params
+                        user_params=whisper_params,
+                        model_size_override=model_override
                     )
                     result_holder[0] = result
                 except Exception as e:
@@ -1531,7 +1568,7 @@ def detect_rtl_from_subtitles(subtitles):
     return False
 
 def run_render_job(job_id, audio_path, subtitles, background, video_format,
-                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None, render_resolution=None):
+                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None, render_resolution=None, output_dir=None):
     """Background render job"""
     global _render_jobs
 
@@ -1575,7 +1612,9 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             bold=bool(style.get("bold", False)),
             italic=bool(style.get("italic", False)),
             alignment=int(style.get("alignment", 2)),
-            margin_vertical=int(style.get("marginVertical", style.get("margin_vertical", 50)))
+            margin_vertical=int(style.get("marginVertical", style.get("margin_vertical", 50))),
+            offset_x=int(style.get("offsetX", 0)),
+            offset_y=int(style.get("offsetY", 0))
         )
         
         print(f"[Render Job {job_id}] Created SubtitleStyle: font={sub_style.font_name}, size={sub_style.font_size}, color={sub_style.primary_color}, border={sub_style.border_color}, align={sub_style.alignment}")
@@ -1620,8 +1659,10 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
                 shadow_depth=float(sec_style_data.get("shadowDepth", 1)),
                 bold=bool(sec_style_data.get("bold", False)),
                 italic=bool(sec_style_data.get("italic", False)),
-                alignment=2,  # Always bottom center for secondary
-                margin_vertical=int(sec_style_data.get("marginVertical", 120))
+                alignment=int(sec_style_data.get("alignment", 2)),
+                margin_vertical=int(sec_style_data.get("marginVertical", 120)),
+                offset_x=int(sec_style_data.get("offsetX", 0)),
+                offset_y=int(sec_style_data.get("offsetY", 0))
             )
             
             engine.save_ass_dual(
@@ -1697,7 +1738,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             _render_jobs[job_id]["progress"] = min(95, scaled)
             if step:
                 _render_jobs[job_id]["step"] = step
-                print(f"[Render Job {job_id}] Progress: {scaled}% - {step}")
+                print(f"[Render Job {job_id}] Progress: {min(95, scaled)}% - {step}")
 
         # Cancel check callback — generator will kill FFmpeg if this returns True
         def cancel_check():
@@ -1720,6 +1761,10 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             source_dir = str(OUTPUT_DIR)
             if original_name:
                 source_stem = Path(original_name).stem
+
+        # Override output directory if explicitly provided (e.g. batch karaoke render)
+        if output_dir and os.path.isdir(output_dir):
+            source_dir = output_dir
 
         render_output_path = os.path.join(source_dir, f"{source_stem}_{video_format}.{output_format}")
 
@@ -1755,7 +1800,17 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
                 os.remove(mixed_audio_path)
             except:
                 pass
-        
+        _viz = _render_jobs[job_id].get("visualizer_video_path")
+        if _viz:
+            try:
+                if os.path.exists(_viz):
+                    os.remove(_viz)
+            except Exception:
+                pass
+        # Note: vocal_cache files are NOT deleted here — they may be
+        # needed by subsequent format renders within the same batch.
+        # Cleanup happens via /temp/cleanup or on next startup.
+
         _render_jobs[job_id]["progress"] = 100
         _render_jobs[job_id]["status"] = "completed"
         _render_jobs[job_id]["step"] = "Completed!"
@@ -1792,6 +1847,13 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
                     os.remove(_viz)
             except Exception:
                 pass
+        if VOCAL_CACHE_DIR.exists():
+            for _vcf in list(VOCAL_CACHE_DIR.iterdir()):
+                if _vcf.is_file():
+                    try:
+                        _vcf.unlink()
+                    except Exception:
+                        pass
 
 
 @api.route("/render", methods=["POST"])
@@ -1856,13 +1918,16 @@ def render_video():
         # Output resolution preset (1k/2k/4k)
         render_resolution = data.get("render_resolution")
 
-        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, resolution={render_resolution}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}")
+        # Custom output directory (e.g. for batch karaoke render to original file location)
+        output_dir = data.get("output_dir")
+
+        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, resolution={render_resolution}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}, output_dir={output_dir}")
 
         # Start background thread
         thread = threading.Thread(
             target=run_render_job,
             args=(job_id, audio_path, subtitles, background, video_format,
-                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name, render_resolution)
+                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name, render_resolution, output_dir)
         )
         thread.daemon = True
         thread.start()
@@ -1925,153 +1990,6 @@ def download_file(filename):
     return jsonify({"error": "File not found"}), 404
 
 
-# =============================================================================
-# Visualizer Frame Assembly (Offline Render Pipeline)
-# =============================================================================
-
-@api.route("/visualizer/session", methods=["POST"])
-def visualizer_create_session():
-    """Create a new visualizer frame capture session with a temp directory."""
-    try:
-        session_id = f"viz_{uuid.uuid4().hex}"
-        session_dir = TEMP_DIR / session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[Visualizer] Session created: {session_id}")
-        return jsonify({"success": True, "session_id": session_id})
-    except Exception as e:
-        print(f"[Visualizer] Session creation error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@api.route("/visualizer/frames", methods=["POST"])
-def visualizer_upload_frames():
-    """Receive a batch of JPEG frames for a visualizer session."""
-    try:
-        session_id = request.form.get("session_id", "")
-        # Sanitize session_id to prevent path traversal
-        if not re.match(r"^viz_[a-f0-9]+$", session_id):
-            return jsonify({"error": "Invalid session_id"}), 400
-
-        session_dir = TEMP_DIR / session_id
-        if not session_dir.exists():
-            return jsonify({"error": "Session not found"}), 404
-
-        files = request.files.getlist("frames")
-        if not files:
-            return jsonify({"error": "No frames provided"}), 400
-
-        saved = 0
-        for f in files:
-            # Validate filename pattern: frame_XXXXX.jpg
-            fname = f.filename or ""
-            if not re.match(r"^frame_\d{5}\.jpg$", fname):
-                continue
-            f.save(str(session_dir / fname))
-            saved += 1
-
-        return jsonify({"success": True, "received": saved})
-    except Exception as e:
-        print(f"[Visualizer] Frame upload error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@api.route("/visualizer/assemble", methods=["POST"])
-def visualizer_assemble():
-    """Assemble uploaded JPEG frames into a video using FFmpeg."""
-    try:
-        data = request.get_json()
-        session_id = data.get("session_id", "")
-        fps = data.get("fps", 30)
-        total_frames = data.get("total_frames", 0)
-
-        if not re.match(r"^viz_[a-f0-9]+$", session_id):
-            return jsonify({"error": "Invalid session_id"}), 400
-
-        session_dir = TEMP_DIR / session_id
-        if not session_dir.exists():
-            return jsonify({"error": "Session not found"}), 404
-
-        # Verify frames exist
-        frame_files = sorted(session_dir.glob("frame_*.jpg"))
-        if not frame_files:
-            return jsonify({"error": "No frames found in session"}), 400
-
-        print(f"[Visualizer] Assembling {len(frame_files)} frames @ {fps}fps for session {session_id}")
-
-        output_filename = f"{session_id}.mp4"
-        output_path = TEMP_DIR / output_filename
-        frame_pattern = str(session_dir / "frame_%05d.jpg")
-        ffmpeg_path = str(FFMPEG_PATH) if FFMPEG_PATH else "ffmpeg"
-
-        # Try NVENC first, then fall back to libx264
-        success = False
-        if ENABLE_GPU_ACCELERATION:
-            nvenc_cmd = [
-                ffmpeg_path, "-y",
-                "-framerate", str(fps),
-                "-i", frame_pattern,
-                "-c:v", "h264_nvenc",
-                "-preset", "fast",
-                "-cq", "20",
-                "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart",
-                str(output_path)
-            ]
-            print(f"[Visualizer] Trying NVENC: {' '.join(nvenc_cmd)}")
-            result = subprocess.run(nvenc_cmd, capture_output=True, text=True, timeout=300)
-            if result.returncode == 0:
-                success = True
-                print(f"[Visualizer] NVENC assembly successful")
-            else:
-                print(f"[Visualizer] NVENC failed: {result.stderr[-500:] if result.stderr else 'no stderr'}")
-
-        if not success:
-            cpu_cmd = [
-                ffmpeg_path, "-y",
-                "-framerate", str(fps),
-                "-i", frame_pattern,
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "20",
-                "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart",
-                str(output_path)
-            ]
-            print(f"[Visualizer] Using libx264: {' '.join(cpu_cmd)}")
-            result = subprocess.run(cpu_cmd, capture_output=True, text=True, timeout=300)
-            if result.returncode != 0:
-                error_msg = result.stderr[-500:] if result.stderr else "Unknown FFmpeg error"
-                print(f"[Visualizer] FFmpeg failed: {error_msg}")
-                return jsonify({"error": f"FFmpeg assembly failed: {error_msg}"}), 500
-            print(f"[Visualizer] libx264 assembly successful")
-
-        # Verify output exists
-        if not output_path.exists() or output_path.stat().st_size < 1000:
-            return jsonify({"error": "Assembly produced empty or missing output"}), 500
-
-        file_size_mb = output_path.stat().st_size / (1024 * 1024)
-        print(f"[Visualizer] Output: {output_path} ({file_size_mb:.1f} MB)")
-
-        # Cleanup frame directory
-        try:
-            shutil.rmtree(str(session_dir))
-            print(f"[Visualizer] Cleaned up session directory: {session_dir}")
-        except Exception as cleanup_err:
-            print(f"[Visualizer] Cleanup warning: {cleanup_err}")
-
-        return jsonify({
-            "success": True,
-            "videoPath": str(output_path),
-            "file_size_mb": round(file_size_mb, 1),
-            "frames_assembled": len(frame_files)
-        })
-    except subprocess.TimeoutExpired:
-        print(f"[Visualizer] FFmpeg timed out after 300s")
-        return jsonify({"error": "FFmpeg assembly timed out"}), 500
-    except Exception as e:
-        print(f"[Visualizer] Assembly error: {e}")
-        return jsonify({"error": str(e)}), 500
-
 
 # =============================================================================
 # Fonts
@@ -2109,6 +2027,141 @@ def get_fonts():
 # =============================================================================
 # Folder Operations
 # =============================================================================
+
+# =============================================================================
+# Visualizer Presets (folder-based)
+# =============================================================================
+
+@api.route("/presets/list", methods=["GET"])
+def list_presets():
+    """List all available visualizer preset names from resources/presets/ folder"""
+    try:
+        if not PRESETS_DIR.exists():
+            return jsonify({"presets": [], "count": 0})
+
+        presets = sorted([
+            f.stem for f in PRESETS_DIR.iterdir()
+            if f.suffix == '.json' and f.is_file()
+        ])
+        return jsonify({"presets": presets, "count": len(presets)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/presets/load/<path:name>", methods=["GET"])
+def load_preset(name):
+    """Load a single preset JSON by name"""
+    try:
+        preset_path = PRESETS_DIR / f"{name}.json"
+        if not preset_path.exists():
+            return jsonify({"error": f"Preset not found: {name}"}), 404
+        # Ensure path is within PRESETS_DIR (path traversal prevention)
+        if not preset_path.resolve().is_relative_to(PRESETS_DIR.resolve()):
+            return jsonify({"error": "Invalid preset path"}), 400
+        return send_file(str(preset_path), mimetype='application/json')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/presets/load-batch", methods=["POST"])
+def load_presets_batch():
+    """Load multiple presets at once. Body: { "names": ["preset1", "preset2", ...] }"""
+    try:
+        data = request.json
+        names = data.get("names", [])
+        result = {}
+        for name in names:
+            preset_path = PRESETS_DIR / f"{name}.json"
+            if preset_path.exists() and preset_path.resolve().is_relative_to(PRESETS_DIR.resolve()):
+                with open(preset_path, 'r') as f:
+                    result[name] = json.load(f)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route("/presets/delete/<path:name>", methods=["DELETE"])
+def delete_preset(name):
+    """Delete a preset by name"""
+    try:
+        preset_path = PRESETS_DIR / f"{name}.json"
+        if not preset_path.exists():
+            return jsonify({"error": f"Preset not found: {name}"}), 404
+        if not preset_path.resolve().is_relative_to(PRESETS_DIR.resolve()):
+            return jsonify({"error": "Invalid preset path"}), 400
+        preset_path.unlink()
+        return jsonify({"success": True, "deleted": name})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ─── Batch Processing ─────────────────────────────────────────────────
+
+@api.route("/batch/validate-files", methods=["POST"])
+def batch_validate_files():
+    """Validate multiple file paths and return metadata for each."""
+    data = request.json or {}
+    paths = data.get("paths", [])
+    if not isinstance(paths, list) or not paths:
+        return jsonify({"error": "paths array required"}), 400
+
+    AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"}
+    VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
+    results = []
+
+    for fp in paths:
+        if not fp or not isinstance(fp, str) or not os.path.isabs(fp):
+            results.append({"path": fp, "valid": False, "error": "Invalid path"})
+            continue
+        if not os.path.exists(fp):
+            results.append({"path": fp, "valid": False, "error": "File not found"})
+            continue
+
+        ext = os.path.splitext(fp)[1].lower()
+        if ext not in AUDIO_EXTS and ext not in VIDEO_EXTS:
+            results.append({"path": fp, "valid": False, "error": f"Unsupported format: {ext}"})
+            continue
+
+        file_type = "audio" if ext in AUDIO_EXTS else "video"
+        name = os.path.basename(fp)
+        duration = 0
+
+        try:
+            import subprocess
+            probe = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", fp],
+                capture_output=True, text=True, timeout=10,
+            )
+            if probe.returncode == 0:
+                import json as _json
+                info = _json.loads(probe.stdout)
+                duration = float(info.get("format", {}).get("duration", 0))
+        except Exception:
+            pass
+
+        results.append({
+            "path": fp,
+            "valid": True,
+            "name": name,
+            "type": file_type,
+            "duration": round(duration, 2),
+        })
+
+    return jsonify({"files": results, "total": len(results), "valid": sum(1 for r in results if r.get("valid"))})
+
+
+@api.route("/batch/pick-files", methods=["POST"])
+def batch_pick_files():
+    """Open a native multi-file dialog and return selected absolute paths."""
+    from services.file_dialog import open_multi_file_dialog
+
+    paths = open_multi_file_dialog(
+        file_type="media",
+        title="Select media files for batch processing",
+    )
+
+    return jsonify({"paths": paths, "count": len(paths)})
+
 
 @api.route("/open-folder", methods=["GET"])
 def open_folder():

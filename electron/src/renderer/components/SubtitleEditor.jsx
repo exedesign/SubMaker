@@ -207,7 +207,7 @@ function SubtitleEditor() {
         </h3>
         
         <div style={{ display: 'flex', gap: 8 }}>
-          {settings.dualSubtitleEnabled && (
+          {settings.dualSubtitleEnabled && secondarySubtitle.targetLanguage !== 'none' && (
             <button 
               className="btn btn-primary btn-sm"
               onClick={handleTranslateToSecondary}

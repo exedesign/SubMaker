@@ -133,6 +133,7 @@ function SecondarySubtitleEditor() {
               value={targetLanguage}
               onChange={(e) => setSecondaryLanguage(e.target.value)}
             >
+              <option value="none">None</option>
               {Object.entries(LANGUAGES).map(([code, name]) => (
                 <option key={code} value={code}>
                   {name}
@@ -142,6 +143,7 @@ function SecondarySubtitleEditor() {
           </div>
           
           {/* Translate Button */}
+          {targetLanguage !== 'none' && (
           <button
             className="btn btn-primary"
             style={{ width: '100%', marginTop: 8, marginBottom: 16 }}
@@ -162,6 +164,7 @@ function SecondarySubtitleEditor() {
               </>
             )}
           </button>
+          )}
           
           {hasTranslation && (
             <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 16, textAlign: 'center' }}>

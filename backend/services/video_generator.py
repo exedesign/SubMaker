@@ -213,21 +213,22 @@ class VideoGenerator:
             print(f"⚠️ Temp cleanup warning: {e}")
     
     def _preprocess_background_image(
-        self, 
-        image_path: str, 
-        width: int, 
-        height: int
+        self,
+        image_path: str,
+        width: int,
+        height: int,
+        temp_files: list = None
     ) -> str:
         """Pre-process background image to exact dimensions for 4K performance"""
-        
+
         # Skip preprocessing if disabled
         if not BACKGROUND_IMAGE_OPTIMIZATION:
             return image_path
-        
+
         # Create temp processed image path
         temp_image_name = f"bg_{uuid.uuid4().hex}_temp.jpg"
         temp_image_path = str(TEMP_DIR / temp_image_name)
-        
+
         # Pre-process image to exact size with FFmpeg (much faster than runtime scaling)
         cmd = [
             self.ffmpeg_path, "-y",
@@ -238,23 +239,25 @@ class VideoGenerator:
             "-frames:v", "1",  # Single frame
             temp_image_path
         ]
-        
+
         try:
             result = subprocess.run(
-                cmd, 
-                capture_output=True, 
+                cmd,
+                capture_output=True,
                 text=True,
                 encoding='utf-8',
                 errors='replace'
             )
-            
+
             if result.returncode != 0:
                 print(f"⚠️ Image preprocessing failed, using original: {result.stderr}")
                 return image_path
-            
+
             print(f"🚀 4K Background optimized: {temp_image_name}")
+            if temp_files is not None:
+                temp_files.append(temp_image_path)
             return temp_image_path
-            
+
         except Exception as e:
             print(f"⚠️ Image preprocessing error: {e}, using original")
             return image_path
@@ -266,7 +269,8 @@ class VideoGenerator:
         width: int,
         height: int,
         fps: int,
-        duration: float
+        duration: float,
+        temp_files: list = None
     ) -> list:
         """Build FFmpeg input arguments for background"""
         
@@ -288,7 +292,7 @@ class VideoGenerator:
         
         elif background_type == "image":
             # CUDA-optimized background image processing
-            processed_image = self._preprocess_background_image(background_value, width, height)
+            processed_image = self._preprocess_background_image(background_value, width, height, temp_files=temp_files)
             if self.hardware_codec and self.gpu_type == "nvidia":
                 # Optimized for NVENC with static image
                 return [
@@ -560,7 +564,7 @@ class VideoGenerator:
         if progress_callback:
             perf_info = f" using {self.gpu_type.upper()} GPU" if self.hardware_codec else ""
             bg_info = " with optimized background" if background_type == "image" else ""
-            progress_callback(100, f"4K Video generation complete{perf_info}{bg_info}!")
+            progress_callback(99, f"Finishing 4K render{perf_info}{bg_info}...")
 
         return {
             "output_path": output_path,
@@ -632,13 +636,15 @@ class VideoGenerator:
         # ── Build single-pass FFmpeg command ──────────────────────────
         cmd = [self.ffmpeg_path, "-y"]
         
-        # Hardware acceleration — use GPU for encoding only (h264_nvenc).
+        # Hardware acceleration — use GPU for decoding + encoding (h264_nvenc).
         # CUDA filters (scale_cuda/overlay_cuda) are incompatible with ASS subtitle
         # filter which requires CPU-accessible frames, so we disable them.
+        # hwaccel=auto with no output format: FFmpeg auto-transfers decoded frames
+        # from GPU→CPU for filter processing, then NVENC re-uploads for encoding.
         use_cuda_filters = False  # ASS subtitle filter is CPU-only
         if self.hardware_codec and self.gpu_type == "nvidia":
             cmd.extend(["-hwaccel", "auto"])
-            print("🚀 NVIDIA GPU acceleration: hwaccel=auto + h264_nvenc encoding")
+            print(f"🚀 NVIDIA GPU acceleration: hwaccel=auto + h264_nvenc encoding (quality={quality})")
         
         # Threading
         cpu_count = os.cpu_count() or 4
@@ -647,7 +653,8 @@ class VideoGenerator:
         
         # ── Input 0: Background ───────────────────────────────────────
         bg_input = self._build_background_input(
-            background_type, actual_bg_value, width, height, fps, duration
+            background_type, actual_bg_value, width, height, fps, duration,
+            temp_files=temp_files
         )
         cmd.extend(bg_input)
         input_count = 1  # background is [0]
@@ -745,7 +752,7 @@ class VideoGenerator:
         if viz_input_idx is not None:
             viz_opacity = max(0.0, min(1.0, visualizer_opacity))
             filter_parts.append(
-                f"[{viz_input_idx}:v]{scale_fn}={width}:{height},format=rgba,"
+                f"[{viz_input_idx}:v]format=yuv420p,{scale_fn}={width}:{height},format=rgba,"
                 f"colorchannelmixer=aa={viz_opacity}[viz_alpha]"
             )
             filter_parts.append(
@@ -817,13 +824,21 @@ class VideoGenerator:
             cmd.extend(["-c:v", "prores_ks", "-profile:v", "4444"])
         else:  # mp4
             if self.hardware_codec and self.gpu_type == "nvidia":
-                cmd.extend(["-c:v", "h264_nvenc", "-preset", "fast", "-cq", "20"])
+                # NVENC with quality-based settings + Turing/Ampere optimizations
+                cmd.extend(["-c:v", "h264_nvenc", "-rc", "vbr", "-tune", "hq",
+                            "-spatial-aq", "1", "-temporal-aq", "1"])
+                if quality == "high":
+                    cmd.extend(["-preset", "p5", "-cq", "18"])
+                elif quality == "medium":
+                    cmd.extend(["-preset", "p4", "-cq", "23"])
+                else:  # low
+                    cmd.extend(["-preset", "p3", "-cq", "28"])
             elif self.hardware_codec:
                 cmd.extend(["-c:v", self.hardware_codec])
             else:
                 cmd.extend(["-c:v", DEFAULT_VIDEO_CODEC])
         
-        cmd.extend(["-shortest"])
+        cmd.extend(["-shortest", "-movflags", "+faststart"])
         cmd.append(output_path)
         
         # ── Execute ───────────────────────────────────────────────────
@@ -876,22 +891,11 @@ class VideoGenerator:
             except:
                 pass
         
-        # Cleanup temp background image if created
-        if background_type == "image":
-            try:
-                for f in os.listdir(TEMP_DIR):
-                    if f.startswith("bg_") and f.endswith("_temp.jpg"):
-                        p = TEMP_DIR / f
-                        if p.exists():
-                            p.unlink()
-            except:
-                pass
-        
         if process.returncode != 0:
             raise RuntimeError(f"FFmpeg render failed: {stderr}")
         
         if progress_callback:
-            progress_callback(100, "Complete!")
+            progress_callback(99, "Finishing...")
         
         gpu_info = f" ({self.gpu_type.upper()} GPU)" if self.hardware_codec else " (CPU)"
         cuda_info = " + CUDA filters" if use_cuda_filters else ""

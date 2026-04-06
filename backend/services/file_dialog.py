@@ -125,3 +125,90 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
         except Exception:
             pass
         _dialog_lock.release()
+
+
+def open_multi_file_dialog(file_type="media", title="Select files", initial_dir=None):
+    """
+    Open a native Windows file dialog allowing multiple selections.
+
+    Returns:
+        list[str]: List of absolute file paths, or [] if cancelled / error.
+    """
+    if sys.platform != "win32":
+        print("[file_dialog] Not on Windows, skipping native dialog")
+        return []
+
+    if not _dialog_lock.acquire(blocking=False):
+        print("[file_dialog] Another dialog is already open")
+        return []
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".txt", prefix="dialog_multi_result_")
+    os.close(tmp_fd)
+
+    try:
+        preset = FILE_FILTERS.get(file_type)
+        if preset:
+            filter_str = f'{preset["description"]}|{preset["extensions"]}|All Files|*.*'
+        else:
+            filter_str = "All Files|*.*"
+
+        initial_dir_line = ""
+        if initial_dir and os.path.isdir(initial_dir):
+            escaped = initial_dir.replace("'", "''")
+            initial_dir_line = f"$dialog.InitialDirectory = '{escaped}'"
+
+        escaped_title = title.replace("'", "''")
+        escaped_filter = filter_str.replace("'", "''")
+        escaped_tmp = tmp_path.replace("'", "''")
+
+        ps_script = f"""
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = '{escaped_title}'
+$dialog.Filter = '{escaped_filter}'
+$dialog.Multiselect = $true
+{initial_dir_line}
+$form = New-Object System.Windows.Forms.Form
+$form.TopMost = $true
+$result = $dialog.ShowDialog($form)
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
+    $joined = [String]::Join("`n", $dialog.FileNames)
+    [System.IO.File]::WriteAllText('{escaped_tmp}', $joined, [System.Text.Encoding]::UTF8)
+}} else {{
+    [System.IO.File]::WriteAllText('{escaped_tmp}', '', [System.Text.Encoding]::UTF8)
+}}
+"""
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            capture_output=True,
+            timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
+        paths = []
+        if os.path.exists(tmp_path):
+            with open(tmp_path, "r", encoding="utf-8-sig") as f:
+                content = f.read().strip()
+                if content:
+                    paths = [p.strip() for p in content.split("\n") if p.strip()]
+
+        valid_paths = [p for p in paths if os.path.exists(p)]
+        print(f"[file_dialog] Multi-select: {len(valid_paths)} valid files from {len(paths)} selected")
+        return valid_paths
+
+    except subprocess.TimeoutExpired:
+        print("[file_dialog] Multi-select dialog timed out")
+        return []
+    except Exception as e:
+        print(f"[file_dialog] Multi-select error: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        _dialog_lock.release()

@@ -5,7 +5,7 @@ Generates ASS/SSA subtitle files with professional styling and animations
 import os
 import re
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 from pathlib import Path
 
 import sys
@@ -36,6 +36,8 @@ class SubtitleStyle:
     margin_left: int = 20      # Increased for 4K (2x of 1080p)
     margin_right: int = 20     # Increased for 4K (2x of 1080p)
     margin_vertical: int = 60  # Increased for 4K (2x of 1080p)
+    offset_x: int = 0  # Horizontal fine adjustment (pixels)
+    offset_y: int = 0  # Vertical fine adjustment (pixels)
     blur: float = 0
     
     def to_ass_color(self, hex_color: str, alpha: int = 0) -> str:
@@ -67,7 +69,7 @@ class SubtitleStyle:
             f"{self.border_width},"
             f"{self.shadow_depth},"
             f"{self.alignment},"
-            f"{self.margin_left},{self.margin_right},{self.margin_vertical},"
+            f"{max(0, self.margin_left + self.offset_x)},{max(0, self.margin_right - self.offset_x)},{max(0, self.margin_vertical + self.offset_y)},"
             f"1"  # Encoding
         )
 
@@ -122,6 +124,15 @@ class SubtitleEngine:
         centisecs = int((seconds % 1) * 100)
         return f"{hours}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
     
+    @staticmethod
+    def _hex_to_ass_color(hex_color: str) -> str:
+        """Convert hex color to ASS inline color format (&HBBGGRR&)"""
+        hex_color = hex_color.lstrip("#")
+        if len(hex_color) == 6:
+            r, g, b = hex_color[0:2], hex_color[2:4], hex_color[4:6]
+            return f"&H{b}{g}{r}&"
+        return "&HFFFFFF&"
+    
     def _apply_animation(
         self,
         text: str,
@@ -149,8 +160,12 @@ class SubtitleEngine:
         
         if animation.type == "karaoke" and words:
             # Debug karaoke animation
-            print(f"[KARAOKE DEBUG] Applying karaoke animation: words={words}, type={type(words)}")
+            print(f"[KARAOKE DEBUG] Applying karaoke animation: words={words}, type={type(words)}, karaoke_type={animation.karaoke_type}")
             karaoke_parts = []
+            
+            # \k = instant (whole word lights up at once)
+            # \kf = sweep/fill (color sweeps left-to-right across the word)
+            k_tag = "k" if animation.karaoke_type == "instant" else "kf"
             
             word_list = list(words)
             
@@ -159,7 +174,7 @@ class SubtitleEngine:
                 word_list = list(reversed(word_list))
             
             # Track cumulative time relative to subtitle start.
-            # Each \kf duration covers from the end of the previous syllable
+            # Each \k/\kf duration covers from the end of the previous syllable
             # to the end of the current syllable (including any gap before it).
             cumulative_cs = 0
             
@@ -168,7 +183,7 @@ class SubtitleEngine:
                     word = word_data.get("word", "").strip()
                     word_end = word_data.get("end", 0)
                     word_start = word_data.get("start", 0)
-                    # Calculate this word's \kf duration:
+                    # Calculate this word's duration:
                     # From where the previous word ended (cumulative) to this word's end
                     word_end_rel_cs = int((word_end - sub_start) * 100)
                     duration_cs = max(20, word_end_rel_cs - cumulative_cs)
@@ -182,17 +197,20 @@ class SubtitleEngine:
                 if word and not word.endswith(' '):
                     word += ' '
 
-                karaoke_parts.append(f"{{\\kf{duration_cs}}}{word}")
+                karaoke_parts.append(f"{{\\{k_tag}{duration_cs}}}{word}")
             
             # For RTL, reverse back to get correct visual order
             if animation.rtl:
                 karaoke_parts = list(reversed(karaoke_parts))
-                
+            
             return "".join(karaoke_parts)
         
         elif animation.type == "karaoke" and not words:
             # FALLBACK: No word data, split text into words
-            print(f"[KARAOKE FALLBACK] Creating karaoke without words data for: '{text[:50]}...'")
+            print(f"[KARAOKE FALLBACK] Creating karaoke without words data for: '{text[:50]}...', karaoke_type={animation.karaoke_type}")
+            
+            # \k = instant, \kf = sweep
+            k_tag = "k" if animation.karaoke_type == "instant" else "kf"
             
             # Split text into words
             words_list = text.strip().split()
@@ -209,10 +227,10 @@ class SubtitleEngine:
                 # Kelime sonuna boşluk ekle (son kelime hariç)
                 if word != words_list[-1]:
                     word += " "
-                karaoke_parts.append(f"{{\\kf{duration_cs}}}{word}")
+                karaoke_parts.append(f"{{\\{k_tag}{duration_cs}}}{word}")
             
             fallback_result = "".join(karaoke_parts)
-            print(f"[KARAOKE FALLBACK] Generated: {len(words_list)} words with {duration_cs}cs each")
+            print(f"[KARAOKE FALLBACK] Generated: {len(words_list)} words with {duration_cs}cs each, tag=\\{k_tag}")
             return fallback_result
         
         if animation.type == "word_highlight" and words:
@@ -278,21 +296,27 @@ class SubtitleEngine:
         if animation is None:
             animation = AnimationConfig()
 
-        # Simplified karaoke style handling - avoid complex style duplication
-        if animation.type == "karaoke" and style:
-            # In ASS, \kf fills text FROM SecondaryColour TO PrimaryColour.
-            # So PrimaryColour = highlight (what filled words become) = yellow
-            #    SecondaryColour = unfilled (what waiting words show as) = original text color
-            original_primary = style.primary_color
-            style.primary_color = animation.highlight_color
-            style.secondary_color = original_primary
-        
+        # Resolve style from collection first (before any modifications)
         style = self.styles.get(style.name, style) if style else self.default_style
 
-        # Always update the style in collection (overwrite if exists)
+        # Cache the ORIGINAL (un-swapped) style in collection
         self.styles[style.name] = style
-        # Also update default style to use the provided style
         self.default_style = style
+
+        # Karaoke color setup — must be AFTER style resolution
+        # Use a copy to avoid mutating the cached style across renders
+        if animation.type == "karaoke" and style:
+            # ASS karaoke: \k/\kf sweeps text from SecondaryColour → PrimaryColour
+            # PrimaryColour = color AFTER sweep (already sung) = highlight color (yellow)
+            # SecondaryColour = color BEFORE sweep (not yet sung) = original text color
+            original_primary = style.primary_color
+            style = dc_replace(style,
+                primary_color=animation.highlight_color,
+                secondary_color=original_primary,
+            )
+            # Update the style in collection so the ASS style line uses swapped colors
+            self.styles[style.name] = style
+            print(f"[KARAOKE STYLE] Swapped colors: PrimaryColour={style.primary_color} (sung), SecondaryColour={style.secondary_color} (not-yet-sung), highlight={animation.highlight_color}")
         
         # Build ASS content
         ass_content = f"""[Script Info]
@@ -457,9 +481,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if animation is None:
             animation = AnimationConfig()
         
-        # Update styles
+        # Cache original styles before karaoke swap
         self.styles[primary_style.name] = primary_style
         self.styles[secondary_style.name] = secondary_style
+        
+        # Karaoke color setup for primary style (copy to avoid mutation)
+        if animation.type == "karaoke" and primary_style:
+            original_primary = primary_style.primary_color
+            primary_style = dc_replace(primary_style,
+                primary_color=animation.highlight_color,
+                secondary_color=original_primary,
+            )
+            # Update collection so the ASS style line uses swapped colors
+            self.styles[primary_style.name] = primary_style
         
         # Build ASS content
         ass_content = f"""[Script Info]

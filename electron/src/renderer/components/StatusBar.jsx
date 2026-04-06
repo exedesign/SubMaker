@@ -26,6 +26,12 @@ function StatusBar() {
     batchRenderCurrent,
     batchRenderTotal,
     selectedFormats,
+    vocalSeparating,
+    vocalSeparationProgress,
+    vocalSeparationMessage,
+    cancelVocalSeparation,
+    batch,
+    cancelBatch,
   } = useAppStore();
   
   const openOutputFolder = async () => {
@@ -59,6 +65,7 @@ function StatusBar() {
   };
   
   const getProcessType = () => {
+    if (vocalSeparating) return 'vocal';
     const step = processingStep?.toLowerCase() || '';
     if (step.includes('transcri') || step.includes('transkrip') || step.includes('model') || step.includes('whisper')) {
       return 'transcribe';
@@ -74,7 +81,59 @@ function StatusBar() {
   
   const processType = getProcessType();
   
-  if (isProcessing) {
+  // Effective progress values: vocal isolation progress takes priority when active
+  const effectiveProgress = vocalSeparating ? vocalSeparationProgress : (processingProgress || 0);
+  const effectiveStep = vocalSeparating ? vocalSeparationMessage : (currentTranscriptText ? `"${currentTranscriptText}"` : processingStep);
+  const effectiveCancel = vocalSeparating && !isProcessing ? cancelVocalSeparation : cancelRender;
+
+  // Batch processing mode — takes priority over single-file processing display
+  if (batch.isRunning) {
+    const bq = batch.queue;
+    const completedCount = bq.filter(q => q.status === 'completed').length;
+    const currentItem = bq.find(q => q.status === 'processing');
+    // Overall = completed items + fraction of current item's progress
+    const overallProgress = bq.length
+      ? Math.round(((completedCount + (currentItem ? (currentItem.progress || 0) / 100 : 0)) / bq.length) * 100)
+      : 0;
+    const itemStep = currentItem?.step || effectiveStep || 'Processing...';
+    const itemProgress = currentItem?.progress || effectiveProgress || 0;
+
+    return (
+      <div className="status-bar processing-mode">
+        <div className="status-process-full">
+          <div className="process-header">
+            <FiLoader className="process-icon spin" size={18} />
+            <span className="process-title">
+              Batch {completedCount + 1}/{bq.length}
+              {currentItem ? ` — ${currentItem.fileName}` : ''}
+            </span>
+          </div>
+          <div className="process-progress-wrapper">
+            <div className="process-progress-bar">
+              <div className="process-progress-fill batch" style={{ width: `${itemProgress}%` }} />
+            </div>
+            <span className="process-percent">{itemProgress}%</span>
+          </div>
+          <div className="process-status">
+            <span className="process-step">{itemStep}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>
+              Overall: {overallProgress}%
+            </span>
+          </div>
+          <button
+            className="process-cancel-btn"
+            onClick={cancelBatch}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, width: 'auto', padding: '0 10px', fontSize: 11, fontWeight: 500 }}
+          >
+            <FiX size={14} />
+            <span>Cancel Batch</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+  
+  if (isProcessing || vocalSeparating) {
     const formatLabels = { horizontal: '16:9', vertical: '9:16', square: '1:1' };
     const elapsedStr = renderElapsedTime > 0 ? formatDuration(renderElapsedTime) : null;
     const batchLabel = batchRenderActive
@@ -89,12 +148,14 @@ function StatusBar() {
             {processType === 'transcribe' && <FiMic className="process-icon pulse" size={18} />}
             {processType === 'render' && <FiFilm className="process-icon spin-slow" size={18} />}
             {processType === 'upload' && <FiMusic className="process-icon" size={18} />}
+            {processType === 'vocal' && <FiMusic className="process-icon pulse" size={18} />}
             {processType === 'other' && <FiLoader className="process-icon spin" size={18} />}
             
             <span className="process-title">
               {processType === 'transcribe' && 'Transcription'}
               {processType === 'render' && `Rendering${batchLabel}`}
               {processType === 'upload' && 'Uploading File'}
+              {processType === 'vocal' && 'Vocal Isolation'}
               {processType === 'other' && 'Processing'}
             </span>
             {elapsedStr && (
@@ -109,27 +170,27 @@ function StatusBar() {
             <div className="process-progress-bar">
               <div 
                 className={`process-progress-fill ${processType}`}
-                style={{ width: `${processingProgress || 0}%` }}
+                style={{ width: `${effectiveProgress}%` }}
               />
             </div>
-            <span className="process-percent">{processingProgress || 0}%</span>
+            <span className="process-percent">{effectiveProgress}%</span>
           </div>
           
           {/* Durum mesajı veya tanınan metin */}
           <div className="process-status">
             <span className="process-step">
-              {currentTranscriptText ? `"${currentTranscriptText}"` : processingStep}
+              {effectiveStep}
             </span>
           </div>
           
           <button
             className="process-cancel-btn"
-            onClick={cancelRender}
+            onClick={effectiveCancel}
             title="Cancel"
             style={{ display: 'flex', alignItems: 'center', gap: 6, width: 'auto', padding: '0 10px', fontSize: 11, fontWeight: 500 }}
           >
             <FiX size={14} />
-            <span>Cancel {processType === 'transcribe' ? 'Transcription' : processType === 'render' ? 'Render' : processType === 'upload' ? 'Upload' : 'Process'}</span>
+            <span>Cancel {processType === 'transcribe' ? 'Transcription' : processType === 'render' ? 'Render' : processType === 'upload' ? 'Upload' : processType === 'vocal' ? 'Separation' : 'Process'}</span>
           </button>
         </div>
       </div>

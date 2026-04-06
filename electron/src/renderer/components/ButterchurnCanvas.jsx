@@ -1,14 +1,17 @@
 /**
  * ButterchurnCanvas - WebGL Milkdrop visualizer component
  * Uses Butterchurn (WebGL Milkdrop implementation) for audio-reactive visuals
+ * Presets loaded from resources/presets/ folder via backend API
  */
 import React, { useRef, useEffect, useCallback } from 'react';
 import { getOrCreateAudioContext } from '../hooks/useAudioContext';
 
-// Lazy-load butterchurn and presets to avoid blocking initial render
+const API_URL = window.API_URL || 'http://localhost:5000/api';
+
+// Lazy-load butterchurn module
 let butterchurnModule = null;
-let presetsCache = null;
 let presetKeysCache = null;
+let presetsCache = {};  // on-demand cache: name → preset object
 
 async function loadButterchurn() {
   if (!butterchurnModule) {
@@ -19,73 +22,77 @@ async function loadButterchurn() {
 }
 
 /**
- * Test if a preset's equation strings can be compiled by new Function().
- * Butterchurn uses new Function('a', eqStr + ' return a;') internally.
- * Some presets have broken JS that throws SyntaxError.
+ * Fetch the list of available preset names from the backend (resources/presets/ folder).
+ * Cached after first load.
  */
-function isPresetValid(preset) {
+async function loadPresetKeys() {
+  if (presetKeysCache) return presetKeysCache;
   try {
-    const strs = [preset.init_eqs_str, preset.frame_eqs_str, preset.pixel_eqs_str];
-    for (const s of strs) {
-      if (s && s !== '') new Function('a', s + ' return a;');
-    }
-    if (preset.shapes) {
-      for (const shape of preset.shapes) {
-        if (shape.init_eqs_str) new Function('a', shape.init_eqs_str + ' return a;');
-        if (shape.frame_eqs_str) new Function('a', shape.frame_eqs_str + ' return a;');
-      }
-    }
-    if (preset.waves) {
-      for (const wave of preset.waves) {
-        if (wave.init_eqs_str) new Function('a', wave.init_eqs_str + ' return a;');
-        if (wave.frame_eqs_str) new Function('a', wave.frame_eqs_str + ' return a;');
-        if (wave.point_eqs_str && wave.point_eqs_str !== '') new Function('a', wave.point_eqs_str + ' return a;');
-      }
-    }
-    return true;
-  } catch {
-    return false;
+    const res = await fetch(`${API_URL}/presets/list`);
+    const data = await res.json();
+    presetKeysCache = data.presets || [];
+    console.log(`Butterchurn: ${presetKeysCache.length} presets available from folder`);
+  } catch (e) {
+    console.error('Failed to load preset list from backend:', e);
+    presetKeysCache = [];
+  }
+  return presetKeysCache;
+}
+
+/**
+ * Load a single preset by name. Fetches from backend and caches in memory.
+ */
+async function loadPresetByName(name) {
+  if (presetsCache[name]) return presetsCache[name];
+  try {
+    const res = await fetch(`${API_URL}/presets/load/${encodeURIComponent(name)}`);
+    if (!res.ok) return null;
+    const preset = await res.json();
+    presetsCache[name] = preset;
+    return preset;
+  } catch (e) {
+    console.warn(`Butterchurn: failed to load preset '${name}':`, e.message);
+    return null;
   }
 }
 
-async function loadPresets() {
-  if (!presetsCache) {
-    const mod = await import('butterchurn-presets');
-    const src = mod.default || mod;
-    let allPresets;
-    if (typeof src.getPresets === 'function') {
-      allPresets = src.getPresets();
-    } else if (typeof src === 'function') {
-      try { allPresets = src(); } catch { allPresets = src; }
-    } else {
-      allPresets = src;
-    }
-
-    // Filter out presets with broken equation strings
-    const validPresets = {};
-    const allKeys = Object.keys(allPresets);
-    for (const name of allKeys) {
-      if (isPresetValid(allPresets[name])) {
-        validPresets[name] = allPresets[name];
+/**
+ * Load multiple presets at once via batch API.
+ */
+async function loadPresetsBatch(names) {
+  const missing = names.filter(n => !presetsCache[n]);
+  if (missing.length > 0) {
+    try {
+      const res = await fetch(`${API_URL}/presets/load-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: missing }),
+      });
+      const data = await res.json();
+      for (const [name, preset] of Object.entries(data)) {
+        presetsCache[name] = preset;
       }
+    } catch (e) {
+      console.warn('Butterchurn: batch preset load failed:', e.message);
     }
-
-    presetsCache = validPresets;
-    presetKeysCache = Object.keys(validPresets).sort();
-    console.log(`Butterchurn: ${presetKeysCache.length}/${allKeys.length} presets valid`);
   }
-  return { presets: presetsCache, keys: presetKeysCache };
+  const result = {};
+  for (const name of names) {
+    if (presetsCache[name]) result[name] = presetsCache[name];
+  }
+  return result;
 }
 
 export async function getPresetKeys() {
-  const { keys } = await loadPresets();
-  return keys;
+  return await loadPresetKeys();
 }
 
 export async function getRandomPresetName() {
-  const { keys } = await loadPresets();
+  const keys = await loadPresetKeys();
   return keys[Math.floor(Math.random() * keys.length)];
 }
+
+export { loadPresetByName, loadPresetsBatch };
 
 // Singleton visualizer state — prevents WebGL context exhaustion
 let singletonViz = null;
@@ -93,6 +100,7 @@ let singletonCanvas = null;
 let singletonCtx = null;
 let singletonAnimFrame = null;
 let singletonAudioConnected = null;
+let _singletonContextLost = false;
 
 function stopRenderLoop() {
   if (singletonAnimFrame) {
@@ -103,11 +111,42 @@ function stopRenderLoop() {
 
 function destroySingleton() {
   stopRenderLoop();
+  // Remove context event listeners before destroying
+  if (singletonCanvas) {
+    singletonCanvas.removeEventListener('webglcontextlost', _onContextLost);
+    singletonCanvas.removeEventListener('webglcontextrestored', _onContextRestored);
+  }
   singletonViz = null;
   singletonAudioConnected = null;
   singletonCanvas = null;
   // Don't close AudioContext — it may be shared with other components
   singletonCtx = null;
+  _singletonContextLost = false;
+}
+
+// Context loss handler — marks singleton as dead so render loop stops wasting cycles
+function _onContextLost(e) {
+  e.preventDefault(); // Allow context restoration
+  _singletonContextLost = true;
+  stopRenderLoop();
+  console.warn('Butterchurn: WebGL context lost — render paused');
+}
+
+// Context restored handler — reinitialize the visualizer
+function _onContextRestored() {
+  console.log('Butterchurn: WebGL context restored — reinitializing');
+  _singletonContextLost = false;
+  // Mark singleton as stale so next initVisualizer creates fresh viz
+  singletonViz = null;
+}
+
+/**
+ * Destroy the preview visualizer singleton.
+ * Call before starting a viz export to free GPU resources and prevent context contention.
+ */
+export function destroyPreviewViz() {
+  destroySingleton();
+  console.log('Butterchurn: preview singleton destroyed (pre-export cleanup)');
 }
 
 function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivity = 1.0 }) {
@@ -120,7 +159,7 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
   const initVisualizer = useCallback(async (canvas, audioEl, targetWidth, targetHeight, preset) => {
     try {
       const butterchurn = await loadButterchurn();
-      const { presets, keys } = await loadPresets();
+      const keys = await loadPresetKeys();
       if (!mountedRef.current) return false;
 
       // Determine AudioContext
@@ -170,8 +209,25 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
 
       if (!mountedRef.current) return false;
 
+      // Suppress WebGL shader compilation warnings from butterchurn
+      // These are harmless (preset shaders with minor GLSL incompatibilities) but flood the console
+      // We temporarily filter console.warn/error during init to keep the console clean
+      const _origWarn = console.warn;
+      const _origError = console.error;
+      const webglFilter = (...args) => {
+        const msg = args[0];
+        if (typeof msg === 'string' && (msg.includes('WebGL') || msg.includes('INVALID_OPERATION') || msg.includes('program not linked') || msg.includes('program not valid'))) return;
+        _origWarn.apply(console, args);
+      };
+      const webglErrorFilter = (...args) => {
+        const msg = args[0];
+        if (typeof msg === 'string' && (msg.includes('WebGL') || msg.includes('INVALID_OPERATION') || msg.includes('program not linked') || msg.includes('program not valid'))) return;
+        _origError.apply(console, args);
+      };
+      console.warn = webglFilter;
+      console.error = webglErrorFilter;
+
       // Let butterchurn create and manage its own WebGL context
-      // Do NOT pre-create a WebGL context — it can conflict with butterchurn's internal context type
       const viz = butterchurn.createVisualizer(ctx, canvas, {
         width: targetWidth,
         height: targetHeight,
@@ -179,28 +235,45 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
         textureRatio: 1,
       });
 
+      // Restore original console methods
+      console.warn = _origWarn;
+      console.error = _origError;
+
       if (!mountedRef.current) return false;
 
       // Store as singleton
       singletonViz = viz;
       singletonCanvas = canvas;
       singletonCtx = ctx;
+      _singletonContextLost = false;
+
+      // Register context loss/restore handlers
+      canvas.addEventListener('webglcontextlost', _onContextLost);
+      canvas.addEventListener('webglcontextrestored', _onContextRestored);
 
       // Load initial preset — try selected, then random fallbacks
-      const initialPreset = preset && presets[preset]
+      const initialPresetName = preset && keys.includes(preset)
         ? preset
         : keys[Math.floor(Math.random() * keys.length)];
       let loadedPreset = null;
-      const candidates = [initialPreset, ...keys.sort(() => Math.random() - 0.5).slice(0, 10)];
+      const candidates = [initialPresetName, ...keys.sort(() => Math.random() - 0.5).slice(0, 10)];
+      // Suppress WebGL shader warnings during preset loading (same filter as init)
+      console.warn = webglFilter;
+      console.error = webglErrorFilter;
       for (const name of candidates) {
         try {
-          viz.loadPreset(presets[name], 0);
+          const presetData = await loadPresetByName(name);
+          if (!presetData) continue;
+          viz.loadPreset(presetData, 0);
           loadedPreset = name;
           break;
         } catch (e) {
-          console.warn(`Butterchurn: preset '${name}' load failed:`, e.message);
+          // Use original warn for our own messages
+          _origWarn(`Butterchurn: preset '${name}' load failed:`, e.message);
         }
       }
+      console.warn = _origWarn;
+      console.error = _origError;
       if (!loadedPreset) {
         console.error('Butterchurn: no preset could be loaded');
         return false;
@@ -217,7 +290,7 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
         }
       }
 
-      console.log('Butterchurn: visualizer initialized, preset:', initialPreset);
+      console.log('Butterchurn: visualizer initialized, preset:', loadedPreset);
 
       // Start render loop
       startRenderLoop();
@@ -235,6 +308,11 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
 
     function renderLoop() {
       if (!mountedRef.current) return;
+      // Skip rendering if context is lost — avoids flooding console with WebGL errors
+      if (_singletonContextLost) {
+        singletonAnimFrame = requestAnimationFrame(renderLoop);
+        return;
+      }
       try {
         if (singletonViz) singletonViz.render();
       } catch (e) {
@@ -259,7 +337,7 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
 
     return () => {
       mountedRef.current = false;
-      stopRenderLoop();
+      destroySingleton();
       if (retryTimerRef.current) {
         clearInterval(retryTimerRef.current);
         retryTimerRef.current = null;
@@ -335,13 +413,19 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
     if (!singletonViz || !presetName) return;
 
     async function changePreset() {
-      const { presets } = await loadPresets();
-      if (presets[presetName] && singletonViz) {
+      const presetData = await loadPresetByName(presetName);
+      if (presetData && singletonViz) {
+        // Suppress WebGL shader warnings during preset switch
+        const _w = console.warn, _e = console.error;
+        const wf = (...a) => { if (typeof a[0] === 'string' && (a[0].includes('WebGL') || a[0].includes('INVALID_OPERATION'))) return; _w.apply(console, a); };
+        const ef = (...a) => { if (typeof a[0] === 'string' && (a[0].includes('WebGL') || a[0].includes('INVALID_OPERATION'))) return; _e.apply(console, a); };
+        console.warn = wf; console.error = ef;
         try {
-          singletonViz.loadPreset(presets[presetName], 2.0);
+          singletonViz.loadPreset(presetData, 2.0);
         } catch (e) {
-          console.warn('Butterchurn: preset load failed:', presetName, e.message);
+          _w('Butterchurn: preset load failed:', presetName, e.message);
         }
+        console.warn = _w; console.error = _e;
       }
     }
     changePreset();

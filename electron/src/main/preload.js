@@ -175,6 +175,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Drag-and-drop path capture (preload has privileged access to File.path)
   getDroppedPaths: () => [..._lastDroppedPaths],
+
+  // Visualizer raw pipe — stream raw RGBA frames to FFmpeg via IPC
+  vizPipeStart: (opts) => ipcRenderer.invoke('viz:pipe-start', opts),
+  vizPipeWrite: (buffer) => ipcRenderer.invoke('viz:pipe-write', buffer),
+  vizPipeEnd: () => ipcRenderer.invoke('viz:pipe-end'),
+  vizPipeCancel: () => ipcRenderer.invoke('viz:pipe-cancel'),
 });
 
 console.log('[PRELOAD] electronAPI exposed to window object');

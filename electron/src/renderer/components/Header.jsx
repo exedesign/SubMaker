@@ -1,5 +1,17 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { FiFilm, FiSettings, FiX, FiGlobe, FiToggleLeft, FiToggleRight, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft } from 'react-icons/fi';
+import { FiFilm, FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft, FiTrash2, FiDroplet } from 'react-icons/fi';
+import THEMES from '../themes';
+
+const Toggle = ({ enabled, onClick }) => (
+  <button onClick={onClick} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, lineHeight: 0 }}>
+    <svg width="36" height="20" viewBox="0 0 36 20">
+      <rect x="0" y="0" width="36" height="20" rx="10"
+        fill={enabled ? 'rgb(34, 197, 94)' : 'rgba(255,255,255,0.15)'} />
+      <circle cx={enabled ? 26 : 10} cy="10" r="7"
+        fill="#fff" />
+    </svg>
+  </button>
+);
 import { useAppStore } from '../stores/appStore';
 
 function Header() {
@@ -10,6 +22,7 @@ function Header() {
     settings, setSettings, setDualSubtitleEnabled, secondarySubtitle, updateAudioVisualization,
     mediaFile, originalFileName, mediaType, uploadFile,
     currentStep, subtitles,
+    cacheInfo, fetchCacheInfo, clearCache,
   } = useAppStore();
 
   const handleChangeSource = useCallback(async () => {
@@ -70,6 +83,21 @@ function Header() {
   const handleMaximize = () => window.electronAPI?.maximizeWindow?.();
   const handleClose   = () => window.electronAPI?.closeWindow?.();
 
+  // Cache info polling
+  useEffect(() => {
+    fetchCacheInfo();
+    const iv = setInterval(fetchCacheInfo, 30000);
+    return () => clearInterval(iv);
+  }, [fetchCacheInfo]);
+
+  // Startup cache cleanup (if enabled)
+  useEffect(() => {
+    if (settings.cleanCacheOnStartup) {
+      clearCache().then(() => fetchCacheInfo());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <>
       <header className="header">
@@ -106,7 +134,55 @@ function Header() {
           {mediaFile && <FiUpload size={11} style={{ flexShrink: 0, opacity: 0.5 }} />}
         </button>
 
-        <div className="header-actions">
+        {/* Cache indicator — right next to settings gear */}
+        <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              cursor: 'pointer',
+              padding: '4px 10px',
+              borderRadius: 6,
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border-color)',
+              minWidth: 110,
+              height: 28,
+              position: 'relative',
+              overflow: 'hidden',
+              WebkitAppRegion: 'no-drag',
+              transition: 'border-color 0.2s',
+            }}
+            onClick={async () => { await clearCache(); fetchCacheInfo(); }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary-color)'}
+            onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
+            title={`Temp: ${cacheInfo.fileCount} file(s) \u2014 Click to clear`}
+          >
+            {/* Rainbow gradient fill */}
+            <div style={{
+              position: 'absolute',
+              left: 0, top: 0, bottom: 0,
+              width: `${Math.min(100, (cacheInfo.sizeBytes / (2 * 1024 * 1024 * 1024)) * 100)}%`,
+              background: 'linear-gradient(90deg, #22c55e, #84cc16, #eab308, #f97316, #ef4444)',
+              opacity: 0.35,
+              borderRadius: 6,
+              transition: 'width 0.5s ease',
+            }} />
+            <FiTrash2 size={11} style={{ position: 'relative', zIndex: 1, opacity: 0.7, flexShrink: 0 }} />
+            <span style={{
+              position: 'relative', zIndex: 1,
+              fontSize: 11, fontWeight: 500,
+              color: 'var(--text-secondary)',
+              whiteSpace: 'nowrap',
+            }}>
+              {cacheInfo.sizeBytes < 1024 * 1024
+                ? `${Math.max(0, cacheInfo.sizeBytes / 1024).toFixed(0)} KB`
+                : cacheInfo.sizeBytes < 1024 * 1024 * 1024
+                ? `${(cacheInfo.sizeBytes / (1024 * 1024)).toFixed(1)} MB`
+                : `${(cacheInfo.sizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+              }
+            </span>
+          </div>
           <button
             className="btn btn-ghost btn-icon"
             title="Settings"
@@ -179,6 +255,41 @@ function Header() {
             
             {/* Settings Content */}
             <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
+              {/* Color Theme */}
+              <div className="form-group">
+                <label className="label" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FiDroplet size={16} />
+                  Color Theme
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {Object.entries(THEMES).map(([key, theme]) => (
+                    <button
+                      key={key}
+                      className={`btn ${settings.colorTheme === key ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setSettings({ colorTheme: key })}
+                      style={{
+                        padding: '10px 12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        textAlign: 'left',
+                        justifyContent: 'flex-start',
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: 3 }}>
+                        {theme.preview.map((c, i) => (
+                          <div key={i} style={{ width: 14, height: 14, borderRadius: '50%', background: c, border: '1px solid rgba(255,255,255,0.15)' }} />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 500 }}>{theme.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '20px 0' }} />
+
               {/* GIF Provider */}
               <div className="form-group">
                 <label className="label" style={{ marginBottom: 8, display: 'block' }}>
@@ -248,16 +359,7 @@ function Header() {
                     <FiGlobe size={16} />
                     Secondary Subtitle
                   </label>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => setDualSubtitleEnabled(!settings.dualSubtitleEnabled)}
-                    style={{ 
-                      padding: 4,
-                      color: settings.dualSubtitleEnabled ? 'var(--primary-color)' : 'var(--text-secondary)'
-                    }}
-                  >
-                    {settings.dualSubtitleEnabled ? <FiToggleRight size={28} /> : <FiToggleLeft size={28} />}
-                  </button>
+                  <Toggle enabled={settings.dualSubtitleEnabled} onClick={() => setDualSubtitleEnabled(!settings.dualSubtitleEnabled)} />
                 </div>
                 <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
                   Show a translation in a second language below the main subtitle. Translation is automatic and manually editable.
@@ -296,16 +398,7 @@ function Header() {
                     <FiMusic size={16} />
                     Audio Visualization
                   </label>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => updateAudioVisualization({ showWaveform: !settings.audioVisualization.showWaveform })}
-                    style={{ 
-                      padding: 4,
-                      color: settings.audioVisualization.showWaveform ? 'var(--primary-color)' : 'var(--text-secondary)'
-                    }}
-                  >
-                    {settings.audioVisualization.showWaveform ? <FiToggleRight size={28} /> : <FiToggleLeft size={28} />}
-                  </button>
+                  <Toggle enabled={settings.audioVisualization.showWaveform} onClick={() => updateAudioVisualization({ showWaveform: !settings.audioVisualization.showWaveform })} />
                 </div>
                 <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
                   Show waveform visualization on the timeline.
@@ -404,6 +497,28 @@ function Header() {
                     {settings.seekStep ?? 5} sec
                   </span>
                 </div>
+              </div>
+
+              {/* Divider */}
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '20px 0' }} />
+
+              {/* Cache Cleanup on Startup */}
+              <div className="form-group">
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 8
+                }}>
+                  <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <FiTrash2 size={16} />
+                    Clear Cache on Startup
+                  </label>
+                  <Toggle enabled={settings.cleanCacheOnStartup} onClick={() => setSettings({ cleanCacheOnStartup: !settings.cleanCacheOnStartup })} />
+                </div>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Automatically clear temp files and vocal cache when the application starts.
+                </p>
               </div>
             </div>
             

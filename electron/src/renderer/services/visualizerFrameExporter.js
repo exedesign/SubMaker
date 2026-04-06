@@ -4,105 +4,88 @@
  *
  * Uses butterchurn's render({ elapsedTime }) for frame-precise timing.
  * Audio levels are extracted directly from the AudioBuffer (no real-time needed).
- * Frames are batch-uploaded to the backend and assembled by FFmpeg (NVENC).
  *
- * Works identically in both Electron and browser (same engine, same API).
+ * Transport modes (raw RGBA, no JPEG encoding):
+ *   1. Electron IPC pipe  — window.electronAPI.vizPipeStart available
+ *   2. SocketIO pipe      — browser/dev mode, streams to Flask backend via WebSocket
  */
 
-import { fetchJson, fetchArrayBuffer, fetchFormData } from './electronTransport';
+import { io } from 'socket.io-client';
+import { fetchArrayBuffer } from './electronTransport';
 
 const API_URL = window.API_URL || 'http://localhost:5000/api';
-const FRAME_BATCH_SIZE = 90;
+const SOCKET_URL = API_URL.replace(/\/api$/, '');
 
 // ─── Shared helpers ───────────────────────────────────────────────────
 
-let _cachedValid = null;
+let _cachedButterchurn = null;
+let _cachedPresetKeys = null;
+let _presetObjCache = {};  // on-demand: name → preset object
 
-/**
- * Test if a preset's equation strings can be compiled by new Function().
- * This is what butterchurn does internally — no WebGL needed.
- */
-function isPresetValid(preset) {
+async function loadButterchurnModule() {
+  if (!_cachedButterchurn) {
+    const mod = await import('butterchurn');
+    _cachedButterchurn = mod.default || mod;
+  }
+  return _cachedButterchurn;
+}
+
+async function loadPresetKeysFromBackend() {
+  if (_cachedPresetKeys) return _cachedPresetKeys;
   try {
-    const strs = [preset.init_eqs_str, preset.frame_eqs_str, preset.pixel_eqs_str];
-    for (const s of strs) {
-      if (s && s !== '') new Function('a', s + ' return a;');
-    }
-    if (preset.shapes) {
-      for (const shape of preset.shapes) {
-        if (shape.init_eqs_str) new Function('a', shape.init_eqs_str + ' return a;');
-        if (shape.frame_eqs_str) new Function('a', shape.frame_eqs_str + ' return a;');
-      }
-    }
-    if (preset.waves) {
-      for (const wave of preset.waves) {
-        if (wave.init_eqs_str) new Function('a', wave.init_eqs_str + ' return a;');
-        if (wave.frame_eqs_str) new Function('a', wave.frame_eqs_str + ' return a;');
-        if (wave.point_eqs_str && wave.point_eqs_str !== '') new Function('a', wave.point_eqs_str + ' return a;');
-      }
-    }
-    return true;
-  } catch {
-    return false;
+    const res = await fetch(`${API_URL}/presets/list`);
+    const data = await res.json();
+    _cachedPresetKeys = data.presets || [];
+    console.log(`[VizExport] ${_cachedPresetKeys.length} presets available from folder`);
+  } catch (e) {
+    console.error('[VizExport] Failed to load preset list:', e);
+    _cachedPresetKeys = [];
+  }
+  return _cachedPresetKeys;
+}
+
+async function loadPresetFromBackend(name) {
+  if (_presetObjCache[name]) return _presetObjCache[name];
+  try {
+    const res = await fetch(`${API_URL}/presets/load/${encodeURIComponent(name)}`);
+    if (!res.ok) return null;
+    const preset = await res.json();
+    _presetObjCache[name] = preset;
+    return preset;
+  } catch (e) {
+    console.warn(`[VizExport] Failed to load preset '${name}':`, e.message);
+    return null;
   }
 }
 
-async function loadButterchurnPresets() {
-  if (_cachedValid) return _cachedValid;
-
-  const butterchurnMod = await import('butterchurn');
-  const butterchurn = butterchurnMod.default || butterchurnMod;
-  const presetsMod = await import('butterchurn-presets');
-  const src = presetsMod.default || presetsMod;
-  let allPresets;
-  if (typeof src.getPresets === 'function') allPresets = src.getPresets();
-  else if (typeof src === 'function') { try { allPresets = src(); } catch { allPresets = src; } }
-  else allPresets = src;
-
-  // Filter out presets with broken equation strings
-  const presets = {};
-  const allKeys = Object.keys(allPresets);
-  for (const name of allKeys) {
-    if (isPresetValid(allPresets[name])) {
-      presets[name] = allPresets[name];
-    }
-  }
-
-  console.log(`[VizExport] Validated presets: ${Object.keys(presets).length}/${allKeys.length}`);
-  _cachedValid = { butterchurn, presets };
-  return _cachedValid;
-}
-
-function resolvePreset(presets, presetName) {
-  const keys = Object.keys(presets);
+function resolvePresetName(keys, presetName) {
   if (!keys.length) throw new Error('No Butterchurn presets available');
-  let name = presetName;
-  let preset = presets[name];
-  if (!preset) {
-    name = keys[Math.floor(Math.random() * keys.length)];
-    preset = presets[name];
-    console.warn(`[VizExport] Preset '${presetName}' not found, using: ${name}`);
-  }
-  return { preset, name };
+  if (keys.includes(presetName)) return presetName;
+  const fallback = keys[Math.floor(Math.random() * keys.length)];
+  console.warn(`[VizExport] Preset '${presetName}' not found, using: ${fallback}`);
+  return fallback;
 }
 
 /**
  * Safely load a preset into a butterchurn visualizer.
- * Some presets contain invalid JS that causes SyntaxError in new Function().
- * If loading fails, try up to 5 random alternatives.
+ * Some presets may fail to load. If loading fails, try up to 5 random alternatives.
  */
-function safeLoadPreset(viz, presets, preset, name) {
-  try {
-    viz.loadPreset(preset, 0);
-    return name;
-  } catch (e) {
-    console.warn(`[VizExport] Preset '${name}' failed to load: ${e.message}`);
-  }
-  const keys = Object.keys(presets);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const fallbackName = keys[Math.floor(Math.random() * keys.length)];
+async function safeLoadPreset(viz, presetKeys, presetName) {
+  const preset = await loadPresetFromBackend(presetName);
+  if (preset) {
     try {
-      viz.loadPreset(presets[fallbackName], 0);
+      viz.loadPreset(preset, 0);
+      return presetName;
+    } catch (e) {
+      console.warn(`[VizExport] Preset '${presetName}' failed to load: ${e.message}`);
+    }
+  }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const fallbackName = presetKeys[Math.floor(Math.random() * presetKeys.length)];
+    const fallback = await loadPresetFromBackend(fallbackName);
+    if (!fallback) continue;
+    try {
+      viz.loadPreset(fallback, 0);
       console.log(`[VizExport] Fallback preset loaded: ${fallbackName}`);
       return fallbackName;
     } catch (e2) {
@@ -125,11 +108,58 @@ async function fetchAndDecodeAudio(audioUrl) {
   return audioBuffer;
 }
 
-function cleanupWebGL(canvas) {
-  try {
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-    gl?.getExtension('WEBGL_lose_context')?.loseContext();
-  } catch {}
+// ─── Export canvas singleton ──────────────────────────────────────────
+// Reuse the same canvas+GL across exports to avoid Chromium GPU resource
+// exhaustion that causes context loss on the 2nd+ batch item.
+let _exportCanvas = null;
+let _exportGl = null;
+
+/**
+ * Get or create the export canvas+GL context. Reuses across calls.
+ * If the previous context was lost, recreates canvas from scratch.
+ */
+function getOrCreateExportCanvas(width, height) {
+  // Check if existing canvas is still usable
+  if (_exportCanvas && _exportGl && !_exportGl.isContextLost()) {
+    if (_exportCanvas.width !== width || _exportCanvas.height !== height) {
+      _exportCanvas.width = width;
+      _exportCanvas.height = height;
+    }
+    return { canvas: _exportCanvas, gl: _exportGl, reused: true };
+  }
+
+  // Need a fresh canvas (first call or context was lost)
+  if (_exportCanvas) {
+    console.log('[VizExport] Previous export canvas unusable, recreating');
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const gl = canvas.getContext('webgl2', {
+    preserveDrawingBuffer: true,
+    alpha: false,
+    antialias: false,
+    depth: false,
+    stencil: false,
+    premultipliedAlpha: false,
+    powerPreference: 'high-performance',
+  });
+
+  _exportCanvas = canvas;
+  _exportGl = gl;
+  return { canvas, gl, reused: false };
+}
+
+/**
+ * Non-destructive cleanup — release butterchurn resources but keep the
+ * canvas+GL context alive for reuse. Do NOT call loseContext().
+ */
+function cleanupExportViz(viz) {
+  // Butterchurn viz holds GPU textures/framebuffers — let GC collect them.
+  // The canvas and GL context persist in the module singleton for reuse.
+  viz = null;
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────
@@ -150,8 +180,9 @@ export async function exportVisualizerVideo({
 }) {
   console.log(`[VizExport] Starting: ${width}x${height}, ${duration}s, fps=${fps}`);
 
-  const { butterchurn, presets } = await loadButterchurnPresets();
-  const { preset, name } = resolvePreset(presets, presetName);
+  const butterchurn = await loadButterchurnModule();
+  const presetKeys = await loadPresetKeysFromBackend();
+  const resolvedName = resolvePresetName(presetKeys, presetName);
   const audioBuffer = await fetchAndDecodeAudio(audioUrl);
 
   // Always use audioBuffer's actual duration as the ground truth.
@@ -159,11 +190,17 @@ export async function exportVisualizerVideo({
   const actualDuration = audioBuffer.duration;
   const totalFrames = Math.ceil(actualDuration * fps);
 
-  console.log(`[VizExport] Preset: ${name}, Frames: ${totalFrames}, duration=${actualDuration.toFixed(1)}s (requested=${duration}s)`);
+  console.log(`[VizExport] Preset: ${resolvedName}, Frames: ${totalFrames}, duration=${actualDuration.toFixed(1)}s (requested=${duration}s)`);
 
-  return await renderFrames(butterchurn, presets, preset, name, audioBuffer, {
-    width, height, fps, totalFrames, actualDuration, onProgress, signal,
-  });
+  const opts = { width, height, fps, totalFrames, actualDuration, onProgress, signal };
+
+  if (window.electronAPI?.vizPipeStart) {
+    console.log('[VizExport] ★ Electron IPC pipe: raw RGBA → FFmpeg stdin');
+    return await renderFramesPipe(butterchurn, presetKeys, resolvedName, audioBuffer, opts);
+  }
+
+  console.log('[VizExport] ★ SocketIO pipe: raw RGBA → FFmpeg stdin via WebSocket');
+  return await renderFramesPipeSocketIO(butterchurn, presetKeys, resolvedName, audioBuffer, opts);
 }
 
 // ─── FFT for offline frequency analysis ──────────────────────────────
@@ -290,258 +327,308 @@ function getAudioLevelsAtTime(audioBuffer, time) {
   };
 }
 
-// ─── Sequential frame rendering ──────────────────────────────────────
+// ─── Raw stdin pipe rendering (Electron only) ────────────────────────
 
-async function renderFrames(butterchurn, presets, preset, presetName, audioBuffer, opts) {
+/**
+ * Stream raw RGBA frames directly to FFmpeg via Electron IPC stdin pipe.
+ * Eliminates JPEG encoding, HTTP upload, disk write, and FFmpeg JPEG decode per frame.
+ * FFmpeg handles vflip (WebGL bottom-up → top-down) in its filter chain.
+ */
+async function renderFramesPipe(butterchurn, presetKeys, presetName, audioBuffer, opts) {
   const { width, height, fps, totalFrames, actualDuration, onProgress, signal } = opts;
-  console.log(`[VizExport] Rendering ${totalFrames} frames, ${actualDuration.toFixed(1)}s`);
+  console.log(`[VizExport:Pipe] Rendering ${totalFrames} frames, ${actualDuration.toFixed(1)}s`);
 
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  // Reuse export canvas singleton to prevent GPU resource exhaustion across batch items
+  const { canvas, gl, reused } = getOrCreateExportCanvas(width, height);
+  if (reused) {
+    console.log('[VizExport:Pipe] Reusing existing export canvas');
+    // Small delay to let GPU stabilize after previous export
+    await new Promise(r => setTimeout(r, 50));
+  }
 
-  // Pre-create WebGL2 context WITH preserveDrawingBuffer before butterchurn gets it.
-  // Use powerPreference: 'high-performance' to hint the GPU and reduce context loss.
-  const gl = canvas.getContext('webgl2', {
-    preserveDrawingBuffer: true,
-    alpha: false,
-    antialias: false,
-    depth: false,
-    stencil: false,
-    premultipliedAlpha: false,
-    powerPreference: 'high-performance',
-  });
-
-  // Detect WebGL context loss
   let contextLost = false;
-  canvas.addEventListener('webglcontextlost', (e) => {
-    // Do NOT call e.preventDefault() — that signals "I will restore the context"
-    // but we have no restoration code.  Without preventDefault the browser
-    // immediately invalidates the GL state so gl.finish() / gl.readPixels()
-    // return as no-ops instead of potentially hanging.
+  canvas.addEventListener('webglcontextlost', () => {
     contextLost = true;
-    console.error('[VizExport] ⚠ WebGL context LOST!');
+    console.error('[VizExport:Pipe] ⚠ WebGL context LOST!');
   });
 
-  // audioContext = null: official butterchurn test pattern for offline rendering.
   const viz = butterchurn.createVisualizer(null, canvas, {
     width, height, pixelRatio: 1, textureRatio: 1,
   });
-  safeLoadPreset(viz, presets, preset, presetName);
+  await safeLoadPreset(viz, presetKeys, presetName);
 
-  // Helper 2D canvas for converting WebGL readPixels → JPEG blob.
-  // This completely bypasses any preserveDrawingBuffer / toBlob timing issues:
-  //   1. viz.render() → renders to WebGL framebuffer
-  //   2. gl.finish() → waits for GPU to complete all commands
-  //   3. gl.readPixels() → synchronously copies pixels from GPU to CPU
-  //   4. Draw flipped image to 2D helper canvas → toBlob for JPEG
-  const helperCanvas = document.createElement('canvas');
-  helperCanvas.width = width;
-  helperCanvas.height = height;
-  const ctx2d = helperCanvas.getContext('2d');
-  const stride = width * 4;
   const pixelBuf = new Uint8Array(width * height * 4);
 
-  // Create backend session for frame storage
-  const sessionData = await fetchJson(`${API_URL}/visualizer/session`, {
-    method: 'POST',
-    body: { fps, width, height },
-  });
-  const sessionId = sessionData.session_id;
-  if (!sessionId) throw new Error('Session creation failed');
-  console.log(`[VizExport] Session: ${sessionId}`);
+  // Start FFmpeg pipe process (main process computes correct temp dir path)
+  const { encoder } = await window.electronAPI.vizPipeStart({ width, height, fps });
+  console.log(`[VizExport:Pipe] FFmpeg started: encoder=${encoder}`);
 
   const frameInterval = 1 / fps;
-  let batch = [];
-  let batchNum = 0;
   let capturedFrames = 0;
-  let skippedFrames = 0;
   let renderErrors = 0;
   let lastPixelHash = 0;
   let frozenCount = 0;
   const t0 = performance.now();
 
-  for (let i = 0; i < totalFrames; i++) {
-    if (signal?.aborted) {
-      cleanupWebGL(canvas);
-      const abortErr = new Error('Render cancelled by user');
-      abortErr.name = 'AbortError';
-      throw abortErr;
-    }
-
-    // Check context loss both via event flag AND synchronous gl.isContextLost().
-    // gl.isContextLost() catches loss that occurred DURING the previous iteration
-    // before the async webglcontextlost DOM event had a chance to fire.
-    if (contextLost || gl.isContextLost()) {
-      if (!contextLost) {
-        contextLost = true;
-        console.warn(`[VizExport] Context lost detected via gl.isContextLost() at frame ${i}`);
-      } else {
-        console.warn(`[VizExport] Context lost (event flag) at frame ${i}, stopping render`);
+  try {
+    for (let i = 0; i < totalFrames; i++) {
+      // Abort check
+      if (signal?.aborted) {
+        await window.electronAPI.vizPipeCancel();
+        const abortErr = new Error('Render cancelled by user');
+        abortErr.name = 'AbortError';
+        throw abortErr;
       }
-      break;
-    }
 
-    const time = i * frameInterval;
-    const audioLevels = getAudioLevelsAtTime(audioBuffer, time);
-
-    // Render the frame
-    try {
-      viz.render({
-        elapsedTime: frameInterval,
-        audioLevels,
-      });
-    } catch (e) {
-      renderErrors++;
-      if (renderErrors <= 5) console.warn(`[VizExport] Frame ${i} render error:`, e.message);
-      // Check if the render threw because the context is gone
-      if (gl.isContextLost()) {
+      // Context loss check
+      if (contextLost || gl.isContextLost()) {
         contextLost = true;
-        console.warn(`[VizExport] Context lost during viz.render() at frame ${i}`);
+        console.warn(`[VizExport:Pipe] Context lost at frame ${i}, stopping`);
         break;
       }
-      continue;
+
+      const time = i * frameInterval;
+      const audioLevels = getAudioLevelsAtTime(audioBuffer, time);
+
+      // Render frame
+      try {
+        viz.render({ elapsedTime: frameInterval, audioLevels });
+      } catch (e) {
+        renderErrors++;
+        if (renderErrors <= 5) console.warn(`[VizExport:Pipe] Frame ${i} render error:`, e.message);
+        if (gl.isContextLost()) { contextLost = true; break; }
+        continue;
+      }
+
+      // GPU sync + context loss checks
+      if (gl.isContextLost()) { contextLost = true; break; }
+      try { gl.finish(); } catch { contextLost = true; break; }
+      if (gl.isContextLost()) { contextLost = true; break; }
+
+      // Read raw pixels (RGBA, bottom-up — FFmpeg vflip handles orientation)
+      try {
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf);
+      } catch { contextLost = true; break; }
+
+      // Frozen frame detection
+      let pixelHash = 0;
+      for (let p = 0; p < pixelBuf.length; p += 4001) pixelHash += pixelBuf[p];
+      if (pixelHash === lastPixelHash) { frozenCount++; } else { frozenCount = 0; }
+      lastPixelHash = pixelHash;
+
+      // Send raw buffer to FFmpeg stdin via IPC (with backpressure)
+      await window.electronAPI.vizPipeWrite(pixelBuf.buffer);
+      capturedFrames++;
+
+      // Diagnostics every 60 frames
+      if (i % 60 === 0) {
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+        const fps_actual = (capturedFrames / parseFloat(elapsed)).toFixed(1);
+        console.log(`[VizExport:Pipe] Frame ${i}/${totalFrames} | fps=${fps_actual} | frozen=${frozenCount} | ${elapsed}s`);
+      }
+
+      // Progress callback
+      if (onProgress && i % 30 === 0) {
+        onProgress(Math.round((i / totalFrames) * 80));
+      }
+
+      // Yield to event loop every 10 frames for UI responsiveness
+      if (i % 10 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
-
-    // Synchronous context loss check BEFORE gl.finish() — some GPU drivers
-    // hang indefinitely on gl.finish() after context loss instead of returning.
-    if (gl.isContextLost()) {
-      contextLost = true;
-      console.warn(`[VizExport] Context lost before gl.finish() at frame ${i}, stopping`);
-      break;
+  } catch (err) {
+    // On any error, cancel the pipe (but keep canvas alive for reuse)
+    if (err.name !== 'AbortError') {
+      try { await window.electronAPI.vizPipeCancel(); } catch {}
     }
-
-    // Force GPU to finish all pending operations before reading pixels.
-    // Wrapped in try-catch: on some Chromium/NVIDIA combos gl.finish()
-    // can throw after context loss even though we checked isContextLost() above.
-    try {
-      gl.finish();
-    } catch (glErr) {
-      contextLost = true;
-      console.warn(`[VizExport] gl.finish() threw at frame ${i}: ${glErr.message}, stopping`);
-      break;
-    }
-
-    // Double-check after finish — context may have been lost during the GPU sync.
-    if (gl.isContextLost()) {
-      contextLost = true;
-      console.warn(`[VizExport] Context lost after gl.finish() at frame ${i}, stopping`);
-      break;
-    }
-
-    // Synchronous pixel capture — reads directly from GPU framebuffer.
-    // This is immune to preserveDrawingBuffer and async timing issues.
-    try {
-      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf);
-    } catch (glErr) {
-      contextLost = true;
-      console.warn(`[VizExport] gl.readPixels() threw at frame ${i}: ${glErr.message}, stopping`);
-      break;
-    }
-
-    // Quick pixel hash to detect frozen/identical frames
-    let pixelHash = 0;
-    for (let p = 0; p < pixelBuf.length; p += 4001) pixelHash += pixelBuf[p];
-
-    if (pixelHash === lastPixelHash) {
-      frozenCount++;
-    } else {
-      frozenCount = 0;
-    }
-    lastPixelHash = pixelHash;
-
-    // Flip vertically (WebGL readPixels returns bottom-up) and write to 2D canvas
-    const imageData = ctx2d.createImageData(width, height);
-    for (let y = 0; y < height; y++) {
-      const srcOff = (height - 1 - y) * stride;
-      imageData.data.set(pixelBuf.subarray(srcOff, srcOff + stride), y * stride);
-    }
-    ctx2d.putImageData(imageData, 0, 0);
-
-    // Convert to JPEG via 2D canvas (no WebGL buffer dependency)
-    const blob = await new Promise((resolve) => {
-      helperCanvas.toBlob(resolve, 'image/jpeg', 0.90);
-    });
-
-    if (!blob || blob.size < 100) {
-      skippedFrames++;
-      if (skippedFrames <= 5) console.warn(`[VizExport] Frame ${i} empty (blob=${blob?.size}), skipping`);
-      continue;
-    }
-
-    // Log diagnostic info every 30 frames
-    if (i % 30 === 0) {
-      console.log(`[VizExport] Frame ${i}/${totalFrames} | blob=${blob.size} | hash=${pixelHash} | frozen=${frozenCount}`);
-    }
-
-    batch.push({ index: capturedFrames, blob });
-    capturedFrames++;
-
-    // Upload batch when full
-    if (batch.length >= FRAME_BATCH_SIZE) {
-      await uploadFrameBatch(sessionId, batchNum, batch);
-      batchNum++;
-      batch = [];
-    }
-
-    if (onProgress && i % 30 === 0) {
-      onProgress(Math.round((i / totalFrames) * 75));
-    }
-
-    // Yield to event loop every 10 frames for UI responsiveness
-    if (i % 10 === 0) {
-      await new Promise((r) => setTimeout(r, 0));
-    }
+    throw err;
   }
-
-  // Upload remaining frames
-  if (batch.length > 0) {
-    await uploadFrameBatch(sessionId, batchNum, batch);
-  }
-
-  // Cleanup WebGL before assembly — prevents GPU holding resources during FFmpeg
-  cleanupWebGL(canvas);
 
   const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
   console.log(
-    `[VizExport] Done: ${capturedFrames} captured, ${skippedFrames} empty, ${renderErrors} errors, ` +
-    `contextLost=${contextLost}, frozenStreak=${frozenCount} | ${elapsed}s`
+    `[VizExport:Pipe] Capture done: ${capturedFrames}/${totalFrames} frames, ` +
+    `${renderErrors} errors, contextLost=${contextLost}, frozen=${frozenCount} | ${elapsed}s`
   );
 
   if (capturedFrames === 0) {
-    throw new Error('Visualizer export failed: no frames were captured (WebGL context lost immediately)');
+    try { await window.electronAPI.vizPipeCancel(); } catch {}
+    throw new Error('Visualizer export failed: no frames captured');
   }
 
-  if (contextLost) {
-    console.warn(`[VizExport] Context was lost — assembling partial video with ${capturedFrames}/${totalFrames} frames`);
+  // Frozen frame threshold: if >50% frames were frozen, the output is unusable
+  if (frozenCount > totalFrames * 0.5) {
+    console.error(`[VizExport:Pipe] Too many frozen frames (${frozenCount}/${totalFrames}), output unusable`);
+    try { await window.electronAPI.vizPipeCancel(); } catch {}
+    throw new Error(`Visualizer export failed: ${frozenCount}/${totalFrames} frames frozen (WebGL context issue)`);
   }
 
-  if (onProgress) onProgress(80);
+  if (onProgress) onProgress(85);
 
-  // Assemble video on backend via FFmpeg
-  const result = await assembleFrames(sessionId, fps, capturedFrames);
+  // Close stdin and wait for FFmpeg to finish encoding
+  console.log('[VizExport:Pipe] Closing stdin, waiting for FFmpeg...');
+  const result = await window.electronAPI.vizPipeEnd();
 
   if (onProgress) onProgress(100);
-  console.log(`[VizExport] Video: ${result.videoPath}`);
+  console.log(`[VizExport:Pipe] Video: ${result.videoPath} (${result.fileSizeMB} MB)`);
   return result.videoPath;
 }
 
-// ─── Backend communication ────────────────────────────────────────────
+// ─── SocketIO pipe rendering (browser / dev mode) ────────────────────
 
-async function uploadFrameBatch(sessionId, batchIndex, frames) {
-  const formData = new FormData();
-  formData.append('session_id', sessionId);
-  for (const { index, blob } of frames) {
-    formData.append('frames', blob, `frame_${String(index).padStart(5, '0')}.jpg`);
-  }
-  const data = await fetchFormData(`${API_URL}/visualizer/frames`, formData);
-  console.log(`[VizExport] Batch ${batchIndex}: ${data.received} frames uploaded`);
-}
+/**
+ * Stream raw RGBA frames to Flask backend via WebSocket (socket.io).
+ * Equivalent to the Electron IPC pipe but works without the Electron API.
+ * Backend spawns FFmpeg and pipes the raw stream directly — no JPEG encoding.
+ */
+async function renderFramesPipeSocketIO(butterchurn, presetKeys, presetName, audioBuffer, opts) {
+  const { width, height, fps, totalFrames, actualDuration, onProgress, signal } = opts;
+  console.log(`[VizExport:WS] Rendering ${totalFrames} frames, ${actualDuration.toFixed(1)}s`);
 
-async function assembleFrames(sessionId, fps, totalFrames) {
-  console.log(`[VizExport] Assembling ${totalFrames} frames @ ${fps}fps...`);
-  return await fetchJson(`${API_URL}/visualizer/assemble`, {
-    method: 'POST',
-    body: { session_id: sessionId, fps, total_frames: totalFrames },
+  const socket = io(SOCKET_URL, { transports: ['websocket'] });
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Socket connect timeout')), 5000);
+    socket.once('connect', () => { clearTimeout(timer); resolve(); });
+    socket.once('connect_error', (e) => { clearTimeout(timer); reject(e); });
   });
+
+  const { canvas, gl, reused } = getOrCreateExportCanvas(width, height);
+  if (reused) {
+    console.log('[VizExport:WS] Reusing existing export canvas');
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  let contextLost = false;
+  canvas.addEventListener('webglcontextlost', () => {
+    contextLost = true;
+    console.error('[VizExport:WS] ⚠ WebGL context LOST!');
+  });
+
+  const viz = butterchurn.createVisualizer(null, canvas, {
+    width, height, pixelRatio: 1, textureRatio: 1,
+  });
+  await safeLoadPreset(viz, presetKeys, presetName);
+
+  const pixelBuf = new Uint8Array(width * height * 4);
+
+  const { encoder } = await new Promise((resolve, reject) => {
+    socket.emit('viz:pipe:start', { width, height, fps }, (res) => {
+      if (res?.error) reject(new Error(res.error));
+      else resolve(res);
+    });
+  });
+  console.log(`[VizExport:WS] FFmpeg started: encoder=${encoder}`);
+
+  const frameInterval = 1 / fps;
+  let capturedFrames = 0;
+  let renderErrors = 0;
+  let lastPixelHash = 0;
+  let frozenCount = 0;
+  const t0 = performance.now();
+
+  // Abort if socket disconnects mid-render
+  let socketError = null;
+  socket.once('disconnect', () => { socketError = new Error('Socket disconnected during render'); });
+
+  try {
+    for (let i = 0; i < totalFrames; i++) {
+      if (signal?.aborted) {
+        socket.emit('viz:pipe:cancel');
+        socket.disconnect();
+        const err = new Error('Render cancelled by user');
+        err.name = 'AbortError';
+        throw err;
+      }
+
+      if (socketError) throw socketError;
+
+      if (contextLost || gl.isContextLost()) {
+        contextLost = true;
+        console.warn(`[VizExport:WS] Context lost at frame ${i}, stopping`);
+        break;
+      }
+
+      const time = i * frameInterval;
+      const audioLevels = getAudioLevelsAtTime(audioBuffer, time);
+
+      try {
+        viz.render({ elapsedTime: frameInterval, audioLevels });
+      } catch (e) {
+        renderErrors++;
+        if (renderErrors <= 5) console.warn(`[VizExport:WS] Frame ${i} render error:`, e.message);
+        if (gl.isContextLost()) { contextLost = true; break; }
+        continue;
+      }
+
+      if (gl.isContextLost()) { contextLost = true; break; }
+      try { gl.finish(); } catch { contextLost = true; break; }
+      if (gl.isContextLost()) { contextLost = true; break; }
+
+      try {
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuf);
+      } catch { contextLost = true; break; }
+
+      let pixelHash = 0;
+      for (let p = 0; p < pixelBuf.length; p += 4001) pixelHash += pixelBuf[p];
+      if (pixelHash === lastPixelHash) { frozenCount++; } else { frozenCount = 0; }
+      lastPixelHash = pixelHash;
+
+      // Send raw RGBA frame — ack provides natural backpressure
+      await new Promise((resolve, reject) => {
+        socket.emit('viz:frame', pixelBuf.buffer, (res) => {
+          if (res?.error) reject(new Error(res.error));
+          else resolve();
+        });
+      });
+      capturedFrames++;
+
+      if (i % 60 === 0) {
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+        const fps_actual = (capturedFrames / parseFloat(elapsed)).toFixed(1);
+        console.log(`[VizExport:WS] Frame ${i}/${totalFrames} | fps=${fps_actual} | frozen=${frozenCount} | ${elapsed}s`);
+      }
+
+      if (onProgress && i % 30 === 0) {
+        onProgress(Math.round((i / totalFrames) * 80));
+      }
+
+      if (i % 10 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      try { socket.emit('viz:pipe:cancel'); } catch {}
+    }
+    socket.disconnect();
+    throw err;
+  }
+
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  console.log(
+    `[VizExport:WS] Capture done: ${capturedFrames}/${totalFrames} frames, ` +
+    `${renderErrors} errors, contextLost=${contextLost} | ${elapsed}s`
+  );
+
+  if (capturedFrames === 0) {
+    try { socket.emit('viz:pipe:cancel'); } catch {}
+    socket.disconnect();
+    throw new Error('Visualizer export failed: no frames captured');
+  }
+
+  if (onProgress) onProgress(85);
+
+  const result = await new Promise((resolve, reject) => {
+    socket.emit('viz:pipe:end', (res) => {
+      if (res?.error) reject(new Error(res.error));
+      else resolve(res);
+    });
+  });
+
+  socket.disconnect();
+
+  if (onProgress) onProgress(100);
+  console.log(`[VizExport:WS] Video: ${result.videoPath} (${result.fileSizeMB} MB)`);
+  return result.videoPath;
 }

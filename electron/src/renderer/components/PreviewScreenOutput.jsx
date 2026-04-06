@@ -350,7 +350,7 @@ export default function PreviewScreenOutput() {
               alignItems: 'center',
               zIndex: 2,
             }}>
-              <span style={subtitleStyle}>
+              <span style={{ ...subtitleStyle, direction: state?.isRtl ? 'rtl' : 'ltr' }}>
                 {renderText(displayText, anim, state?.animationProgress)}
               </span>
             </div>

@@ -254,10 +254,10 @@ function SubtitlePreview() {
                 <div 
                   className="subtitle-position"
                   style={{
-                    top: style.alignment >= 7 ? '10%' : style.alignment >= 4 ? '45%' : 'auto',
-                    bottom: style.alignment <= 3 ? `${style.marginVertical * scaleFactor}px` : 'auto',
-                    left: 0,
-                    right: 0,
+                    top: style.alignment >= 7 ? `${10 + (style.offsetY || 0) * 0.5}%` : style.alignment >= 4 ? `${45 + (style.offsetY || 0) * 0.5}%` : 'auto',
+                    bottom: style.alignment <= 3 ? `${Math.max(0, style.marginVertical * scaleFactor - (style.offsetY || 0) * 2)}px` : 'auto',
+                    left: `${(style.offsetX || 0) * 0.5}%`,
+                    right: `${-(style.offsetX || 0) * 0.5}%`,
                     textAlign: style.alignment % 3 === 1 ? 'left' : style.alignment % 3 === 0 ? 'right' : 'center',
                     padding: `0 ${10 * scaleFactor}px`,
                   }}

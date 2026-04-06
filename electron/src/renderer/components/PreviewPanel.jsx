@@ -11,6 +11,7 @@ import AnimationSelector from './AnimationSelector';
 import BackgroundSelector from './BackgroundSelector';
 import FormatSelector from './FormatSelector';
 import PlaylistPanel from './PlaylistPanel';
+import BatchPanel from './BatchPanel';
 
 // Utility function to convert backend file paths to HTTP URLs
 const getImageUrl = (imagePath) => {
@@ -63,7 +64,13 @@ function PreviewPanel() {
     globalAudioRef,
     cycleVisualizerPreset,
     playlist,
+    isProcessing,
+    detectedLanguage,
   } = useAppStore();
+
+  // RTL language detection
+  const RTL_LANGS = ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'];
+  const isRtl = RTL_LANGS.includes(detectedLanguage);
 
   // When playlist is active, use playlist's time & subtitles for karaoke display
   const effectivePlaybackTime = playlist.isActive ? playlist.playbackTime : playbackTime;
@@ -89,6 +96,7 @@ function PreviewPanel() {
     { id: 'background', title: 'Background', Component: BackgroundSelector },
     { id: 'animation', title: 'Animation', Component: AnimationSelector },
     { id: 'playlist', title: 'Playlist', Component: PlaylistPanel },
+    { id: 'batch', title: 'Batch', Component: BatchPanel },
   ];
   const PREVIEW_DEFAULT_ORDER = PREVIEW_SECTIONS_DEF.map(s => s.id);
   const PREVIEW_ORDER_KEY = 'submaker-preview-order';
@@ -567,13 +575,49 @@ function PreviewPanel() {
     return activeSecondary || null;
   }, [secondarySubtitle?.subtitles, effectivePlaybackTime, settings?.dualSubtitleEnabled]);
 
-  // Animation progress
+  // Animation progress — word-accurate for karaoke
   const animationProgress = useMemo(() => {
     if (!activeSubtitle) return { progress: 0, phase: 'none' };
     
     const duration = activeSubtitle.end - activeSubtitle.start;
     const elapsed = effectivePlaybackTime - activeSubtitle.start;
-    const progress = Math.min(100, Math.max(0, (elapsed / duration) * 100));
+    
+    let progress;
+    
+    // Word-accurate karaoke progress using word-level timing data
+    if (animation.type === 'karaoke' && activeSubtitle.words?.length > 0) {
+      const fullText = activeSubtitle.text;
+      const words = activeSubtitle.words;
+      let highlightedChars = 0;
+      let textPos = 0;
+      
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const wordText = (w.word || '').trim();
+        if (!wordText) continue;
+        
+        // Find word position in text
+        const idx = fullText.indexOf(wordText, textPos);
+        if (idx === -1) continue;
+        
+        if (effectivePlaybackTime >= w.end) {
+          // Word fully spoken
+          highlightedChars = idx + wordText.length;
+          textPos = highlightedChars;
+        } else if (effectivePlaybackTime >= w.start) {
+          // Currently speaking — sweep within word
+          const wordProgress = (effectivePlaybackTime - w.start) / Math.max(0.01, w.end - w.start);
+          highlightedChars = idx + Math.ceil(wordProgress * wordText.length);
+          break;
+        } else {
+          break;
+        }
+      }
+      
+      progress = Math.min(100, Math.max(0, (highlightedChars / Math.max(1, fullText.length)) * 100));
+    } else {
+      progress = Math.min(100, Math.max(0, (elapsed / duration) * 100));
+    }
     
     const fadeInDuration = animation.fadeIn / 1000;
     const fadeOutDuration = animation.fadeOut / 1000;
@@ -586,7 +630,7 @@ function PreviewPanel() {
     }
     
     return { progress, opacity: Math.max(0, Math.min(1, opacity)), elapsed, duration };
-  }, [activeSubtitle, effectivePlaybackTime, animation.fadeIn, animation.fadeOut]);
+  }, [activeSubtitle, effectivePlaybackTime, animation.fadeIn, animation.fadeOut, animation.type]);
 
   // Typewriter
   const typewriterChars = useMemo(() => {
@@ -704,6 +748,7 @@ function PreviewPanel() {
       background,
       animation: { type: animation.type, highlightColor: animation.highlightColor },
       animationProgress: animationProgress.progress,
+      isRtl,
       fmtWidth: formatInfo.width,
       fmtHeight: formatInfo.height,
       secondaryText: settings?.dualSubtitleEnabled ? (activeSecondarySubtitle?.translatedText || null) : null,
@@ -734,28 +779,37 @@ function PreviewPanel() {
     const handler = () => {
       let channel;
       try { channel = new BroadcastChannel('submaker-preview-sync'); } catch { return; }
+      // Read latest state at call time (not stale closure)
+      const s = useAppStore.getState();
+      const vf = s.videoFormat || 'horizontal';
+      const fmt = {
+        width: vf === 'vertical' ? 1080 : vf === 'square' ? 1080 : 1920,
+        height: vf === 'vertical' ? 1920 : vf === 'square' ? 1080 : 1080,
+      };
+      const secSub = s.settings?.dualSubtitleEnabled ? s.secondarySubtitle : null;
       const state = {
         type: 'PREVIEW_STATE',
-        displayText,
+        displayText: s.subtitles?.length ? s.subtitles[0]?.text : '',
         style: {
-          fontName: style.fontName, fontSize: style.fontSize, color: style.color,
-          bold: style.bold, italic: style.italic, shadowDepth: style.shadowDepth,
-          borderWidth: style.borderWidth, borderColor: style.borderColor,
-          alignment: style.alignment, marginVertical: style.marginVertical,
+          fontName: s.style.fontName, fontSize: s.style.fontSize, color: s.style.color,
+          bold: s.style.bold, italic: s.style.italic, shadowDepth: s.style.shadowDepth,
+          borderWidth: s.style.borderWidth, borderColor: s.style.borderColor,
+          alignment: s.style.alignment, marginVertical: s.style.marginVertical,
         },
-        background,
-        animation: { type: animation.type, highlightColor: animation.highlightColor },
-        animationProgress: animationProgress.progress,
-        fmtWidth: formatInfo.width, fmtHeight: formatInfo.height,
-        secondaryText: settings?.dualSubtitleEnabled ? (activeSecondarySubtitle?.translatedText || null) : null,
-        secondaryStyle: secondarySubtitle?.style || null,
+        background: s.background,
+        animation: { type: s.animation.type, highlightColor: s.animation.highlightColor },
+        animationProgress: 0,
+        isRtl: ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'].includes(s.detectedLanguage),
+        fmtWidth: fmt.width, fmtHeight: fmt.height,
+        secondaryText: secSub?.subtitles?.[0]?.translatedText || null,
+        secondaryStyle: secSub?.style || null,
         visualizer: {
-          enabled: visualizer.enabled,
-          presetName: visualizer.presetName,
-          opacity: visualizer.opacity,
-          sensitivity: visualizer.sensitivity,
+          enabled: s.visualizer.enabled,
+          presetName: s.visualizer.presetName,
+          opacity: s.visualizer.opacity,
+          sensitivity: s.visualizer.sensitivity,
         },
-        logos: (logos || []).filter(l => l.enabled && l.imageData).map(l => ({
+        logos: (s.logos || []).filter(l => l.enabled && l.imageData).map(l => ({
           id: l.id,
           imageData: l.imageData,
           position: l.position,
@@ -769,7 +823,7 @@ function PreviewPanel() {
     };
     window.electronAPI.onPreviewBroadcastNow(handler);
     return () => window.electronAPI.offPreviewBroadcastNow?.(handler);
-  }, [displayText, style, background, animation, animationProgress, formatInfo, settings?.dualSubtitleEnabled, activeSecondarySubtitle?.translatedText, secondarySubtitle?.style, visualizer, logos]);
+  }, []); // Mount-only — handler reads fresh state via getState()
 
   // Only show live preview when media is loaded or playlist has tracks
   // Hidden state toggle button (floating only)
@@ -811,8 +865,8 @@ function PreviewPanel() {
           position: 'relative',
         }}
       >
-        {/* Butterchurn Visualizer Overlay */}
-        {visualizer.enabled && (
+        {/* Butterchurn Visualizer Overlay — hidden during render to free GPU for VizExport */}
+        {visualizer.enabled && !isProcessing && (
           <div style={{
             position: 'absolute',
             top: 0, left: 0, right: 0, bottom: 0,
@@ -841,19 +895,18 @@ function PreviewPanel() {
           <div 
             className={`frame-subtitle ${animation.type}-mode`}
             style={{
-              top: style.alignment >= 7 ? '8%' : style.alignment >= 4 ? '42%' : 'auto',
-              bottom: style.alignment <= 3 ? `${Math.max(4, style.marginVertical * scaleFactor)}px` : 'auto',
-              left: '5%',
-              right: '5%',
-              justifyContent: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
+              top: style.alignment >= 7 ? `${8 + (style.offsetY || 0) * 0.5}%` : style.alignment >= 4 ? `${42 + (style.offsetY || 0) * 0.5}%` : 'auto',
+              bottom: style.alignment <= 3 ? `${Math.max(4, style.marginVertical * scaleFactor - (style.offsetY || 0) * 2)}px` : 'auto',
+              left: `${5 + (style.offsetX || 0) * 0.5}%`,
+              right: `${5 - (style.offsetX || 0) * 0.5}%`,
               flexDirection: 'column',
-              alignItems: 'center',
+              alignItems: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
               gap: '2px',
               ...getSubtitleAnimationStyle(),
             }}
           >
             {/* Main subtitle - with animation */}
-            <span style={getScaledStyle}>
+            <span style={{ ...getScaledStyle, direction: isRtl ? 'rtl' : 'ltr' }}>
               {renderAnimatedText(displayText)}
             </span>
           </div>
@@ -873,9 +926,9 @@ function PreviewPanel() {
                 `${Math.max(4, (secondarySubtitle?.style?.marginVertical || 120) * scaleFactor) - (secondarySubtitle?.style?.offsetY || 0) * 2}px` : 'auto',
               left: `${5 + (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
               right: `${5 - (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
-              justifyContent: ((secondarySubtitle?.style?.alignment || 5) % 3) === 1 ? 'flex-start' : 
-                             ((secondarySubtitle?.style?.alignment || 5) % 3) === 0 ? 'flex-end' : 'center',
-              alignItems: 'center',
+              flexDirection: 'column',
+              alignItems: ((secondarySubtitle?.style?.alignment || 5) % 3) === 1 ? 'flex-start' : 
+                         ((secondarySubtitle?.style?.alignment || 5) % 3) === 0 ? 'flex-end' : 'center',
               display: 'flex',
             }}
           >
@@ -886,8 +939,12 @@ function PreviewPanel() {
               color: secondarySubtitle?.style?.color || '#FFFF00',
               fontWeight: secondarySubtitle?.style?.bold ? 'bold' : 'normal',
               fontStyle: secondarySubtitle?.style?.italic ? 'italic' : 'normal',
-              textShadow: `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * scaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * scaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth || 1) * 2 * scaleFactor)}px rgba(0,0,0,0.9)`,
-              WebkitTextStroke: `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth || 2) * scaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`,
+              textShadow: (secondarySubtitle?.style?.shadowDepth ?? 1) > 0
+                ? `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth ?? 1) * scaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth ?? 1) * scaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth ?? 1) * 2 * scaleFactor)}px rgba(0,0,0,0.9)`
+                : 'none',
+              WebkitTextStroke: (secondarySubtitle?.style?.borderWidth ?? 2) > 0
+                ? `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth ?? 2) * scaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`
+                : 'none',
               paintOrder: 'stroke fill',
               textAlign: 'center',
               lineHeight: 1.2,
@@ -1004,8 +1061,8 @@ function PreviewPanel() {
             cursor: 'default',
           }}
         >
-          {/* Visualizer — reuse singleton, CSS scaled */}
-          {visualizer.enabled && (
+          {/* Visualizer — reuse singleton, CSS scaled — hidden during render to free GPU */}
+          {visualizer.enabled && !isProcessing && (
             <div style={{
               position: 'absolute',
               top: 0, left: 0, right: 0, bottom: 0,
@@ -1043,7 +1100,7 @@ function PreviewPanel() {
                 ...getSubtitleAnimationStyle(),
               }}
             >
-              <span style={fsScaledStyle}>
+              <span style={{ ...fsScaledStyle, direction: isRtl ? 'rtl' : 'ltr' }}>
                 {renderAnimatedText(displayText)}
               </span>
             </div>
@@ -1074,8 +1131,12 @@ function PreviewPanel() {
                 color: secondarySubtitle?.style?.color || '#FFFF00',
                 fontWeight: secondarySubtitle?.style?.bold ? 'bold' : 'normal',
                 fontStyle: secondarySubtitle?.style?.italic ? 'italic' : 'normal',
-                textShadow: `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * fsScaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * fsScaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth || 1) * 2 * fsScaleFactor)}px rgba(0,0,0,0.9)`,
-                WebkitTextStroke: `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth || 2) * fsScaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`,
+                textShadow: (secondarySubtitle?.style?.shadowDepth ?? 1) > 0
+                  ? `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth ?? 1) * fsScaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth ?? 1) * fsScaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth ?? 1) * 2 * fsScaleFactor)}px rgba(0,0,0,0.9)`
+                  : 'none',
+                WebkitTextStroke: (secondarySubtitle?.style?.borderWidth ?? 2) > 0
+                  ? `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth ?? 2) * fsScaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`
+                  : 'none',
                 paintOrder: 'stroke fill',
                 textAlign: 'center',
                 lineHeight: 1.2,

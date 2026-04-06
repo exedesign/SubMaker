@@ -2,12 +2,23 @@
  * ModelSelector Component
  * Subtitle model selection, Beam Size setting, Vocal Isolation model selection and separation preview
  */
-import React, { useState } from 'react';
+import React from 'react';
 import { useAppStore } from '../stores/appStore';
 import {
   FiSliders,
   FiVolume2, FiMusic,
 } from 'react-icons/fi';
+
+const Toggle = ({ enabled, onClick }) => (
+  <button onClick={onClick} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, lineHeight: 0 }}>
+    <svg width="36" height="20" viewBox="0 0 36 20">
+      <rect x="0" y="0" width="36" height="20" rx="10"
+        fill={enabled ? 'rgb(34, 197, 94)' : 'rgba(255,255,255,0.15)'} />
+      <circle cx={enabled ? 26 : 10} cy="10" r="7"
+        fill="#fff" />
+    </svg>
+  </button>
+);
 
 // Faster-Whisper model list
 const WHISPER_MODELS = {
@@ -36,22 +47,7 @@ const WHISPER_MODELS = {
   ],
 };
 
-// Supported languages
-const SUPPORTED_LANGUAGES = [
-  { code: 'auto', name: 'Auto Detect', description: 'Default for all languages (turbo)' },
-  { code: 'ar', name: 'Arabic', description: 'RTL language, medium recommended' },
-  { code: 'tr', name: 'Turkish', description: 'Turbo model recommended' },
-  { code: 'en', name: 'English', description: 'Turbo model recommended' },
-  { code: 'es', name: 'Spanish', description: 'Turbo model recommended' },
-  { code: 'fr', name: 'French', description: 'Turbo model recommended' },
-  { code: 'de', name: 'German', description: 'Turbo model recommended' },
-  { code: 'it', name: 'Italian', description: 'Turbo model recommended' },
-  { code: 'pt', name: 'Portuguese', description: 'Turbo model recommended' },
-  { code: 'ru', name: 'Russian', description: 'Turbo model recommended' },
-  { code: 'zh', name: 'Chinese', description: 'Medium recommended' },
-  { code: 'ja', name: 'Japanese', description: 'Medium recommended' },
-  { code: 'ko', name: 'Korean', description: 'Medium recommended' }
-];
+import { LANGUAGES } from './LanguageSelector';
 
 // Stem display labels
 const STEM_LABELS = {
@@ -81,9 +77,13 @@ function ModelSelector() {
     vocalSeparationMessage,
     separateVocals,
     mediaFile,
+    sourceLanguage,
+    setSourceLanguage,
   } = useAppStore();
 
-  const [selectedLanguage, setSelectedLanguage] = useState('auto');
+  // Derive selectedLanguage from store's sourceLanguage (null = 'auto')
+  const selectedLanguage = sourceLanguage || 'auto';
+  const selectedLanguageName = LANGUAGES.find(l => l.code === sourceLanguage)?.name || 'Auto Detect';
 
   const handleModelChange = (language, modelSize) => {
     setModelForLanguage(language, modelSize);
@@ -103,27 +103,10 @@ function ModelSelector() {
 
   return (
     <div>
-      {/* Language Selection */}
-      <div className="form-group">
-        <label className="label">Select Language</label>
-        <select
-          className="select"
-          value={selectedLanguage}
-          onChange={(e) => setSelectedLanguage(e.target.value)}
-        >
-          {SUPPORTED_LANGUAGES.map((lang) => (
-            <option key={lang.code} value={lang.code}>{lang.name}</option>
-          ))}
-        </select>
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>
-          {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.description}
-        </p>
-      </div>
-
       {/* Model Selection */}
       <div className="form-group">
         <label className="label">
-          Model - {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}
+          Model - {selectedLanguageName}
         </label>
         <select
           className="select"
@@ -185,22 +168,18 @@ function ModelSelector() {
             padding: 12,
           }}>
             {/* Enable/Disable Toggle */}
-            <label style={{
+            <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
-              cursor: 'pointer',
+              justifyContent: 'space-between',
               fontSize: 13,
             }}>
-              <input
-                type="checkbox"
-                checked={vocalIsolation}
-                onChange={(e) => setVocalIsolation(e.target.checked)}
-                style={{ width: 16, height: 16 }}
-              />
-              <FiVolume2 size={14} style={{ color: 'rgb(168, 85, 247)' }} />
-              <span style={{ fontWeight: 600 }}>Vocal Isolation</span>
-            </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <FiVolume2 size={14} style={{ color: 'rgb(168, 85, 247)' }} />
+                <span style={{ fontWeight: 600 }}>Vocal Isolation</span>
+              </label>
+              <Toggle enabled={vocalIsolation} onClick={() => setVocalIsolation(!vocalIsolation)} />
+            </div>
 
             {/* Auto model routing — no manual model selection needed */}
             {vocalIsolation && (
@@ -264,7 +243,7 @@ function ModelSelector() {
                   </div>
                 </div>
 
-                {/* Separate Button + Progress */}
+                {/* Separate Button */}
                 {mediaFile && (
                   <div style={{ marginTop: 8 }}>
                     <button
@@ -282,30 +261,7 @@ function ModelSelector() {
                       {vocalSeparating ? 'Separating...' : 'Separate'}
                     </button>
 
-                    {/* Progress bar */}
-                    {vocalSeparating && (
-                      <div style={{ marginTop: 6 }}>
-                        <div style={{
-                          height: 3,
-                          background: 'var(--bg-tertiary)',
-                          borderRadius: 2,
-                          overflow: 'hidden',
-                        }}>
-                          <div style={{
-                            height: '100%',
-                            width: `${vocalSeparationProgress}%`,
-                            background: 'rgb(168, 85, 247)',
-                            borderRadius: 2,
-                            transition: 'width 0.3s ease',
-                          }} />
-                        </div>
-                        <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                          {vocalSeparationMessage} ({vocalSeparationProgress}%)
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Separation Message (non-separating) */}
+                    {/* Separation error message (non-separating) */}
                     {!vocalSeparating && vocalSeparationMessage && !vocalSeparation && (
                       <p style={{ fontSize: 10, color: 'var(--accent-error)', marginTop: 4 }}>
                         {vocalSeparationMessage}
@@ -376,7 +332,7 @@ function ModelSelector() {
           onClick={() => {
             resetModelSettings();
             resetWhisperParams();
-            setSelectedLanguage('auto');
+            setSourceLanguage(null);
           }}
           style={{ width: '100%', fontSize: 11, padding: '6px 12px' }}
         >

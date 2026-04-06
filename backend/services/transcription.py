@@ -582,7 +582,8 @@ class TranscriptionService:
         word_timestamps: bool = True,
         progress_callback: Optional[callable] = None,
         preprocess_audio: bool = True,
-        user_params: Optional[Dict[str, Any]] = None
+        user_params: Optional[Dict[str, Any]] = None,
+        model_size_override: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Transcribe an audio file with language-specific optimizations
@@ -594,6 +595,7 @@ class TranscriptionService:
             word_timestamps: Include word-level timestamps
             progress_callback: Callback function for progress updates
             preprocess_audio: Whether to preprocess audio for better quality
+            model_size_override: Explicit model ID from frontend settings
 
         Returns:
             Dict containing segments and metadata
@@ -609,7 +611,7 @@ class TranscriptionService:
 
         if progress_callback:
             progress_callback(20, "Loading model...")
-        self.load_model(language)
+        self.load_model(language, model_size_override=model_size_override)
         
         if not os.path.exists(processed_audio_path):
             raise FileNotFoundError(f"Audio file not found: {processed_audio_path}")

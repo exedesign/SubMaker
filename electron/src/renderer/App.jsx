@@ -6,13 +6,23 @@ import MainContent from './components/MainContent';
 import StatusBar from './components/StatusBar';
 import PreviewPanel from './components/PreviewPanel';
 import PreviewScreenOutput from './components/PreviewScreenOutput';
+import THEMES from './themes';
 
 // Detect if this window is the second-display preview output
 const isPreviewScreen = new URLSearchParams(window.location.search).has('previewScreen');
 
 function MainApp() {
-  const { checkBackendHealth, backendStatus, previewMode } = useAppStore();
+  const { checkBackendHealth, backendStatus, previewMode, settings } = useAppStore();
   const fastPollRef = useRef(null);
+
+  // Apply color theme to :root CSS variables
+  useEffect(() => {
+    const theme = THEMES[settings.colorTheme] || THEMES['default'];
+    const root = document.documentElement;
+    Object.entries(theme.vars).forEach(([prop, value]) => {
+      root.style.setProperty(prop, value);
+    });
+  }, [settings.colorTheme]);
 
   useEffect(() => {
     checkBackendHealth();

@@ -297,6 +297,22 @@ class VocalIsolator:
             logger.info(f"Reusing cached model: {model_name}")
             return self._separator
 
+        # Explicitly free old separator before loading a new model
+        if self._separator is not None:
+            logger.info(f"Releasing old model: {self._separator_model}")
+            old_sep = self._separator
+            self._separator = None
+            self._separator_model = None
+            del old_sep
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
         # Check CUDA availability and configure environment for GPU compatibility
         use_cuda = False
         gpu_info = "CPU"
@@ -379,29 +395,73 @@ class VocalIsolator:
 
         logger.info(f"Starting separation: {audio_path}")
 
-        # Clean up any leftover intermediate files from a previous interrupted run.
-        # audio-separator skips files that already exist and returns [] when it does so,
-        # which causes a false "no vocals output" error on retry after cancellation.
-        audio_stem = Path(audio_path).stem
+        # Pre-convert input to 44100Hz stereo WAV with padding.
+        # BS-Roformer models expect 44100Hz stereo PCM; feeding MP3/other
+        # formats directly causes tensor size mismatches in STFT.
+        # Short audio (< 20s) is padded with silence — UNWA's chunk_size
+        # is ~17s at 44100Hz, and audio shorter than one chunk causes
+        # "size of tensor a (0) must match size of tensor b (N)" errors.
+        # The unique preconv filename ensures output filenames from
+        # audio-separator are also unique (no collisions between runs).
+        import uuid as _uuid
+        run_id = _uuid.uuid4().hex[:8]
+        actual_input = audio_path
+        temp_wav = str(self.cache_dir / f"_preconv_{run_id}.wav")
+        min_duration_sec = 20  # pad short audio to this minimum
         try:
-            for existing in self.cache_dir.iterdir():
-                name_lower = existing.name.lower()
-                # Match audio-separator output pattern: contains the input filename stem
-                # and one of the standard stem keywords (not our _hq archival copies)
-                if (audio_stem.lower() in name_lower
-                        and existing.suffix.lower() in ('.wav', '.flac', '.mp3')
-                        and '_hq' not in name_lower
-                        and ('vocal' in name_lower or 'instrumental' in name_lower
-                             or 'no_vocal' in name_lower)):
-                    logger.info(f"Removing stale separator output: {existing.name}")
-                    existing.unlink(missing_ok=True)
-        except Exception as clean_err:
-            logger.warning(f"Pre-separation cleanup failed (non-fatal): {clean_err}")
+            import subprocess
+            # Get duration
+            dur_probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", audio_path],
+                capture_output=True, text=True, timeout=10
+            )
+            src_duration = float(dur_probe.stdout.strip()) if dur_probe.stdout.strip() else 0
 
+            if src_duration > 0 and src_duration < min_duration_sec:
+                # Pad with silence to minimum duration
+                pad_secs = min_duration_sec - src_duration
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", audio_path,
+                     "-af", f"apad=pad_dur={pad_secs}",
+                     "-ar", "44100", "-ac", "2", "-acodec", "pcm_s16le",
+                     "-loglevel", "error", temp_wav],
+                    check=True, timeout=120
+                )
+                logger.info(f"Pre-converted to 44100Hz stereo WAV with {pad_secs:.1f}s padding (src={src_duration:.1f}s)")
+            else:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", audio_path,
+                     "-ar", "44100", "-ac", "2", "-acodec", "pcm_s16le",
+                     "-loglevel", "error", temp_wav],
+                    check=True, timeout=120
+                )
+                logger.info(f"Pre-converted to 44100Hz stereo WAV: {temp_wav}")
+            actual_input = temp_wav
+        except Exception as conv_err:
+            logger.warning(f"Pre-conversion failed, using original: {conv_err}")
+            temp_wav = None
+
+        # Intercept audio-separator's internal tqdm to forward segment progress.
+        # tqdm is patched at class level for the duration of sep.separate() only.
+        import tqdm as _tqdm_mod
+        _orig_tqdm_update = _tqdm_mod.tqdm.update
+        _tqdm_state = {"n": 0, "total": None}
+
+        def _tqdm_progress_hook(self, n=1):
+            _orig_tqdm_update(self, n)
+            if self.total and self.total > 0:
+                _tqdm_state["total"] = self.total
+                _tqdm_state["n"] = self.n
+                frac = min(1.0, self.n / self.total)
+                scaled = 22 + int(frac * 56)  # 22-78%, leaving room for 20 start / 80 post
+                if progress_callback:
+                    progress_callback(scaled, f"Separating... {self.n}/{self.total}")
+
+        _tqdm_mod.tqdm.update = _tqdm_progress_hook
         try:
-            output_files = sep.separate(audio_path)
+            output_files = sep.separate(actual_input)
         except SystemExit as e:
-            # Invalidate cached separator so next call gets a fresh instance
             self._separator = None
             self._separator_model = None
             raise RuntimeError(f"Separation failed (sys.exit): {e}")
@@ -414,11 +474,10 @@ class VocalIsolator:
                 import torch
                 torch.backends.cudnn.enabled = False
                 try:
-                    # Force reload model without cuDNN
                     self._separator = None
                     self._separator_model = None
                     sep = self._get_separator(model_name)
-                    output_files = sep.separate(audio_path)
+                    output_files = sep.separate(actual_input)
                     logger.info("Separation succeeded with cuDNN disabled")
                 except Exception as retry_err:
                     torch.backends.cudnn.enabled = True
@@ -430,7 +489,6 @@ class VocalIsolator:
             else:
                 raise
         except Exception as e:
-            # Invalidate cached separator on any failure to allow clean retry
             self._separator = None
             self._separator_model = None
             error_str = str(e).lower()
@@ -439,28 +497,31 @@ class VocalIsolator:
                     f"GPU separation failed (possible CUDA/cuDNN incompatibility): {e}"
                 ) from e
             raise RuntimeError(f"Separation failed: {e}") from e
+        finally:
+            _tqdm_mod.tqdm.update = _orig_tqdm_update
+
+        # Always invalidate the cached separator after each run.
+        # audio-separator keeps internal state that can cause subsequent
+        # separate() calls to return empty lists or stale results.
+        # Also delete the local sep reference BEFORE post-cleanup so that
+        # file handles are released on Windows (prevents PermissionError).
+        self._separator = None
+        self._separator_model = None
+        del sep
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("GPU memory freed after separation")
+        except Exception:
+            pass
+
         logger.info(f"Separation complete, output files: {output_files}")
 
-        # If audio-separator returned an empty list, try to find the output files ourselves.
-        # This can happen when files weren't properly cleaned up before the call.
         if not output_files:
-            logger.warning("sep.separate() returned empty list — scanning output dir for results")
-            audio_stem = Path(audio_path).stem
-            found = []
-            try:
-                for candidate in self.cache_dir.iterdir():
-                    n = candidate.name.lower()
-                    if (audio_stem.lower() in n
-                            and candidate.suffix.lower() in ('.wav', '.flac', '.mp3')
-                            and '_hq' not in n):
-                        found.append(str(candidate))
-            except Exception:
-                pass
-            if found:
-                logger.info(f"Fallback scan found: {found}")
-                output_files = found
-            else:
-                raise RuntimeError(f"MDX separation produced no output files for: {audio_path}")
+            raise RuntimeError(f"MDX separation produced no output files for: {audio_path}")
 
         if progress_callback:
             progress_callback(80, "Processing vocals...")
@@ -481,7 +542,7 @@ class VocalIsolator:
             f_lower = Path(f).name.lower()
             if 'vocal' in f_lower or 'voice' in f_lower:
                 vocals_path = f
-            elif 'instrument' in f_lower or 'no_vocal' in f_lower or 'accomp' in f_lower:
+            elif 'instrument' in f_lower or 'no_vocal' in f_lower or 'accomp' in f_lower or 'other' in f_lower:
                 instrumental_path = f
 
         # Fallback: first = vocals (primary output)
@@ -511,14 +572,19 @@ class VocalIsolator:
         self._convert_to_whisper_format(vocals_path, final_path)
         result["whisper_path"] = final_path
 
-        # Clean up separator raw output files
+        # Clean up pre-converted input and raw separator output files
+        if temp_wav:
+            try:
+                Path(temp_wav).unlink(missing_ok=True)
+            except Exception:
+                pass
         for f in resolved_files:
             try:
-                if Path(f).exists() and f != final_path:
-                    # Don't delete if it's one of our HQ copies
-                    hq_paths = [v for v in result.get("stems", {}).values()]
+                fp = Path(f)
+                if fp.exists() and f != result.get("whisper_path"):
+                    hq_paths = list(result.get("stems", {}).values())
                     if f not in hq_paths:
-                        os.remove(f)
+                        fp.unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -885,9 +951,13 @@ class VocalIsolator:
         UNWA_MODEL  = "bs_roformer_instrumental_resurrection_unwa.ckpt"
 
         # ── cache check ──────────────────────────────────────────────────
-        vocals_cached_whisper = self._get_cached(audio_path, "vocal_ep317") if need_vocals else None
-        vocals_cached_full    = self._get_cached_full(audio_path, "vocal_ep317") if need_vocals else None
-        instr_cached_full     = self._get_cached_full(audio_path, "instrumental_resurrection") if need_instrumental else None
+        # Cache keys must match what _separate_mdx writes ("mdx_<model_filename>")
+        ep317_cache_id = f"mdx_{EP317_MODEL}"
+        unwa_cache_id  = f"mdx_{UNWA_MODEL}"
+
+        vocals_cached_whisper = self._get_cached(audio_path, ep317_cache_id) if need_vocals else None
+        vocals_cached_full    = self._get_cached_full(audio_path, ep317_cache_id) if need_vocals else None
+        instr_cached_full     = self._get_cached_full(audio_path, unwa_cache_id) if need_instrumental else None
 
         vocals_hq_cached   = (vocals_cached_full or {}).get("vocals") if vocals_cached_full else None
         instr_hq_cached    = (instr_cached_full or {}).get("instrumental") if instr_cached_full else None
@@ -937,7 +1007,6 @@ class VocalIsolator:
             ep317_stems  = ep317_result.get("stems", {})
             if "vocals" in ep317_stems:
                 result_stems["vocals"] = ep317_stems["vocals"]
-            # Cache the whisper path under vocal_ep317 key
         elif need_vocals and vocals_hq_cached:
             result_stems["vocals"] = vocals_hq_cached
 

@@ -78,7 +78,7 @@ const SimpleSunoImporter = () => {
       }}>
         <div style={{
           fontSize: '24px',
-          background: 'var(--bg-hover)',
+          background: 'color-mix(in srgb, var(--accent-primary) 20%, transparent)',
           borderRadius: '8px',
           padding: '6px',
           display: 'flex',

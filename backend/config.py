@@ -10,11 +10,12 @@ BACKEND_DIR = Path(__file__).parent
 RESOURCES_DIR = BASE_DIR / "resources"
 MODELS_DIR = RESOURCES_DIR / "models"
 FONTS_DIR = RESOURCES_DIR / "fonts"
+PRESETS_DIR = RESOURCES_DIR / "presets"
 TEMP_DIR = BASE_DIR / "temp"
 OUTPUT_DIR = BASE_DIR / "output"
 
 # Create directories if they don't exist
-for dir_path in [MODELS_DIR, FONTS_DIR, TEMP_DIR, OUTPUT_DIR]:
+for dir_path in [MODELS_DIR, FONTS_DIR, PRESETS_DIR, TEMP_DIR, OUTPUT_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
 
 # Server settings
@@ -29,7 +30,7 @@ DEBUG = False
 # - distil-large-v3: Fast with high accuracy
 # - medium/small/base/tiny: Smaller models, progressively faster but less accurate
 WHISPER_MODEL_SIZE = "turbo"  # Default model size
-WHISPER_DEVICE = "cpu"  # Options: auto, cpu, cuda - Set to cpu to avoid ROCm SDK errors
+WHISPER_DEVICE = "auto"  # Options: auto, cpu, cuda - auto detects CUDA GPU
 WHISPER_COMPUTE_TYPE = "int8"  # Options: auto, int8, float16, float32 - int8 for better CPU performance
 
 # Language-specific model sizes for optimal performance

@@ -19,7 +19,12 @@ function FloatingPreview() {
     animation,
     settings,
     secondarySubtitle,
+    detectedLanguage,
   } = useAppStore();
+
+  // RTL language detection
+  const RTL_LANGS = ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'];
+  const isRtl = RTL_LANGS.includes(detectedLanguage);
 
   const [isMinimized, setIsMinimized] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
@@ -165,8 +170,12 @@ function FloatingPreview() {
       color: secStyle.color,
       fontWeight: secStyle.bold ? 'bold' : 'normal',
       fontStyle: secStyle.italic ? 'italic' : 'normal',
-      textShadow: `${Math.max(0.5, secStyle.shadowDepth * scaleFactor)}px ${Math.max(0.5, secStyle.shadowDepth * scaleFactor)}px ${Math.max(1, secStyle.shadowDepth * 2 * scaleFactor)}px rgba(0,0,0,0.9)`,
-      WebkitTextStroke: `${Math.max(0.2, secStyle.borderWidth * scaleFactor)}px ${secStyle.borderColor}`,
+      textShadow: (secStyle.shadowDepth ?? 1) > 0
+        ? `${Math.max(0.5, secStyle.shadowDepth * scaleFactor)}px ${Math.max(0.5, secStyle.shadowDepth * scaleFactor)}px ${Math.max(1, secStyle.shadowDepth * 2 * scaleFactor)}px rgba(0,0,0,0.9)`
+        : 'none',
+      WebkitTextStroke: (secStyle.borderWidth ?? 2) > 0
+        ? `${Math.max(0.2, secStyle.borderWidth * scaleFactor)}px ${secStyle.borderColor}`
+        : 'none',
       paintOrder: 'stroke fill',
       textAlign: 'center',
       lineHeight: 1.2,
@@ -180,7 +189,40 @@ function FloatingPreview() {
     
     const duration = activeSubtitle.end - activeSubtitle.start;
     const elapsed = playbackTime - activeSubtitle.start;
-    const progress = Math.min(100, Math.max(0, (elapsed / duration) * 100));
+    
+    let progress;
+    
+    // Word-accurate karaoke progress using word-level timing data
+    if (animation.type === 'karaoke' && activeSubtitle.words?.length > 0) {
+      const fullText = activeSubtitle.text;
+      const words = activeSubtitle.words;
+      let highlightedChars = 0;
+      let textPos = 0;
+      
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const wordText = (w.word || '').trim();
+        if (!wordText) continue;
+        
+        const idx = fullText.indexOf(wordText, textPos);
+        if (idx === -1) continue;
+        
+        if (playbackTime >= w.end) {
+          highlightedChars = idx + wordText.length;
+          textPos = highlightedChars;
+        } else if (playbackTime >= w.start) {
+          const wordProgress = (playbackTime - w.start) / Math.max(0.01, w.end - w.start);
+          highlightedChars = idx + Math.ceil(wordProgress * wordText.length);
+          break;
+        } else {
+          break;
+        }
+      }
+      
+      progress = Math.min(100, Math.max(0, (highlightedChars / Math.max(1, fullText.length)) * 100));
+    } else {
+      progress = Math.min(100, Math.max(0, (elapsed / duration) * 100));
+    }
     
     // Fade in/out phases (first and last 15%)
     const fadeInDuration = animation.fadeIn / 1000; // ms to seconds
@@ -198,7 +240,7 @@ function FloatingPreview() {
     }
     
     return { progress, phase, opacity: Math.max(0, Math.min(1, opacity)), elapsed, duration };
-  }, [activeSubtitle, playbackTime, animation.fadeIn, animation.fadeOut]);
+  }, [activeSubtitle, playbackTime, animation.fadeIn, animation.fadeOut, animation.type]);
 
   // Visible character count for typewriter effect
   const typewriterChars = useMemo(() => {
@@ -391,19 +433,18 @@ function FloatingPreview() {
             <div 
               className={`frame-subtitle ${animation.type}-mode`}
               style={{
-                top: style.alignment >= 7 ? '8%' : style.alignment >= 4 ? '42%' : 'auto',
-                bottom: style.alignment <= 3 ? `${Math.max(4, style.marginVertical * scaleFactor)}px` : 'auto',
-                left: '5%',
-                right: '5%',
-                justifyContent: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
+                top: style.alignment >= 7 ? `${8 + (style.offsetY || 0) * 0.5}%` : style.alignment >= 4 ? `${42 + (style.offsetY || 0) * 0.5}%` : 'auto',
+                bottom: style.alignment <= 3 ? `${Math.max(4, style.marginVertical * scaleFactor - (style.offsetY || 0) * 2)}px` : 'auto',
+                left: `${5 + (style.offsetX || 0) * 0.5}%`,
+                right: `${5 - (style.offsetX || 0) * 0.5}%`,
                 flexDirection: 'column',
-                alignItems: 'center',
+                alignItems: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
                 gap: '2px',
                 ...getSubtitleAnimationStyle(),
               }}
             >
               {/* Primary Subtitle */}
-              <span style={getScaledStyle}>
+              <span style={{ ...getScaledStyle, direction: isRtl ? 'rtl' : 'ltr' }}>
                 {renderAnimatedText(displayText)}
               </span>
               
@@ -415,32 +456,17 @@ function FloatingPreview() {
                   color: secondarySubtitle?.style?.color || '#FFFF00',
                   fontWeight: secondarySubtitle?.style?.bold ? 'bold' : 'normal',
                   fontStyle: secondarySubtitle?.style?.italic ? 'italic' : 'normal',
-                  textShadow: `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * scaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * scaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth || 1) * 2 * scaleFactor)}px rgba(0,0,0,0.9)`,
-                  WebkitTextStroke: `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth || 2) * scaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`,
+                  textShadow: (secondarySubtitle?.style?.shadowDepth ?? 1) > 0
+                    ? `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth ?? 1) * scaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth ?? 1) * scaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth ?? 1) * 2 * scaleFactor)}px rgba(0,0,0,0.9)`
+                    : 'none',
+                  WebkitTextStroke: (secondarySubtitle?.style?.borderWidth ?? 2) > 0
+                    ? `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth ?? 2) * scaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`
+                    : 'none',
                   paintOrder: 'stroke fill',
                   textAlign: 'center',
                   lineHeight: 1.2,
                   maxWidth: '90%',
                   marginTop: '4px',
-                }}>
-                  {secondaryDisplayText}
-                </span>
-              )}
-              
-              {/* Orijinal Secondary Subtitle */}
-              {settings?.dualSubtitleEnabled && secondaryDisplayText && (
-                <span style={{
-                  fontFamily: secondarySubtitle?.style?.fontName || 'Arial',
-                  fontSize: Math.max(5, (secondarySubtitle?.style?.fontSize || 36) * scaleFactor * 0.8),
-                  color: secondarySubtitle?.style?.color || '#FFFF00',
-                  fontWeight: secondarySubtitle?.style?.bold ? 'bold' : 'normal',
-                  fontStyle: secondarySubtitle?.style?.italic ? 'italic' : 'normal',
-                  textShadow: `${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * scaleFactor)}px ${Math.max(0.5, (secondarySubtitle?.style?.shadowDepth || 1) * scaleFactor)}px ${Math.max(1, (secondarySubtitle?.style?.shadowDepth || 1) * 2 * scaleFactor)}px rgba(0,0,0,0.9)`,
-                  WebkitTextStroke: `${Math.max(0.2, (secondarySubtitle?.style?.borderWidth || 2) * scaleFactor)}px ${secondarySubtitle?.style?.borderColor || '#000000'}`,
-                  paintOrder: 'stroke fill',
-                  textAlign: 'center',
-                  lineHeight: 1.2,
-                  maxWidth: '90%',
                 }}>
                   {secondaryDisplayText}
                 </span>

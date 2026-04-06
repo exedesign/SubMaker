@@ -11,7 +11,12 @@ const ANIMATION_TYPES = [
 ];
 
 function AnimationSelector() {
-  const { animation, setAnimation } = useAppStore();
+  const { animation, setAnimation, setVocalIsolation } = useAppStore();
+  
+  const handleAnimationChange = (type) => {
+    setAnimation({ type });
+    setVocalIsolation(type !== 'none');
+  };
   
   return (
     <div>
@@ -23,7 +28,7 @@ function AnimationSelector() {
             <button
               key={anim.value}
               className={`btn ${animation.type === anim.value ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setAnimation({ type: anim.value })}
+              onClick={() => handleAnimationChange(anim.value)}
               style={{ 
                 justifyContent: 'flex-start', 
                 padding: '10px 12px',

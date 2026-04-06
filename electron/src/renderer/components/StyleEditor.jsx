@@ -272,16 +272,31 @@ function StyleEditor() {
         </div>
       </div>
       {isDual && (
-        <div className="form-group">
-          <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Border: {secStyle.borderWidth}px</label>
-          <input
-            type="range"
-            className="slider"
-            min={0}
-            max={6}
-            value={secStyle.borderWidth}
-            onChange={(e) => setSecondaryStyle({ borderWidth: parseInt(e.target.value) })}
-          />
+        <div className="form-row">
+          <div className="form-group">
+            <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Border: {secStyle.borderWidth}px</label>
+            <input
+              type="range"
+              className="slider"
+              min={0}
+              max={6}
+              step={0.5}
+              value={secStyle.borderWidth}
+              onChange={(e) => setSecondaryStyle({ borderWidth: parseFloat(e.target.value) })}
+            />
+          </div>
+          <div className="form-group">
+            <label className="label" style={{ color: 'var(--accent-primary)' }}>2. Shadow: {secStyle.shadowDepth}px</label>
+            <input
+              type="range"
+              className="slider"
+              min={0}
+              max={5}
+              step={0.5}
+              value={secStyle.shadowDepth}
+              onChange={(e) => setSecondaryStyle({ shadowDepth: parseFloat(e.target.value) })}
+            />
+          </div>
         </div>
       )}
       
@@ -346,6 +361,13 @@ function StyleEditor() {
               </button>
             ))}
           </div>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setStyle({ alignment: 2, offsetX: 0, offsetY: 0, marginVertical: 50 })}
+            style={{ width: 100, marginTop: 4, fontSize: 10, padding: '3px 0', opacity: 0.7 }}
+          >
+            ↺ Reset
+          </button>
         </div>
         {isDual && (
           <div className="form-group" style={{ flex: 'none' }}>
@@ -367,6 +389,13 @@ function StyleEditor() {
                 </button>
               ))}
             </div>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setSecondaryStyle({ alignment: 5, offsetX: 0, offsetY: 0, marginVertical: 120 })}
+              style={{ width: 100, marginTop: 4, fontSize: 10, padding: '3px 0', opacity: 0.7 }}
+            >
+              ↺ Reset
+            </button>
           </div>
         )}
       </div>

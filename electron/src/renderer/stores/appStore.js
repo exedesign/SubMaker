@@ -137,7 +137,7 @@ export const useAppStore = create((set, get) => ({
   // ==========================================================================
   secondarySubtitle: {
     enabled: true,
-    targetLanguage: 'en',
+    targetLanguage: 'none',
     subtitles: [], // Translated subtitles with {id, translatedText, ...}
     style: {
       fontName: 'Arial',
@@ -159,9 +159,11 @@ export const useAppStore = create((set, get) => ({
   
   // App Settings
   settings: {
+    colorTheme: 'default', // 'default' | 'black-green' | 'black-red' | 'anthracite-blue'
     gifProvider: 'tenor', // 'tenor' or 'giphy'
     dualSubtitleEnabled: true, // Module toggle in settings - enabled by default
     seekStep: 5, // Arrow key seek step in seconds
+    cleanCacheOnStartup: true, // Clear temp/cache files when app starts
 
     // Audio Visualization Settings - Simplified and enabled by default
     audioVisualization: {
@@ -211,6 +213,7 @@ export const useAppStore = create((set, get) => ({
   vocalSeparating: false,    // true while separation is running
   vocalSeparationProgress: 0,
   vocalSeparationMessage: '',
+  vocalAbortController: null, // AbortController for standalone vocal separation
   initialMediaPath: null,    // First media file absolute path selected in current project
   originalMediaFile: null,   // Original media file path (before stem replacement)
 
@@ -265,6 +268,23 @@ export const useAppStore = create((set, get) => ({
     isActive: false,       // true when playlist is driving playback
     isPlaying: false,      // playlist-local play state
     playbackTime: 0,       // playlist-local playback time
+  },
+
+  // Batch Processing (multi-file sequential pipeline)
+  batch: {
+    queue: [],             // [{id, filePath, fileName, status, progress, step, error, results}]
+    isRunning: false,
+    currentIndex: -1,
+    profile: null,         // active profile snapshot used during batch run
+    savedProfiles: [],     // [{name, profile, createdAt}] persisted to localStorage
+    abortController: null,
+    stepMode: false,       // pause after transcription for manual review
+    pausedForReview: false, // true when waiting for user to review/edit subtitles
+    pausedItemId: null,    // id of the item currently paused for review
+    _reviewResolve: null,  // internal: resolve function to resume after review
+    audioSource: 'original', // 'original' | 'instrumental' — which audio to use in rendered output
+    embedId3: false,          // embed ID3 lyrics into original MP3 for each batch item
+    animationType: 'fade',    // 'none' | 'fade' | 'karaoke' | 'pop' | 'typewriter'
   },
 
   // Loading state
@@ -591,17 +611,20 @@ export const useAppStore = create((set, get) => ({
     return new Promise((resolve, reject) => {
       let streamSettled = false;
       let heartbeatCount = 0;
+      let lastKnownStep = 'Loading AI model...';
 
       const handleStreamEvent = (data) => {
         if (data.type === 'heartbeat') {
           heartbeatCount++;
           set({
-            processingStep: `Loading AI model... (${heartbeatCount * 3}s)`,
+            processingStep: `${lastKnownStep} (${heartbeatCount * 3}s)`,
           });
           return;
         }
 
         if (data.type === 'status') {
+          lastKnownStep = data.message;
+          heartbeatCount = 0;
           set({
             processingStep: data.message,
             processingProgress: data.progress,
@@ -610,6 +633,7 @@ export const useAppStore = create((set, get) => ({
         }
 
         if (data.type === 'progress') {
+          heartbeatCount = 0;
           const stepMessage = data.current_text
             ? `${data.current_text}`
             : `Processing... ${data.progress}%`;
@@ -908,6 +932,28 @@ export const useAppStore = create((set, get) => ({
   setSettings: (updates) => set((state) => ({
     settings: { ...state.settings, ...updates },
   })),
+
+  // Cache management
+  cacheInfo: { sizeBytes: 0, fileCount: 0 },
+
+  fetchCacheInfo: async () => {
+    try {
+      const res = await fetch(`${API_URL}/temp/cache-info`);
+      if (res.ok) {
+        const data = await res.json();
+        set({ cacheInfo: { sizeBytes: data.size_bytes, fileCount: data.file_count } });
+      }
+    } catch (e) { console.warn('Cache info fetch failed:', e); }
+  },
+
+  clearCache: async () => {
+    try {
+      const res = await fetch(`${API_URL}/temp/cleanup`, { method: 'POST' });
+      if (res.ok) {
+        set({ cacheInfo: { sizeBytes: 0, fileCount: 0 } });
+      }
+    } catch (e) { console.warn('Cache cleanup failed:', e); }
+  },
   
   // Audio Visualization Settings
   updateAudioVisualization: (updates) => set((state) => ({
@@ -929,7 +975,8 @@ export const useAppStore = create((set, get) => ({
   renderAbortController: null,  // AbortController — aborted by cancelRender()
   
   // Internal: render a single format and return a Promise that resolves on completion
-  _renderOneFormat: (format, visualizerData, secondarySubData) => {
+  // renderOptions: { audioPath, originalName, outputDir } — optional overrides for batch karaoke render
+  _renderOneFormat: (format, visualizerData, secondarySubData, renderOptions = {}) => {
     const {
       mediaFile, originalMediaPath, subtitles, background,
       outputFormat, quality, style, animation, logos,
@@ -941,7 +988,7 @@ export const useAppStore = create((set, get) => ({
 
     // Always use the original imported media path for render.
     // mediaFile may have been replaced by a stem URL after vocal separation.
-    const renderAudioPath = originalMediaPath || mediaFile;
+    const renderAudioPath = renderOptions.audioPath || originalMediaPath || mediaFile;
 
     return new Promise(async (resolve, reject) => {
       // Bail out immediately if cancelled during preparation phase
@@ -952,7 +999,7 @@ export const useAppStore = create((set, get) => ({
       try {
         const response = await api.post('/render', {
           audio_path: renderAudioPath,
-          original_name: get().originalFileName,
+          original_name: renderOptions.originalName || get().originalFileName,
           subtitles,
           background,
           video_format: format,
@@ -966,6 +1013,7 @@ export const useAppStore = create((set, get) => ({
           visualizer: visualizerData,
           audio_mixer: mixerConfig,
           render_resolution: renderResolution,
+          output_dir: renderOptions.outputDir || null,
         });
 
         if (!response.data.success || !response.data.job_id) {
@@ -975,10 +1023,20 @@ export const useAppStore = create((set, get) => ({
         const jobId = response.data.job_id;
         set({ renderJobId: jobId });
 
-        // Poll until completion
+        // Poll until completion — with timeout and retry limit
+        let pollFailures = 0;
+        const MAX_POLL_FAILURES = 60; // 30s at 500ms interval
+
+        const pollTimeout = setTimeout(() => {
+          clearInterval(pollInterval);
+          set({ renderJobId: null, renderPolling: null });
+          reject(new Error('Render job timeout (5 min)'));
+        }, 5 * 60 * 1000);
+
         const pollInterval = setInterval(async () => {
           try {
             const statusRes = await api.get(`/render/status/${jobId}`);
+            pollFailures = 0; // Reset on success
             const status = statusRes.data;
 
             set({
@@ -988,20 +1046,29 @@ export const useAppStore = create((set, get) => ({
 
             if (status.status === 'completed') {
               clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
               set({ renderJobId: null, renderPolling: null });
               resolve({ success: true, outputPath: status.output_path });
             } else if (status.status === 'error') {
               clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
               set({ renderJobId: null, renderPolling: null });
               reject(new Error(status.error || 'Render failed'));
             } else if (status.status === 'cancelled') {
               clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
               set({ renderJobId: null, renderPolling: null });
               reject(new Error('Render cancelled'));
             }
           } catch (err) {
-            // Don't stop polling on network errors
-            console.error('Polling error:', err);
+            pollFailures++;
+            console.error(`Polling error (${pollFailures}/${MAX_POLL_FAILURES}):`, err.message);
+            if (pollFailures >= MAX_POLL_FAILURES) {
+              clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
+              set({ renderJobId: null, renderPolling: null });
+              reject(new Error(`Render polling failed after ${pollFailures} attempts`));
+            }
           }
         }, 500);
 
@@ -1013,14 +1080,15 @@ export const useAppStore = create((set, get) => ({
   },
 
   // Render video — automatically handles multi-format if multiple selected
-  render: async () => {
+  // renderOptions: { audioPath, originalName, outputDir } — optional overrides (used by batch karaoke)
+  render: async (renderOptions = {}) => {
     const {
       mediaFile, originalMediaPath, savedFileName, subtitles, selectedFormats, visualizer,
       checkBackendHealth, settings, secondarySubtitle,
     } = get();
 
-    // Always prefer the original imported media path
-    const sourceMediaPath = originalMediaPath || mediaFile;
+    // Use renderOptions.audioPath if provided (batch karaoke), otherwise original media
+    const sourceMediaPath = renderOptions.audioPath || originalMediaPath || mediaFile;
 
     if (!sourceMediaPath || !subtitles.length) {
       set({ error: 'No media file or subtitles' });
@@ -1063,7 +1131,7 @@ export const useAppStore = create((set, get) => ({
     set({ renderTimer: timer });
 
     // Prepare secondary subtitle data
-    const secondarySubData = settings.dualSubtitleEnabled && secondarySubtitle.subtitles?.length > 0
+    const secondarySubData = secondarySubtitle.targetLanguage !== 'none' && secondarySubtitle.subtitles?.length > 0
       ? {
           enabled: true,
           subtitles: secondarySubtitle.subtitles,
@@ -1094,14 +1162,25 @@ export const useAppStore = create((set, get) => ({
               : 'Rendering...'
             });
             const { exportVisualizerVideo } = await import('../services/visualizerFrameExporter');
-            // Build audio URL from local or temp endpoint based on the original media path
+            // Destroy preview visualizer before export to free GPU resources
+            // and prevent WebGL context contention during batch items
+            try {
+              const { destroyPreviewViz } = await import('../components/ButterchurnCanvas');
+              destroyPreviewViz();
+            } catch (e) { /* preview may not be mounted */ }
+            // Build audio URL — use local endpoint for absolute paths (including temp stems),
+            // temp endpoint only for relative filenames (uploaded files in temp root)
             const isAbsPath = (p) => /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/');
-            const isTempPath = (p) => /[\\/]temp[\\/]/i.test(p);
-            const audioFilename = savedFileName || sourceMediaPath.split(/[\\/]/).pop();
             const baseUrl = API_URL.replace('/api', '');
-            const audioUrl = (isAbsPath(sourceMediaPath) && !isTempPath(sourceMediaPath))
-              ? `${baseUrl}/api/media/local?path=${encodeURIComponent(sourceMediaPath)}`
-              : `${baseUrl}/api/media/temp/${encodeURIComponent(audioFilename)}`;
+            let audioUrl;
+            if (isAbsPath(sourceMediaPath)) {
+              // Absolute path (original file or instrumental stem in vocal_cache)
+              audioUrl = `${baseUrl}/api/media/local?path=${encodeURIComponent(sourceMediaPath)}`;
+            } else {
+              // Relative filename — served from temp root
+              const audioFilename = savedFileName || sourceMediaPath.split(/[\\/]/).pop();
+              audioUrl = `${baseUrl}/api/media/temp/${encodeURIComponent(audioFilename)}`;
+            }
             // Ensure presetName is set — auto-select random if null
             let renderPresetName = visualizer.presetName;
             if (!renderPresetName) {
@@ -1143,7 +1222,7 @@ export const useAppStore = create((set, get) => ({
 
         // Render this format
         try {
-          const result = await get()._renderOneFormat(fmt, visualizerData, secondarySubData);
+          const result = await get()._renderOneFormat(fmt, visualizerData, secondarySubData, renderOptions);
           results.push({ format: fmt, label: formatLabels[fmt], success: true, outputPath: result.outputPath });
           set({ outputPath: result.outputPath });
           console.log(`Render completed for ${fmt}:`, result.outputPath);
@@ -1182,12 +1261,13 @@ export const useAppStore = create((set, get) => ({
 
       return results.length === 1 ? results[0] : results;
     } catch (error) {
-      const { renderTimer } = get();
+      const { renderTimer, renderPolling } = get();
       if (renderTimer) clearInterval(renderTimer);
+      if (renderPolling) clearInterval(renderPolling);
 
       // Don't show error message when user explicitly cancelled
       if (error.name === 'AbortError') {
-        set({ isProcessing: false, renderAbortController: null, renderTimer: null, batchRenderActive: false });
+        set({ isProcessing: false, renderAbortController: null, renderTimer: null, renderPolling: null, batchRenderActive: false });
         return null;
       }
 
@@ -1196,6 +1276,7 @@ export const useAppStore = create((set, get) => ({
         isProcessing: false,
         renderAbortController: null,
         renderTimer: null,
+        renderPolling: null,
         batchRenderActive: false,
       });
       return null;
@@ -1476,10 +1557,26 @@ export const useAppStore = create((set, get) => ({
 
   // Run full vocal separation for preview/listening
   // EP317 handles vocals, Resurrection UNWA handles instrumental — each runs only if its stem is selected
+  cancelVocalSeparation: () => {
+    const { vocalAbortController } = get();
+    if (vocalAbortController) {
+      vocalAbortController.abort();
+      set({ vocalAbortController: null, vocalSeparating: false, vocalSeparationMessage: 'Cancelled' });
+    }
+  },
+
   separateVocals: async (signal) => {
     const { mediaFile, originalMediaPath, originalMediaFile, vocalSelectedStems } = get();
     const filePath = originalMediaPath || originalMediaFile || mediaFile;
     if (!filePath) return;
+
+    // Create abort controller for standalone separation if no AbortSignal provided
+    let abortSignal = signal instanceof AbortSignal ? signal : undefined;
+    if (!abortSignal) {
+      const controller = new AbortController();
+      set({ vocalAbortController: controller });
+      abortSignal = controller.signal;
+    }
 
     set({ vocalSeparating: true, vocalSeparationProgress: 0, vocalSeparationMessage: 'Starting...' });
 
@@ -1514,6 +1611,7 @@ export const useAppStore = create((set, get) => ({
             },
             vocalSeparating: false,
             vocalSeparationProgress: 100,
+            vocalAbortController: null,
             vocalSeparationMessage: event.cached ? 'Loaded from cache' : `Completed (${event.duration?.toFixed(1)}s)`,
           });
           get().initAudioMixer(stemPaths, stemUrls, event.original_path);
@@ -1523,10 +1621,10 @@ export const useAppStore = create((set, get) => ({
         if (event.type === 'error') {
           separationSettled = true;
           console.error('Vocal separation error:', event.error);
-          set({ vocalSeparating: false, vocalSeparationMessage: `Error: ${event.error}` });
+          set({ vocalSeparating: false, vocalAbortController: null, vocalSeparationMessage: `Error: ${event.error}` });
           separationError = new Error(event.error);
         }
-      }, signal);
+      }, abortSignal);
 
       if (separationError) {
         throw separationError;
@@ -1537,11 +1635,11 @@ export const useAppStore = create((set, get) => ({
       }
     } catch (error) {
       if (error.name === 'AbortError') {
-        set({ vocalSeparating: false, vocalSeparationMessage: 'Cancelled' });
+        set({ vocalSeparating: false, vocalAbortController: null, vocalSeparationMessage: 'Cancelled' });
         return;
       }
       console.error('Vocal separation failed:', error);
-      set({ vocalSeparating: false, vocalSeparationMessage: `Error: ${error.message}` });
+      set({ vocalSeparating: false, vocalAbortController: null, vocalSeparationMessage: `Error: ${error.message}` });
     }
   },
 
@@ -1873,51 +1971,646 @@ export const useAppStore = create((set, get) => ({
     } catch {}
   },
   
-  // Reset project
-  resetProject: () => set({
-    currentStep: 'upload',
-    mediaFile: null,
-    mediaType: null,
-    mediaDuration: 0,
-    subtitles: [],
-    selectedSubtitleId: null,
-    outputPath: null,
-    error: null,
-    background: { type: 'color', value: '#000000', imagePath: null },
-    vocalSeparation: null,
-    vocalSeparating: false,
-    vocalSeparationProgress: 0,
-    vocalSeparationMessage: '',
-    initialMediaPath: null,
-    originalMediaFile: null,
-    audioMixer: { enabled: false, tracks: {}, masterVolume: 1.0, masterMuted: false },
-    detectedLanguage: null,
-    secondarySubtitle: {
-      enabled: false,
-      targetLanguage: 'en',
-      subtitles: [],
-      style: {
-        fontName: 'Arial',
-        fontSize: 72,  // Updated for 4K rendering
-        color: '#FFFFFF', // White by default
-        borderColor: '#000000',
-        borderWidth: 4,      // Increased for 4K
-        shadowDepth: 2,       // Increased for 4K
-        bold: false,
-        italic: false,
-        marginVertical: 240,  // Increased for 4K
-      },
-      isTranslating: false,
-    },
-    playlist: {
-      tracks: [],
-      currentTrackIndex: -1,
-      isActive: false,
-      isPlaying: false,
-      playbackTime: 0,
-    },
+  // ==========================================================================
+  // Batch Processing Actions
+  // ==========================================================================
+
+  addToBatchQueue: (filePaths) => {
+    const isAbs = (p) => /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\') || p.startsWith('/');
+    const validPaths = filePaths.filter(fp => {
+      if (!fp || typeof fp !== 'string') {
+        console.warn('[Batch] Rejected invalid path:', fp);
+        return false;
+      }
+      if (!isAbs(fp)) {
+        console.warn('[Batch] Rejected non-absolute path:', fp);
+        return false;
+      }
+      return true;
+    });
+    if (!validPaths.length) {
+      console.warn('[Batch] No valid absolute paths to add');
+      return;
+    }
+    console.log('[Batch] Adding', validPaths.length, 'files:', validPaths);
+    const items = validPaths.map(fp => ({
+      id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      filePath: fp,
+      fileName: fp.split(/[\\/]/).pop(),
+      status: 'pending',
+      progress: 0,
+      step: '',
+      error: null,
+      results: { subtitles: [], outputPaths: [], exportPaths: [], karaokePath: null },
+    }));
+    set(s => ({ batch: { ...s.batch, queue: [...s.batch.queue, ...items] } }));
+  },
+
+  removeFromBatchQueue: (id) => set(s => ({
+    batch: { ...s.batch, queue: s.batch.queue.filter(q => q.id !== id) }
+  })),
+
+  reorderBatchQueue: (fromIdx, toIdx) => set(s => {
+    const q = [...s.batch.queue];
+    const [item] = q.splice(fromIdx, 1);
+    q.splice(toIdx, 0, item);
+    return { batch: { ...s.batch, queue: q } };
   }),
+
+  clearBatchQueue: () => set(s => ({
+    batch: { ...s.batch, queue: [], currentIndex: -1 }
+  })),
+
+  updateBatchItem: (id, updates) => set(s => ({
+    batch: {
+      ...s.batch,
+      queue: s.batch.queue.map(q => q.id === id ? { ...q, ...updates } : q),
+    }
+  })),
+
+  // Capture current store settings as a batch profile
+  captureBatchProfile: () => {
+    const s = get();
+    return {
+      steps: {
+        vocalSeparation: true,
+        transcription: true,
+        translation: s.secondarySubtitle.targetLanguage !== 'none',
+        render: true,
+        exportLyrics: false,
+        embedId3: get().batch.embedId3 || false,
+        createKaraoke: false,
+      },
+      sourceLanguage: s.sourceLanguage,
+      secondaryLanguage: s.secondarySubtitle.targetLanguage,
+      modelSettings: { ...s.modelSettings },
+      whisperParams: { ...s.whisperParams },
+      vocalIsolation: s.vocalIsolation,
+      vocalSelectedStems: [...s.vocalSelectedStems],
+      style: { ...s.style },
+      animation: { ...s.animation, type: get().batch.animationType || s.animation.type },
+      secondaryStyle: { ...s.secondarySubtitle.style },
+      videoFormat: s.videoFormat,
+      selectedFormats: [...s.selectedFormats],
+      outputFormat: s.outputFormat,
+      quality: s.quality,
+      renderResolution: s.renderResolution,
+      background: { ...s.background },
+      visualizer: { ...s.visualizer },
+      logos: s.logos.map(l => ({ ...l })),
+      exportFormats: [...s.exportFormats],
+      dualSubtitleEnabled: s.settings.dualSubtitleEnabled,
+      audioSource: s.batch.audioSource || 'original',
+    };
+  },
+
+  saveBatchProfile: (name) => {
+    // Save the active batch profile (with user's current toggle states)
+    const active = get().batch.profile || get().captureBatchProfile();
+    const entry = { name, profile: { ...active }, createdAt: new Date().toISOString() };
+    const saved = get().batch.savedProfiles.filter(p => p.name !== name);
+    saved.push(entry);
+    set(s => ({ batch: { ...s.batch, savedProfiles: saved } }));
+    try { localStorage.setItem('submaker-batch-profiles', JSON.stringify(saved)); } catch {}
+  },
+
+  loadBatchProfiles: () => {
+    try {
+      const raw = localStorage.getItem('submaker-batch-profiles');
+      if (raw) {
+        const profiles = JSON.parse(raw);
+        set(s => ({ batch: { ...s.batch, savedProfiles: profiles } }));
+      }
+    } catch {}
+  },
+
+  loadBatchProfile: (name) => {
+    const entry = get().batch.savedProfiles.find(p => p.name === name);
+    if (entry) {
+      set(s => ({ batch: { ...s.batch, profile: entry.profile } }));
+    }
+  },
+
+  deleteBatchProfile: (name) => {
+    const saved = get().batch.savedProfiles.filter(p => p.name !== name);
+    set(s => ({ batch: { ...s.batch, savedProfiles: saved } }));
+    try { localStorage.setItem('submaker-batch-profiles', JSON.stringify(saved)); } catch {}
+  },
+
+  setBatchProfile: (profile) => set(s => ({ batch: { ...s.batch, profile } })),
+
+  setBatchStepEnabled: (stepKey, enabled) => set(s => {
+    const profile = s.batch.profile || get().captureBatchProfile();
+    return {
+      batch: {
+        ...s.batch,
+        profile: { ...profile, steps: { ...profile.steps, [stepKey]: enabled } },
+      }
+    };
+  }),
+
+  // Apply a batch profile to the store (restore settings before processing)
+  _applyBatchProfile: (profile) => {
+    // Ensure instrumental stem is included when audioSource is instrumental
+    let stems = [...profile.vocalSelectedStems];
+    if (profile.audioSource === 'instrumental' && !stems.includes('instrumental')) {
+      stems.push('instrumental');
+    }
+
+    set({
+      sourceLanguage: profile.sourceLanguage,
+      detectedLanguage: null, // Reset so previous item's detected language doesn't leak
+      modelSettings: { ...profile.modelSettings },
+      whisperParams: { ...profile.whisperParams },
+      vocalIsolation: true, // Always enable in batch — vocal isolation is mandatory
+      vocalSelectedStems: stems,
+      style: { ...profile.style },
+      animation: { ...profile.animation },
+      videoFormat: profile.videoFormat || 'horizontal',
+      selectedFormats: [...profile.selectedFormats],
+      outputFormat: profile.outputFormat,
+      quality: profile.quality,
+      renderResolution: profile.renderResolution,
+      background: { ...profile.background },
+      visualizer: { ...profile.visualizer },
+      logos: profile.logos.map(l => ({ ...l })),
+      exportFormats: [...profile.exportFormats],
+    });
+    set(s => ({
+      settings: { ...s.settings, dualSubtitleEnabled: profile.secondaryLanguage !== 'none' },
+      secondarySubtitle: {
+        ...s.secondarySubtitle,
+        enabled: profile.secondaryLanguage !== 'none',
+        targetLanguage: profile.secondaryLanguage,
+        style: { ...profile.secondaryStyle },
+        subtitles: [],
+      },
+    }));
+  },
+
+  // Main batch orchestrator
+  startBatch: async () => {
+    const state = get();
+    const queue = state.batch.queue.filter(q => q.status === 'pending' || q.status === 'failed');
+    if (!queue.length) return;
+
+    // Snapshot all current settings directly from the main UI
+    const profile = state.captureBatchProfile();
+    console.log('[Batch] Captured profile steps:', JSON.stringify(profile.steps));
+    console.log('[Batch] vocalIsolation:', profile.vocalIsolation, '| secondaryLanguage:', profile.secondaryLanguage);
+    const abortController = new AbortController();
+
+    set(s => ({
+      batch: {
+        ...s.batch,
+        isRunning: true,
+        abortController,
+        profile,
+        // Reset failed items to pending
+        queue: s.batch.queue.map(q =>
+          q.status === 'failed' ? { ...q, status: 'pending', error: null, progress: 0, step: '' } : q
+        ),
+      }
+    }));
+
+    const pendingIds = get().batch.queue.filter(q => q.status === 'pending').map(q => q.id);
+
+    for (let i = 0; i < pendingIds.length; i++) {
+      if (abortController.signal.aborted) break;
+
+      const itemId = pendingIds[i];
+      const item = get().batch.queue.find(q => q.id === itemId);
+      if (!item || item.status !== 'pending') continue;
+
+      set(s => ({ batch: { ...s.batch, currentIndex: i } }));
+      get().updateBatchItem(itemId, { status: 'processing', progress: 0, step: 'Preparing...' });
+
+      try {
+        // 1. Reset project and apply profile
+        get().resetProject();
+        get()._applyBatchProfile(profile);
+
+        // 2. Load file — validate absolute path
+        const isAbsPath = /^[a-zA-Z]:[\\/]/.test(item.filePath) || item.filePath.startsWith('\\') || item.filePath.startsWith('/');
+        if (!isAbsPath) {
+          throw new Error(`Invalid path (not absolute): ${item.filePath}`);
+        }
+        get().updateBatchItem(itemId, { step: 'Loading file...', progress: 5 });
+        console.log('[Batch] Loading file:', item.filePath);
+        get().setMediaFile(item.filePath, 'audio', item.filePath);
+        set({ originalFileName: item.fileName });
+
+        // Re-apply language settings after setMediaFile (which resets some state)
+        set({
+          sourceLanguage: profile.sourceLanguage,
+        });
+        set(s => ({
+          secondarySubtitle: {
+            ...s.secondarySubtitle,
+            enabled: profile.secondaryLanguage !== 'none',
+            targetLanguage: profile.secondaryLanguage,
+          },
+          settings: { ...s.settings, dualSubtitleEnabled: profile.secondaryLanguage !== 'none' },
+        }));
+        console.log('[Batch] Language settings applied — source:', profile.sourceLanguage, '| secondary:', profile.secondaryLanguage);
+
+        const results = { subtitles: [], outputPaths: [], exportPaths: [], karaokePath: null };
+
+        // Global progress forwarder — maps processingProgress to batch item progress
+        // Phase ranges in batch item: vocal=5-20, transcribe=20-50, translate=50-55, render=55-85
+        let currentPhase = 'idle';
+        let lastForwardedProg = 0;
+        const unsubProgress = useAppStore.subscribe((state) => {
+          const pp = state.processingProgress;
+          const ps = state.processingStep;
+          if (pp <= 0) return;
+
+          let batchProg = 0;
+          if (currentPhase === 'vocal') {
+            batchProg = 5 + Math.round(pp * 0.15); // 5-20
+          } else if (currentPhase === 'transcribe') {
+            batchProg = 20 + Math.round(pp * 0.30); // 20-50
+          } else if (currentPhase === 'render') {
+            batchProg = 55 + Math.round(pp * 0.30); // 55-85
+          } else {
+            return;
+          }
+
+          if (batchProg > lastForwardedProg) {
+            lastForwardedProg = batchProg;
+            const step = ps || (currentPhase === 'vocal' ? 'Vocal isolation...' :
+              currentPhase === 'transcribe' ? 'Transcribing...' : 'Rendering...');
+            get().updateBatchItem(itemId, { progress: Math.min(batchProg, 85), step });
+          }
+        });
+
+        try {
+        // 3. Vocal separation (mandatory in batch)
+        if (profile.steps.vocalSeparation) {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          currentPhase = 'vocal';
+          get().updateBatchItem(itemId, { step: 'Vocal isolation...', progress: 5 });
+          await get().separateVocals(abortController.signal);
+          currentPhase = 'idle';
+
+          // Vocal separation is mandatory — if it failed, abort this item
+          const sepResult = get().vocalSeparation;
+          if (!sepResult) {
+            throw new Error('Vocal separation failed — cannot continue without clean vocals');
+          }
+        }
+
+        // 4. Transcription
+        if (profile.steps.transcription) {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          currentPhase = 'transcribe';
+          get().updateBatchItem(itemId, { step: 'Transcribing...', progress: 20 });
+          await get().transcribe();
+          currentPhase = 'idle';
+          results.subtitles = [...get().subtitles];
+        }
+
+        // 4b. Step Mode — pause for user review after transcription
+        if (get().batch.stepMode) {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          get().updateBatchItem(itemId, { step: 'Waiting for review...', progress: 50 });
+          // Switch UI to edit step so user can see/edit subtitles
+          set({ currentStep: 'edit' });
+          await new Promise((resolve) => {
+            set(s => ({
+              batch: { ...s.batch, pausedForReview: true, pausedItemId: itemId, _reviewResolve: resolve }
+            }));
+          });
+          // User clicked "Continue" — refresh subtitles in case they edited
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          results.subtitles = [...get().subtitles];
+        }
+
+        // 5. Translation (secondary subtitle) — only if a target language is selected
+        if (profile.secondaryLanguage && profile.secondaryLanguage !== 'none') {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          get().updateBatchItem(itemId, { step: 'Translating...', progress: 50 });
+          await get().translateToSecondary();
+        }
+
+        // 6. Render video
+        if (profile.steps.render) {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          currentPhase = 'render';
+          get().updateBatchItem(itemId, { step: 'Rendering...', progress: 55 });
+
+          // Disable audio mixer for batch render — vocal separation enables it
+          // automatically via initAudioMixer(), but batch should use explicit audio source
+          set({ audioMixer: { enabled: false, tracks: {}, masterVolume: 1.0, masterMuted: false } });
+
+          if (profile.audioSource === 'instrumental') {
+            // Karaoke mode: render with instrumental stem audio, save as -krk
+            let instrumentalPath = get().vocalSeparation?.stemPaths?.instrumental;
+
+            // If instrumental stem missing, re-run vocal separation with instrumental included
+            if (!instrumentalPath) {
+              console.warn('[Batch] Instrumental stem missing — re-running vocal separation with instrumental stem');
+              const curStems = get().vocalSelectedStems;
+              if (!curStems.includes('instrumental')) {
+                set({ vocalSelectedStems: [...curStems, 'instrumental'] });
+              }
+              get().updateBatchItem(itemId, { step: 'Extracting instrumental...', progress: 56 });
+              currentPhase = 'vocal';
+              await get().separateVocals(abortController.signal);
+              currentPhase = 'render';
+              instrumentalPath = get().vocalSeparation?.stemPaths?.instrumental;
+            }
+
+            if (!instrumentalPath) {
+              throw new Error('Instrumental stem not available — vocal isolation may have failed');
+            }
+
+            const originalDir = item.filePath.replace(/[\\/][^\\/]+$/, '');
+            const originalNameNoExt = item.fileName.replace(/\.[^.]+$/, '');
+            const krkName = `${originalNameNoExt}-krk`;
+
+            console.log('[Batch] Karaoke render with instrumental:', instrumentalPath);
+            console.log('[Batch] Output dir:', originalDir, 'name:', krkName);
+
+            const renderResult = await get().render({
+              audioPath: instrumentalPath,
+              originalName: krkName,
+              outputDir: originalDir,
+            });
+            currentPhase = 'idle';
+            if (renderResult) {
+              const arr = Array.isArray(renderResult) ? renderResult : [renderResult];
+              results.outputPaths = arr.filter(r => r.success).map(r => r.outputPath);
+            }
+          } else {
+            // Normal mode: render with original media
+            console.log('[Batch] Rendering with original audio:', get().originalMediaPath);
+            const renderResult = await get().render();
+            currentPhase = 'idle';
+            if (renderResult) {
+              const arr = Array.isArray(renderResult) ? renderResult : [renderResult];
+              results.outputPaths = arr.filter(r => r.success).map(r => r.outputPath);
+            }
+          }
+        }
+
+        // 7. Export lyrics
+        if (profile.steps.exportLyrics && profile.exportFormats?.length) {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          get().updateBatchItem(itemId, { step: 'Exporting lyrics...', progress: 85 });
+          for (const fmt of profile.exportFormats) {
+            try {
+              const expResult = await get().exportLyrics(fmt);
+              if (expResult?.output_path) results.exportPaths.push(expResult.output_path);
+            } catch (e) { console.warn(`[Batch] Export ${fmt} failed:`, e.message); }
+          }
+        }
+
+        // 8. Embed ID3
+        if (profile.steps.embedId3) {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          get().updateBatchItem(itemId, { step: 'Embedding ID3 lyrics...', progress: 90 });
+          try {
+            const idResult = await get().exportLyrics('id3');
+            if (idResult?.output_path) results.exportPaths.push(idResult.output_path);
+          } catch (e) { console.warn('[Batch] ID3 embed failed:', e.message); }
+        }
+
+        // 9. Create karaoke MP3
+        if (profile.steps.createKaraoke) {
+          if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          get().updateBatchItem(itemId, { step: 'Creating karaoke MP3...', progress: 95 });
+          try {
+            const karResult = await get().createKaraokeMp3();
+            if (karResult?.karaoke_path) results.karaokePath = karResult.karaoke_path;
+          } catch (e) { console.warn('[Batch] Karaoke creation failed:', e.message); }
+        }
+
+        get().updateBatchItem(itemId, { status: 'completed', progress: 100, step: 'Done', results });
+
+        } finally {
+          unsubProgress();
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          get().updateBatchItem(itemId, { status: 'pending', progress: 0, step: 'Cancelled' });
+          break;
+        }
+        console.error(`[Batch] Item ${item.fileName} failed:`, err);
+        get().updateBatchItem(itemId, {
+          status: 'failed',
+          step: 'Failed',
+          error: err.message || 'Unknown error',
+        });
+      }
+    }
+
+    // Batch complete — clean up
+    get().resetProject();
+    set(s => ({
+      batch: { ...s.batch, isRunning: false, currentIndex: -1, abortController: null, pausedForReview: false, pausedItemId: null, _reviewResolve: null }
+    }));
+  },
+
+  cancelBatch: () => {
+    const { batch } = get();
+    // If paused for review, resolve the pause promise so the loop can exit
+    if (batch._reviewResolve) batch._reviewResolve();
+    if (batch.abortController) batch.abortController.abort();
+    // Also cancel any in-flight render/transcription
+    get().cancelRender();
+    set(s => ({
+      batch: { ...s.batch, isRunning: false, currentIndex: -1, abortController: null, pausedForReview: false, pausedItemId: null, _reviewResolve: null }
+    }));
+  },
+
+  setStepMode: (enabled) => set(s => ({
+    batch: { ...s.batch, stepMode: enabled }
+  })),
+
+  setBatchAudioSource: (source) => set(s => ({
+    batch: { ...s.batch, audioSource: source }
+  })),
+
+  setBatchEmbedId3: (enabled) => set(s => ({
+    batch: { ...s.batch, embedId3: enabled }
+  })),
+
+  setBatchAnimationType: (type) => set(s => ({
+    batch: { ...s.batch, animationType: type }
+  })),
+
+  resumeBatch: () => {
+    const { batch } = get();
+    if (batch._reviewResolve) {
+      batch._reviewResolve();
+      set(s => ({ batch: { ...s.batch, pausedForReview: false, pausedItemId: null, _reviewResolve: null } }));
+    }
+  },
+
+  // Reset project
+  resetProject: () => {
+    // Clean up any running intervals/controllers before resetting
+    const { renderPolling, renderTimer } = get();
+    if (renderPolling) clearInterval(renderPolling);
+    if (renderTimer) clearInterval(renderTimer);
+
+    set({
+      currentStep: 'upload',
+      mediaFile: null,
+      mediaType: null,
+      mediaDuration: 0,
+      subtitles: [],
+      selectedSubtitleId: null,
+      outputPath: null,
+      error: null,
+      isProcessing: false,
+      processingProgress: 0,
+      processingStep: '',
+      currentTranscriptText: '',
+      renderJobId: null,
+      renderPolling: null,
+      renderTimer: null,
+      renderAbortController: null,
+      renderElapsedTime: 0,
+      batchRenderActive: false,
+      background: { type: 'color', value: '#000000', imagePath: null },
+      vocalSeparation: null,
+      vocalSeparating: false,
+      vocalSeparationProgress: 0,
+      vocalSeparationMessage: '',
+      initialMediaPath: null,
+      originalMediaFile: null,
+      originalMediaPath: null,
+      originalFileName: null,
+      audioMixer: { enabled: false, tracks: {}, masterVolume: 1.0, masterMuted: false },
+      detectedLanguage: null,
+      secondarySubtitle: {
+        enabled: false,
+        targetLanguage: 'none',
+        subtitles: [],
+        style: {
+          fontName: 'Arial',
+          fontSize: 72,  // Updated for 4K rendering
+          color: '#FFFFFF', // White by default
+          borderColor: '#000000',
+          borderWidth: 4,      // Increased for 4K
+          shadowDepth: 2,       // Increased for 4K
+          bold: false,
+          italic: false,
+          marginVertical: 240,  // Increased for 4K
+        },
+        isTranslating: false,
+      },
+      playlist: {
+        tracks: [],
+        currentTrackIndex: -1,
+        isActive: false,
+        isPlaying: false,
+        playbackTime: 0,
+      },
+    });
+  },
 }));
+
+// ============================================================================
+// Persistence — save UI preferences to localStorage, restore on startup
+// ============================================================================
+const STORAGE_KEY = 'submaker-ui-preferences';
+
+/** Extract only the UI-related state worth persisting (no files, no transient flags). */
+function pickPersistState(s) {
+  return {
+    settings: s.settings,
+    modelSettings: s.modelSettings,
+    whisperParams: s.whisperParams,
+    style: s.style,
+    animation: s.animation,
+    secondarySubtitle: {
+      targetLanguage: s.secondarySubtitle.targetLanguage,
+      style: s.secondarySubtitle.style,
+    },
+    vocalIsolation: s.vocalIsolation,
+    vocalSelectedStems: s.vocalSelectedStems,
+    videoFormat: s.videoFormat,
+    selectedFormats: s.selectedFormats,
+    outputFormat: s.outputFormat,
+    quality: s.quality,
+    renderResolution: s.renderResolution,
+    sourceLanguage: s.sourceLanguage,
+    background: { type: s.background.type, value: s.background.value },
+    visualizer: {
+      enabled: s.visualizer.enabled,
+      presetName: s.visualizer.presetName,
+      opacity: s.visualizer.opacity,
+      autoCycle: s.visualizer.autoCycle,
+      autoCycleInterval: s.visualizer.autoCycleInterval,
+      sensitivity: s.visualizer.sensitivity,
+    },
+    previewMode: s.previewMode,
+    batch: {
+      stepMode: s.batch.stepMode,
+      audioSource: s.batch.audioSource,
+      embedId3: s.batch.embedId3,
+      animationType: s.batch.animationType,
+    },
+  };
+}
+
+/** Debounced save (300ms) */
+let _saveTimer = null;
+function debouncedSave(state) {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(pickPersistState(state)));
+    } catch { /* quota exceeded — ignore */ }
+  }, 300);
+}
+
+// Subscribe to store changes and persist
+useAppStore.subscribe((state) => debouncedSave(state));
+
+// Hydrate on first load
+try {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    const saved = JSON.parse(raw);
+    const cur = useAppStore.getState();
+    useAppStore.setState({
+      settings: { ...cur.settings, ...saved.settings,
+        audioVisualization: { ...cur.settings.audioVisualization, ...(saved.settings?.audioVisualization || {}) },
+      },
+      modelSettings: { ...cur.modelSettings, ...saved.modelSettings },
+      whisperParams: { ...cur.whisperParams, ...saved.whisperParams },
+      style: { ...cur.style, ...saved.style },
+      animation: { ...cur.animation, ...saved.animation },
+      secondarySubtitle: {
+        ...cur.secondarySubtitle,
+        targetLanguage: saved.secondarySubtitle?.targetLanguage ?? cur.secondarySubtitle.targetLanguage,
+        style: { ...cur.secondarySubtitle.style, ...(saved.secondarySubtitle?.style || {}) },
+      },
+      vocalIsolation: saved.vocalIsolation ?? cur.vocalIsolation,
+      vocalSelectedStems: saved.vocalSelectedStems ?? cur.vocalSelectedStems,
+      videoFormat: saved.videoFormat ?? cur.videoFormat,
+      selectedFormats: saved.selectedFormats ?? cur.selectedFormats,
+      outputFormat: saved.outputFormat ?? cur.outputFormat,
+      quality: saved.quality ?? cur.quality,
+      renderResolution: saved.renderResolution ?? cur.renderResolution,
+      sourceLanguage: saved.sourceLanguage ?? cur.sourceLanguage,
+      background: { ...cur.background, ...(saved.background || {}) },
+      visualizer: { ...cur.visualizer, ...(saved.visualizer || {}) },
+      previewMode: saved.previewMode ?? cur.previewMode,
+      batch: {
+        ...cur.batch,
+        stepMode: saved.batch?.stepMode ?? cur.batch.stepMode,
+        audioSource: saved.batch?.audioSource ?? cur.batch.audioSource,
+        embedId3: saved.batch?.embedId3 ?? cur.batch.embedId3,
+        animationType: saved.batch?.animationType ?? cur.batch.animationType,
+      },
+    });
+  }
+} catch { /* corrupted data — start fresh */ }
 
 // Debug: Access store from console
 if (typeof window !== 'undefined') {
