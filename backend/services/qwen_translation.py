@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from threading import Lock
 
-from backend.config import MODELS_DIR
+from config import MODELS_DIR
 
 # Local bundled model directory
 LOCAL_QWEN_DIR = MODELS_DIR / "qwen2.5-3b-awq"

@@ -18,6 +18,7 @@ function SubtitlePreview() {
     mediaDuration,
     detectedLanguage,
     sourceLanguage,
+    renderResolution,
   } = useAppStore();
 
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'preview' | 'grid'
@@ -70,15 +71,23 @@ function SubtitlePreview() {
     setExpandedSection(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Format info
+  // Format info — fixed 1080p reference coordinate system (matches ASS PlayRes)
+  const REF = { horizontal: { w: 1920, h: 1080 }, vertical: { w: 1080, h: 1920 }, square: { w: 1080, h: 1080 } };
+  const resFmt = REF[videoFormat] || REF.horizontal;
+  // Show actual render resolution in info panel
+  const RENDER_RES = {
+    '1k': { horizontal: '1920x1080', vertical: '1080x1920', square: '1080x1080' },
+    '2k': { horizontal: '2560x1440', vertical: '1440x2560', square: '1440x1440' },
+    '4k': { horizontal: '3840x2160', vertical: '2160x3840', square: '2160x2160' },
+  };
+  const renderResLabel = (RENDER_RES[renderResolution] || RENDER_RES['4k'])[videoFormat] || '3840x2160';
   const formatInfo = {
-    resolution: videoFormat === 'vertical' ? '1080x1920' : videoFormat === 'square' ? '1080x1080' : '1920x1080',
+    resolution: renderResLabel,
     aspectRatio: videoFormat === 'vertical' ? '9:16' : videoFormat === 'square' ? '1:1' : '16:9',
     format: outputFormat.toUpperCase(),
     quality: quality === 'high' ? 'High (1080p)' : quality === 'medium' ? 'Medium (720p)' : 'Low (480p)',
-    // Actual video dimensions
-    width: videoFormat === 'vertical' ? 1080 : videoFormat === 'square' ? 1080 : 1920,
-    height: videoFormat === 'vertical' ? 1920 : videoFormat === 'square' ? 1080 : 1080,
+    width: resFmt.w,
+    height: resFmt.h,
   };
 
   // Preview scale factor — from actual video dimensions to preview size
@@ -254,12 +263,12 @@ function SubtitlePreview() {
                 <div 
                   className="subtitle-position"
                   style={{
-                    top: style.alignment >= 7 ? `${10 + (style.offsetY || 0) * 0.5}%` : style.alignment >= 4 ? `${45 + (style.offsetY || 0) * 0.5}%` : 'auto',
-                    bottom: style.alignment <= 3 ? `${Math.max(0, style.marginVertical * scaleFactor - (style.offsetY || 0) * 2)}px` : 'auto',
-                    left: `${(style.offsetX || 0) * 0.5}%`,
-                    right: `${-(style.offsetX || 0) * 0.5}%`,
+                    top: style.alignment >= 7 ? `${Math.max(0, (style.marginVertical + (style.offsetY || 0)) * scaleFactor)}px` : style.alignment >= 4 ? '50%' : 'auto',
+                    bottom: style.alignment <= 3 ? `${Math.max(0, (style.marginVertical + (style.offsetY || 0)) * scaleFactor)}px` : 'auto',
+                    transform: style.alignment >= 4 && style.alignment <= 6 ? 'translateY(-50%)' : undefined,
+                    left: `${Math.max(0, (20 + (style.offsetX || 0)) * scaleFactor)}px`,
+                    right: `${Math.max(0, (20 - (style.offsetX || 0)) * scaleFactor)}px`,
                     textAlign: style.alignment % 3 === 1 ? 'left' : style.alignment % 3 === 0 ? 'right' : 'center',
-                    padding: `0 ${10 * scaleFactor}px`,
                   }}
                 >
                   <span style={getPreviewStyle()}>

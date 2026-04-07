@@ -243,7 +243,7 @@ export default function PreviewScreenOutput() {
     WebkitTextStroke: `${Math.max(0.2, (sty.borderWidth || 2) * sf)}px ${sty.borderColor || '#000000'}`,
     paintOrder: 'stroke fill',
     textAlign: sty.alignment % 3 === 1 ? 'left' : sty.alignment % 3 === 0 ? 'right' : 'center',
-    lineHeight: 1.2, maxWidth: '90%', wordWrap: 'break-word',
+    lineHeight: 1.2, wordWrap: 'break-word',
   } : {};
 
   const alignment = sty?.alignment ?? 2;
@@ -341,9 +341,11 @@ export default function PreviewScreenOutput() {
           {displayText && (
             <div style={{
               position: 'absolute',
-              top: alignment >= 7 ? '8%' : alignment >= 4 ? '42%' : 'auto',
-              bottom: alignment <= 3 ? `${Math.max(4, marginV * sf)}px` : 'auto',
-              left: '5%', right: '5%',
+              top: alignment >= 7 ? `${Math.max(4, (marginV + (state?.style?.offsetY || 0)) * sf)}px` : alignment >= 4 ? '50%' : 'auto',
+              bottom: alignment <= 3 ? `${Math.max(4, (marginV + (state?.style?.offsetY || 0)) * sf)}px` : 'auto',
+              transform: alignment >= 4 && alignment <= 6 ? 'translateY(-50%)' : undefined,
+              left: `${Math.max(0, (20 + (state?.style?.offsetX || 0)) * sf)}px`,
+              right: `${Math.max(0, (20 - (state?.style?.offsetX || 0)) * sf)}px`,
               display: 'flex',
               justifyContent: alignment % 3 === 1 ? 'flex-start' : alignment % 3 === 0 ? 'flex-end' : 'center',
               flexDirection: 'column',
@@ -357,17 +359,25 @@ export default function PreviewScreenOutput() {
           )}
 
           {/* Secondary subtitle */}
-          {state?.secondaryText && state?.secondaryStyle && (
+          {state?.secondaryText && state?.secondaryStyle && (() => {
+            const secAlign = state.secondaryStyle.alignment || 5;
+            const secMarginV = state.secondaryStyle.marginVertical || 120;
+            const secOffsetX = state.secondaryStyle.offsetX || 0;
+            const secOffsetY = state.secondaryStyle.offsetY || 0;
+            return (
             <div style={{
               position: 'absolute',
-              bottom: `${Math.max(4, (state.secondaryStyle.marginVertical || 120) * sf)}px`,
-              left: '5%', right: '5%',
+              top: secAlign >= 7 ? `${Math.max(4, (secMarginV + secOffsetY) * sf)}px` : secAlign >= 4 ? '50%' : 'auto',
+              bottom: secAlign <= 3 ? `${Math.max(4, (secMarginV + secOffsetY) * sf)}px` : 'auto',
+              transform: secAlign >= 4 && secAlign <= 6 ? 'translateY(-50%)' : undefined,
+              left: `${Math.max(0, (20 + secOffsetX) * sf)}px`,
+              right: `${Math.max(0, (20 - secOffsetX) * sf)}px`,
               display: 'flex', justifyContent: 'center', alignItems: 'center',
               zIndex: 2,
             }}>
               <span style={{
                 fontFamily: state.secondaryStyle.fontName || 'Arial',
-                fontSize: Math.max(5, (state.secondaryStyle.fontSize || 36) * sf * 0.8),
+                fontSize: Math.max(5, (state.secondaryStyle.fontSize || 36) * sf),
                 color: state.secondaryStyle.color || '#FFFF00',
                 fontWeight: state.secondaryStyle.bold ? 'bold' : 'normal',
                 textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
@@ -378,7 +388,8 @@ export default function PreviewScreenOutput() {
                 {state.secondaryText}
               </span>
             </div>
-          )}
+            );
+          })()}
 
           {/* Subtle waiting indicator */}
           {!state && (

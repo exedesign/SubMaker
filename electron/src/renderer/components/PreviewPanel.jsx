@@ -481,12 +481,17 @@ function PreviewPanel() {
     };
   }, []);
 
-  // Format info
-  const formatInfo = useMemo(() => ({
-    width: videoFormat === 'vertical' ? 1080 : videoFormat === 'square' ? 1080 : 1920,
-    height: videoFormat === 'vertical' ? 1920 : videoFormat === 'square' ? 1080 : 1080,
-    aspectRatio: videoFormat === 'vertical' ? '9:16' : videoFormat === 'square' ? '1:1' : '16:9',
-  }), [videoFormat]);
+  // Format info — fixed 1080p reference coordinate system.
+  // ASS PlayRes uses the same values; auto-scales to actual render resolution.
+  const formatInfo = useMemo(() => {
+    const REF = { horizontal: { w: 1920, h: 1080 }, vertical: { w: 1080, h: 1920 }, square: { w: 1080, h: 1080 } };
+    const fmt = REF[videoFormat] || REF.horizontal;
+    return {
+      width: fmt.w,
+      height: fmt.h,
+      aspectRatio: videoFormat === 'vertical' ? '9:16' : videoFormat === 'square' ? '1:1' : '16:9',
+    };
+  }, [videoFormat]);
 
   // Preview dimensions - dynamic based on panel width
   const previewDimensions = useMemo(() => {
@@ -557,7 +562,6 @@ function PreviewPanel() {
     paintOrder: 'stroke fill',
     textAlign: style.alignment % 3 === 1 ? 'left' : style.alignment % 3 === 0 ? 'right' : 'center',
     lineHeight: 1.2,
-    maxWidth: '90%',
     wordWrap: 'break-word',
   }), [style, scaleFactor]);
 
@@ -732,7 +736,6 @@ function PreviewPanel() {
     paintOrder: 'stroke fill',
     textAlign: style.alignment % 3 === 1 ? 'left' : style.alignment % 3 === 0 ? 'right' : 'center',
     lineHeight: 1.2,
-    maxWidth: '90%',
     wordWrap: 'break-word',
   }), [style, fsScaleFactor]);
 
@@ -755,6 +758,8 @@ function PreviewPanel() {
         borderColor: style.borderColor,
         alignment: style.alignment,
         marginVertical: style.marginVertical,
+        offsetX: style.offsetX || 0,
+        offsetY: style.offsetY || 0,
       },
       background,
       animation: { type: animation.type, highlightColor: animation.highlightColor },
@@ -793,10 +798,9 @@ function PreviewPanel() {
       // Read latest state at call time (not stale closure)
       const s = useAppStore.getState();
       const vf = s.videoFormat || 'horizontal';
-      const fmt = {
-        width: vf === 'vertical' ? 1080 : vf === 'square' ? 1080 : 1920,
-        height: vf === 'vertical' ? 1920 : vf === 'square' ? 1080 : 1080,
-      };
+      const REF = { horizontal: { w: 1920, h: 1080 }, vertical: { w: 1080, h: 1920 }, square: { w: 1080, h: 1080 } };
+      const rp = REF[vf] || REF.horizontal;
+      const fmt = { width: rp.w, height: rp.h };
       const secSub = s.settings?.dualSubtitleEnabled ? s.secondarySubtitle : null;
       const state = {
         type: 'PREVIEW_STATE',
@@ -806,6 +810,7 @@ function PreviewPanel() {
           bold: s.style.bold, italic: s.style.italic, shadowDepth: s.style.shadowDepth,
           borderWidth: s.style.borderWidth, borderColor: s.style.borderColor,
           alignment: s.style.alignment, marginVertical: s.style.marginVertical,
+          offsetX: s.style.offsetX || 0, offsetY: s.style.offsetY || 0,
         },
         background: s.background,
         animation: { type: s.animation.type, highlightColor: s.animation.highlightColor },
@@ -907,10 +912,13 @@ function PreviewPanel() {
           <div 
             className={`frame-subtitle ${animation.type}-mode`}
             style={{
-              top: style.alignment >= 7 ? `${8 + (style.offsetY || 0) * 0.5}%` : style.alignment >= 4 ? `${42 + (style.offsetY || 0) * 0.5}%` : 'auto',
-              bottom: style.alignment <= 3 ? `${Math.max(4, style.marginVertical * scaleFactor - (style.offsetY || 0) * 2)}px` : 'auto',
-              left: `${5 + (style.offsetX || 0) * 0.5}%`,
-              right: `${5 - (style.offsetX || 0) * 0.5}%`,
+              // ASS-matching position: alignment 7-9=top, 4-6=middle, 1-3=bottom
+              top: style.alignment >= 7 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * scaleFactor)}px` : style.alignment >= 4 ? '50%' : 'auto',
+              bottom: style.alignment <= 3 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * scaleFactor)}px` : 'auto',
+              transform: style.alignment >= 4 && style.alignment <= 6 ? 'translateY(-50%)' : undefined,
+              // ASS MarginL/MarginR: default 20 + offsetX
+              left: `${Math.max(0, (20 + (style.offsetX || 0)) * scaleFactor)}px`,
+              right: `${Math.max(0, (20 - (style.offsetX || 0)) * scaleFactor)}px`,
               flexDirection: 'column',
               alignItems: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
               gap: '2px',
@@ -925,29 +933,30 @@ function PreviewPanel() {
         )}
         
         {/* Secondary subtitle (translation) - separate container, NO animation */}
-        {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (
+        {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (() => {
+          const secAlign = secondarySubtitle?.style?.alignment || 5;
+          const secMarginV = secondarySubtitle?.style?.marginVertical || 120;
+          const secOffsetX = secondarySubtitle?.style?.offsetX || 0;
+          const secOffsetY = secondarySubtitle?.style?.offsetY || 0;
+          return (
           <div 
             className="frame-subtitle secondary-subtitle"
             style={{
-              // Secondary subtitle position
-              top: (secondarySubtitle?.style?.alignment || 5) >= 7 ? 
-                `${8 + (secondarySubtitle?.style?.offsetY || 0) * 0.5}%` : 
-                (secondarySubtitle?.style?.alignment || 5) >= 4 ? 
-                `${42 + (secondarySubtitle?.style?.offsetY || 0) * 0.5}%` : 'auto',
-              bottom: (secondarySubtitle?.style?.alignment || 5) <= 3 ? 
-                `${Math.max(4, (secondarySubtitle?.style?.marginVertical || 120) * scaleFactor) - (secondarySubtitle?.style?.offsetY || 0) * 2}px` : 'auto',
-              left: `${5 + (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
-              right: `${5 - (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
+              // ASS-matching position for secondary subtitle
+              top: secAlign >= 7 ? `${Math.max(4, (secMarginV + secOffsetY) * scaleFactor)}px` : secAlign >= 4 ? '50%' : 'auto',
+              bottom: secAlign <= 3 ? `${Math.max(4, (secMarginV + secOffsetY) * scaleFactor)}px` : 'auto',
+              transform: secAlign >= 4 && secAlign <= 6 ? 'translateY(-50%)' : undefined,
+              left: `${Math.max(0, (20 + secOffsetX) * scaleFactor)}px`,
+              right: `${Math.max(0, (20 - secOffsetX) * scaleFactor)}px`,
               flexDirection: 'column',
-              alignItems: ((secondarySubtitle?.style?.alignment || 5) % 3) === 1 ? 'flex-start' : 
-                         ((secondarySubtitle?.style?.alignment || 5) % 3) === 0 ? 'flex-end' : 'center',
+              alignItems: (secAlign % 3) === 1 ? 'flex-start' : (secAlign % 3) === 0 ? 'flex-end' : 'center',
               display: 'flex',
             }}
           >
             {/* Secondary subtitle text */}
             <span style={{
               fontFamily: secondarySubtitle?.style?.fontName || 'Arial',
-              fontSize: Math.max(5, (secondarySubtitle?.style?.fontSize || 36) * scaleFactor * 0.8),
+              fontSize: Math.max(5, (secondarySubtitle?.style?.fontSize || 36) * scaleFactor),
               color: secondarySubtitle?.style?.color || '#FFFF00',
               fontWeight: secondarySubtitle?.style?.bold ? 'bold' : 'normal',
               fontStyle: secondarySubtitle?.style?.italic ? 'italic' : 'normal',
@@ -960,7 +969,6 @@ function PreviewPanel() {
               paintOrder: 'stroke fill',
               textAlign: 'center',
               lineHeight: 1.2,
-              maxWidth: '90%',
             }}>
               {console.log('[PreviewPanel] DEBUG:', {
                 activeSecondarySubtitle,
@@ -971,7 +979,8 @@ function PreviewPanel() {
               {activeSecondarySubtitle.translatedText || `[NO TRANSLATION: ${activeSecondarySubtitle.text}]`}
             </span>
           </div>
-        )}
+          );
+        })()}
       </div>
       </div>
 
@@ -1102,10 +1111,11 @@ function PreviewPanel() {
             <div
               className={`frame-subtitle ${animation.type}-mode`}
               style={{
-                top: style.alignment >= 7 ? '8%' : style.alignment >= 4 ? '42%' : 'auto',
-                bottom: style.alignment <= 3 ? `${Math.max(4, style.marginVertical * fsScaleFactor)}px` : 'auto',
-                left: '5%',
-                right: '5%',
+                top: style.alignment >= 7 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * fsScaleFactor)}px` : style.alignment >= 4 ? '50%' : 'auto',
+                bottom: style.alignment <= 3 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * fsScaleFactor)}px` : 'auto',
+                transform: style.alignment >= 4 && style.alignment <= 6 ? 'translateY(-50%)' : undefined,
+                left: `${Math.max(0, (20 + (style.offsetX || 0)) * fsScaleFactor)}px`,
+                right: `${Math.max(0, (20 - (style.offsetX || 0)) * fsScaleFactor)}px`,
                 justifyContent: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -1120,27 +1130,28 @@ function PreviewPanel() {
           )}
 
           {/* Secondary subtitle */}
-          {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (
+          {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (() => {
+            const secAlign = secondarySubtitle?.style?.alignment || 5;
+            const secMarginV = secondarySubtitle?.style?.marginVertical || 120;
+            const secOffsetX = secondarySubtitle?.style?.offsetX || 0;
+            const secOffsetY = secondarySubtitle?.style?.offsetY || 0;
+            return (
             <div
               className="frame-subtitle secondary-subtitle"
               style={{
-                top: (secondarySubtitle?.style?.alignment || 5) >= 7 ?
-                  `${8 + (secondarySubtitle?.style?.offsetY || 0) * 0.5}%` :
-                  (secondarySubtitle?.style?.alignment || 5) >= 4 ?
-                  `${42 + (secondarySubtitle?.style?.offsetY || 0) * 0.5}%` : 'auto',
-                bottom: (secondarySubtitle?.style?.alignment || 5) <= 3 ?
-                  `${Math.max(4, (secondarySubtitle?.style?.marginVertical || 120) * fsScaleFactor) - (secondarySubtitle?.style?.offsetY || 0) * 2}px` : 'auto',
-                left: `${5 + (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
-                right: `${5 - (secondarySubtitle?.style?.offsetX || 0) * 0.5}%`,
-                justifyContent: ((secondarySubtitle?.style?.alignment || 5) % 3) === 1 ? 'flex-start' :
-                               ((secondarySubtitle?.style?.alignment || 5) % 3) === 0 ? 'flex-end' : 'center',
+                top: secAlign >= 7 ? `${Math.max(4, (secMarginV + secOffsetY) * fsScaleFactor)}px` : secAlign >= 4 ? '50%' : 'auto',
+                bottom: secAlign <= 3 ? `${Math.max(4, (secMarginV + secOffsetY) * fsScaleFactor)}px` : 'auto',
+                transform: secAlign >= 4 && secAlign <= 6 ? 'translateY(-50%)' : undefined,
+                left: `${Math.max(0, (20 + secOffsetX) * fsScaleFactor)}px`,
+                right: `${Math.max(0, (20 - secOffsetX) * fsScaleFactor)}px`,
+                justifyContent: (secAlign % 3) === 1 ? 'flex-start' : (secAlign % 3) === 0 ? 'flex-end' : 'center',
                 alignItems: 'center',
                 display: 'flex',
               }}
             >
               <span style={{
                 fontFamily: secondarySubtitle?.style?.fontName || 'Arial',
-                fontSize: Math.max(5, (secondarySubtitle?.style?.fontSize || 36) * fsScaleFactor * 0.8),
+                fontSize: Math.max(5, (secondarySubtitle?.style?.fontSize || 36) * fsScaleFactor),
                 color: secondarySubtitle?.style?.color || '#FFFF00',
                 fontWeight: secondarySubtitle?.style?.bold ? 'bold' : 'normal',
                 fontStyle: secondarySubtitle?.style?.italic ? 'italic' : 'normal',
@@ -1153,12 +1164,12 @@ function PreviewPanel() {
                 paintOrder: 'stroke fill',
                 textAlign: 'center',
                 lineHeight: 1.2,
-                maxWidth: '90%',
               }}>
                 {activeSecondarySubtitle.translatedText}
               </span>
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     );

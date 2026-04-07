@@ -1603,7 +1603,17 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         print(f"[Render Job {job_id}] Getting subtitle engine...")
         # Create fresh engine for each render to avoid cached styles
         engine = SubtitleEngine()
-        engine.set_resolution_from_format(video_format)
+        # Use FIXED 1080p-based PlayRes as a reference coordinate system.
+        # ASS with ScaledBorderAndShadow: yes auto-scales to actual video resolution.
+        # This keeps font sizes consistent with what the user sees in preview.
+        PLAYRES_REF = {
+            'horizontal': (1920, 1080),
+            'vertical': (1080, 1920),
+            'square': (1080, 1080),
+        }
+        ref_w, ref_h = PLAYRES_REF.get(video_format, (1920, 1080))
+        engine.set_resolution(ref_w, ref_h)
+        print(f"[Render Job {job_id}] Subtitle PlayRes set to fixed reference: {ref_w}x{ref_h} (video will be scaled by ASS)")
         
         _render_jobs[job_id]["progress"] = 10
         _render_jobs[job_id]["step"] = "Applying style settings..."
@@ -1685,6 +1695,14 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             )
         else:
             engine.save_ass(subtitles, subtitle_path, sub_style, anim_config)
+        
+        # DEBUG: Log ASS file header to verify PlayRes and style values
+        try:
+            with open(subtitle_path, 'r', encoding='utf-8') as f:
+                ass_header = f.read(1500)
+            print(f"[Render Job {job_id}] ASS FILE HEADER:\n{ass_header[:1500]}")
+        except Exception as e:
+            print(f"[Render Job {job_id}] Could not read ASS file: {e}")
         
         _render_jobs[job_id]["progress"] = 25
         _render_jobs[job_id]["step"] = "Preparing audio..."

@@ -1560,7 +1560,6 @@ body.dragging-preview * {
 }
 
 .subtitle-position span {
-  max-width: 90%;
   word-wrap: break-word;
   text-align: center;
 }
@@ -1993,16 +1992,11 @@ body.dragging-preview * {
 
 .frame-subtitle {
   position: absolute;
-  left: 0;
-  right: 0;
   display: flex;
-  padding: 0 5%;
   z-index: 2;
 }
 
-.frame-subtitle.secondary {
-  bottom: 4px !important;
-  top: auto !important;
+.frame-subtitle.secondary-subtitle {
   z-index: 3;
 }
 
