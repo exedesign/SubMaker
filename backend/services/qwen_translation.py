@@ -12,8 +12,14 @@ if not hasattr(_act, 'PytorchGELUTanh') and hasattr(_act, 'GELUTanh'):
 import torch
 import gc
 import threading
+from pathlib import Path
 from typing import List, Dict, Optional
 from threading import Lock
+
+from backend.config import MODELS_DIR
+
+# Local bundled model directory
+LOCAL_QWEN_DIR = MODELS_DIR / "qwen2.5-3b-awq"
 
 # Language name mapping for the system prompt
 LANGUAGE_NAMES = {
@@ -56,15 +62,23 @@ class QwenTranslationService:
         with self._lock:
             if self._loaded:
                 return
-            print(f"[Qwen] Loading model {MODEL_ID} ...")
+
+            # Use local bundled model if available, otherwise fall back to HuggingFace
+            if (LOCAL_QWEN_DIR / "model.safetensors").exists():
+                model_path = str(LOCAL_QWEN_DIR)
+                print(f"[Qwen] Loading model from local path: {model_path}")
+            else:
+                model_path = MODEL_ID
+                print(f"[Qwen] Local model not found, downloading {MODEL_ID} from HuggingFace...")
+
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             self.tokenizer = AutoTokenizer.from_pretrained(
-                MODEL_ID,
+                model_path,
                 trust_remote_code=True,
             )
             self.model = AutoModelForCausalLM.from_pretrained(
-                MODEL_ID,
+                model_path,
                 device_map="auto",
                 dtype=torch.float16,
             )

@@ -1799,7 +1799,7 @@ body.dragging-preview * {
   background: transparent;
 }
 
-/* Kenar handles */
+/* Edge handles */
 .floating-resize-handle.n {
   top: -4px;
   left: 8px;
@@ -1832,7 +1832,7 @@ body.dragging-preview * {
   cursor: ew-resize;
 }
 
-/* Köşe handles */
+/* Corner handles */
 .floating-resize-handle.nw {
   top: -4px;
   left: -4px;

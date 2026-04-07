@@ -195,13 +195,13 @@ function Header() {
         {/* Window controls — only in Electron */}
         {isElectron && (
           <div className="window-controls">
-            <button className="wc-btn wc-minimize" onClick={handleMinimize} title="Küçült">
+            <button className="wc-btn wc-minimize" onClick={handleMinimize} title="Minimize">
               <FiMinus size={14} />
             </button>
-            <button className="wc-btn wc-maximize" onClick={handleMaximize} title={isMaximized ? 'Küçült' : 'Büyüt'}>
+            <button className="wc-btn wc-maximize" onClick={handleMaximize} title={isMaximized ? 'Restore' : 'Maximize'}>
               {isMaximized ? <FiSquare size={13} /> : <FiMaximize2 size={13} />}
             </button>
-            <button className="wc-btn wc-close" onClick={handleClose} title="Kapat">
+            <button className="wc-btn wc-close" onClick={handleClose} title="Close">
               <FiX size={14} />
             </button>
           </div>

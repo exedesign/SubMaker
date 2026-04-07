@@ -82,7 +82,7 @@ const TrackWaveformCanvas = React.memo(({ waveformData, color, height, width, cu
       ctx.fillStyle = 'rgba(255,255,255,0.25)'
       ctx.font = '12px "Segoe UI", Arial'
       ctx.textAlign = 'center'
-      ctx.fillText('Dalga formu yukleniyor...', width / 2, height / 2 + 4)
+      ctx.fillText('Loading waveform...', width / 2, height / 2 + 4)
     }
 
     // Playhead
@@ -630,14 +630,14 @@ const FlexibleTimeline = () => {
       return
     }
     
-    // Shift tuşu ile çoklu seçim
+    // Multi-select with Shift key
     if (e.shiftKey) {
       setSelectedSubtitleIds(prev => {
         if (prev.includes(subtitle.id)) {
-          // Zaten seçili ise kaldır
+          // Already selected, remove
           return prev.filter(id => id !== subtitle.id)
         } else {
-          // Seçili değilse ekle
+          // Not selected, add
           return [...prev, subtitle.id]
         }
       })
@@ -1186,7 +1186,7 @@ const FlexibleTimeline = () => {
     }
   }, [])
 
-  // Initial store check - component mount olduğunda store'u kontrol et
+  // Initial store check - verify store state on component mount
   // Sync with global playbackTime from main media player
   useEffect(() => {
     if (playbackTime !== currentTime) {
@@ -1575,9 +1575,9 @@ const FlexibleTimeline = () => {
                 fontWeight: audioMixer.showTimelineTracks ? '600' : 'normal',
                 transition: 'var(--transition-fast)'
               }}
-              title={audioMixer.showTimelineTracks ? 'Katmanlari Gizle' : 'Katmanlari Goster'}
+              title={audioMixer.showTimelineTracks ? 'Hide Layers' : 'Show Layers'}
             >
-              🎚️ {audioMixer.showTimelineTracks ? 'Katmanlar' : 'Katmanlar'}
+              🎚️ {audioMixer.showTimelineTracks ? 'Layers' : 'Layers'}
             </button>
           </>
         )}

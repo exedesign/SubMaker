@@ -85,6 +85,17 @@ function PreviewPanel() {
   const [panelWidth, setPanelWidth] = useState(300); // Docked panel width
   const [collapsedSections, setCollapsedSections] = useState({ format: true, background: true, animation: true });
 
+  // Visualizer reinit key — increments when render completes so ButterchurnCanvas remounts
+  const [vizVersion, setVizVersion] = useState(0);
+  const prevProcessingRef = useRef(false);
+  useEffect(() => {
+    if (prevProcessingRef.current && !isProcessing) {
+      // Render just finished → force visualizer remount to reinitialize
+      setVizVersion(v => v + 1);
+    }
+    prevProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
   // Derive actual audio element reactively — globalAudioRef.current changes
   // silently (ref mutation), so we use playbackTime/isPlaying as triggers
   // to re-evaluate the ref on each render
@@ -446,7 +457,7 @@ function PreviewPanel() {
     if (window.electronAPI?.openPreviewOnSecondDisplay) {
       const result = await window.electronAPI.openPreviewOnSecondDisplay();
       if (result?.error === 'no_second_display') {
-        alert('İkinci ekran bulunamadı. Lütfen bir monitör daha bağlayın.');
+        alert('Second display not found. Please connect another monitor.');
       } else if (result?.success) {
         setIsSecondDisplayOpen(true);
       }
@@ -470,7 +481,7 @@ function PreviewPanel() {
     };
   }, []);
 
-  // Format bilgileri
+  // Format info
   const formatInfo = useMemo(() => ({
     width: videoFormat === 'vertical' ? 1080 : videoFormat === 'square' ? 1080 : 1920,
     height: videoFormat === 'vertical' ? 1920 : videoFormat === 'square' ? 1080 : 1080,
@@ -865,8 +876,8 @@ function PreviewPanel() {
           position: 'relative',
         }}
       >
-        {/* Butterchurn Visualizer Overlay — hidden during render to free GPU for VizExport */}
-        {visualizer.enabled && !isProcessing && (
+        {/* Butterchurn Visualizer Overlay — stays mounted during render (freezes when GPU freed for export, reinits after) */}
+        {visualizer.enabled && (
           <div style={{
             position: 'absolute',
             top: 0, left: 0, right: 0, bottom: 0,
@@ -875,6 +886,7 @@ function PreviewPanel() {
             pointerEvents: 'none',
           }}>
             <ButterchurnCanvas
+              key={vizVersion}
               width={previewWidth}
               height={previewHeight}
               audioElement={audioElementForViz}
@@ -1009,7 +1021,7 @@ function PreviewPanel() {
         );
       })}
 
-      {/* Render Butonu — sağ panelde */}
+      {/* Render Button — right panel */}
       {subtitles.length > 0 && (
         <button
           className="btn btn-primary"
@@ -1061,8 +1073,8 @@ function PreviewPanel() {
             cursor: 'default',
           }}
         >
-          {/* Visualizer — reuse singleton, CSS scaled — hidden during render to free GPU */}
-          {visualizer.enabled && !isProcessing && (
+          {/* Visualizer — reuse singleton, CSS scaled — stays mounted during render */}
+          {visualizer.enabled && (
             <div style={{
               position: 'absolute',
               top: 0, left: 0, right: 0, bottom: 0,
@@ -1072,6 +1084,7 @@ function PreviewPanel() {
               background: `var(--visualizer-bg, transparent)`,
             }}>
               <ButterchurnCanvas
+                key={vizVersion}
                 width={Math.round(fsWidth)}
                 height={Math.round(fsHeight)}
                 audioElement={audioElementForViz}
@@ -1238,19 +1251,19 @@ function PreviewPanel() {
           </button>
           <button
             onClick={toggleFullscreen}
-            title="Tam ekran"
+            title="Fullscreen"
           >
             <FiMaximize size={10} />
           </button>
           <button
             onClick={() => setPreviewMode('docked')}
-            title="Panele sabitle"
+            title="Dock to panel"
           >
             <FiSidebar size={12} />
           </button>
           <button
             onClick={() => setIsVisible(false)}
-            title="Gizle"
+            title="Hide"
           >
             <FiEyeOff size={12} />
           </button>

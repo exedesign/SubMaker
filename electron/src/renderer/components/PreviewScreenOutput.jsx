@@ -45,16 +45,16 @@ function PreviewTitlebar({ isFullscreen, onMinimize, onFullscreen, onClose }) {
 
       {/* Window controls */}
       <div style={{ display: 'flex', gap: 6, WebkitAppRegion: 'no-drag' }}>
-        <WcButton onClick={onMinimize} title="Kucult" hoverBg="rgba(255,255,255,0.12)">
+        <WcButton onClick={onMinimize} title="Minimize" hoverBg="rgba(255,255,255,0.12)">
           <svg width="12" height="2" viewBox="0 0 12 2"><rect width="12" height="2" rx="1" fill="currentColor"/></svg>
         </WcButton>
-        <WcButton onClick={onFullscreen} title={isFullscreen ? 'Pencere modu' : 'Tam ekran'} hoverBg="rgba(255,255,255,0.12)">
+        <WcButton onClick={onFullscreen} title={isFullscreen ? 'Windowed' : 'Fullscreen'} hoverBg="rgba(255,255,255,0.12)">
           {isFullscreen
             ? <svg width="12" height="12" viewBox="0 0 10 10"><path d="M1 4H4V1M6 1V4H9M9 6H6V9M4 9V6H1" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
             : <svg width="12" height="12" viewBox="0 0 10 10"><path d="M1 1H4M1 1V4M9 1H6M9 1V4M1 9H4M1 9V6M9 9H6M9 9V6" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
           }
         </WcButton>
-        <WcButton onClick={onClose} title="Kapat" hoverBg="#e53935">
+        <WcButton onClick={onClose} title="Close" hoverBg="#e53935">
           <svg width="12" height="12" viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
         </WcButton>
       </div>

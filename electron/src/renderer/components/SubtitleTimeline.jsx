@@ -532,7 +532,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <button
             onClick={() => handleSkip(-5)}
-            title="5s geri"
+            title="5s back"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 26, height: 26, padding: 0,
@@ -547,7 +547,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
           </button>
           <button
             onClick={handleTogglePlay}
-            title={isPlaying ? 'Duraklat' : 'Oynat'}
+            title={isPlaying ? 'Pause' : 'Play'}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 30, height: 30, padding: 0,
@@ -563,7 +563,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
           </button>
           <button
             onClick={() => handleSkip(5)}
-            title="5s ileri"
+            title="5s forward"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 26, height: 26, padding: 0,
@@ -655,7 +655,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
               Audio Layers ({sortedTracks.length})
             </span>
             <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6 }}>
-              {sortedTracks.filter(t => t.waveformData).length}/{sortedTracks.length} dalga formu
+              {sortedTracks.filter(t => t.waveformData).length}/{sortedTracks.length} waveforms
             </span>
           </div>
 

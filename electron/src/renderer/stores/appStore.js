@@ -1437,7 +1437,7 @@ export const useAppStore = create((set, get) => ({
 
       tracks['original'] = {
         id: 'original',
-        label: '▶️ Orjinal Ses',
+        label: '▶️ Original Audio',
         icon: '🔊',
         color: 'rgba(100, 116, 139, 0.8)',
         url: originalUrl,

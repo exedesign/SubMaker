@@ -283,7 +283,7 @@ function SubtitlePreview() {
                 </div>
                 <div className="indicator-labels">
                   <span className="font-size-value">{style.fontSize}px</span>
-                  <span className="font-ratio">Ekran oranı: {fontRatio}%</span>
+                  <span className="font-ratio">Screen ratio: {fontRatio}%</span>
                 </div>
               </div>
             </div>
@@ -294,11 +294,11 @@ function SubtitlePreview() {
                 <span className="info-value" style={{ fontFamily: style.fontName }}>{style.fontName}</span>
               </div>
               <div className="info-item">
-                <span className="info-label">Boyut:</span>
+                <span className="info-label">Size:</span>
                 <span className="info-value">{style.fontSize}px</span>
               </div>
               <div className="info-item">
-                <span className="info-label">Renk:</span>
+                <span className="info-label">Color:</span>
                 <span className="info-value">
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span style={{ 
@@ -321,7 +321,7 @@ function SubtitlePreview() {
                 <span className="info-value">{animation.type === 'none' ? 'None' : animation.type}</span>
               </div>
               <div className="info-item">
-                <span className="info-label">Hizalama:</span>
+                <span className="info-label">Alignment:</span>
                 <span className="info-value">
                   {style.alignment % 3 === 1 ? <FiAlignLeft size={14} /> : 
                    style.alignment % 3 === 0 ? <FiAlignRight size={14} /> : 
@@ -381,7 +381,7 @@ function SubtitlePreview() {
                     onClick={() => setPreviewIndex(Math.min(subtitles.length - 1, previewIndex + 1))}
                     disabled={previewIndex === subtitles.length - 1}
                   >
-                    Sonraki →
+                    Next →
                   </button>
                 </div>
               </div>

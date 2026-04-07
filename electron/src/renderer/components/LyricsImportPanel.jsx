@@ -60,7 +60,7 @@ const LyricsImportPanel = () => {
     }
   }
 
-  // Örnek metin
+  // Example text
   const exampleLyrics = `[Intro] (Ambient, Peaceful Silence) (Child's Voice - Softly)
 بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ [pause]
 
@@ -148,7 +148,7 @@ const LyricsImportPanel = () => {
         const action = importMode === 'merge' ? 'added' : 'imported'
         setSuccessMessage(`✅ ${data.count} lyrics segment ${action} successfully!`)
         
-        // Formu temizle
+        // Clear form
         setTimeout(() => {
           setLyricsText('')
           setTotalDuration('')

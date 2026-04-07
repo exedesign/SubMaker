@@ -49,7 +49,7 @@ function StatusBar() {
           ? outputPath.substring(0, outputPath.lastIndexOf('\\'))
           : 'D:\\AI\\SubMaker\\output';
         
-        // Backend'e klasör açma isteği gönder
+        // Send folder open request to backend
         await fetchJson(`http://localhost:5000/api/open-folder?path=${encodeURIComponent(folderPath)}`);
       }
     } catch (error) {
@@ -143,7 +143,7 @@ function StatusBar() {
     return (
       <div className="status-bar processing-mode">
         <div className="status-process-full">
-          {/* İkon ve başlık */}
+          {/* Icon and title */}
           <div className="process-header">
             {processType === 'transcribe' && <FiMic className="process-icon pulse" size={18} />}
             {processType === 'render' && <FiFilm className="process-icon spin-slow" size={18} />}
@@ -176,7 +176,7 @@ function StatusBar() {
             <span className="process-percent">{effectiveProgress}%</span>
           </div>
           
-          {/* Durum mesajı veya tanınan metin */}
+          {/* Status message or recognized text */}
           <div className="process-status">
             <span className="process-step">
               {effectiveStep}
@@ -245,7 +245,7 @@ function StatusBar() {
         )}
       </div>
       
-      {/* Orta: Adım bilgisi */}
+      {/* Center: Step info */}
       <div className="status-section center">
         <div className="status-step">
           {currentStep === 'upload' && <FiMusic size={14} />}
@@ -263,7 +263,7 @@ function StatusBar() {
         </div>
       </div>
       
-      {/* Sağ: Output klasörü */}
+      {/* Right: Output folder */}
       <div className="status-section right">
         {outputPath ? (
           <button 

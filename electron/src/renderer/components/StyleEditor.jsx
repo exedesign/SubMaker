@@ -130,7 +130,7 @@ function StyleEditor() {
         setShowGifSearch(false);
       }
     } catch (err) {
-      setGifError('GIF indirilemedi');
+      setGifError('Failed to download GIF');
       console.error(err);
     } finally {
       setGifLoading(false);
@@ -520,7 +520,7 @@ function StyleEditor() {
             style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
           >
             <FiSearch size={16} />
-            GIF Ara
+            Search GIF
           </button>
         </div>
         
@@ -585,7 +585,7 @@ function StyleEditor() {
               
               {/* Logo Position Presets */}
               <div className="form-group" style={{ marginBottom: 12 }}>
-                <label className="label" style={{ fontSize: 11 }}>Konum</label>
+                <label className="label" style={{ fontSize: 11 }}>Position</label>
                 <div style={{ 
                   display: 'grid', 
                   gridTemplateColumns: 'repeat(3, 1fr)', 
@@ -611,7 +611,7 @@ function StyleEditor() {
               
               {/* Logo Size */}
               <div className="form-group" style={{ marginBottom: 8 }}>
-                <label className="label" style={{ fontSize: 11 }}>Boyut: {selectedLogo.size}%</label>
+                <label className="label" style={{ fontSize: 11 }}>Size: {selectedLogo.size}%</label>
                 <input
                   type="range"
                   className="slider"
@@ -672,7 +672,7 @@ function StyleEditor() {
               justifyContent: 'space-between',
             }}>
               <h3 style={{ margin: 0, fontSize: 16 }}>
-                {settings.gifProvider === 'giphy' ? '🎥' : '🎬'} GIF Ara ({settings.gifProvider === 'giphy' ? 'Giphy' : 'Tenor'})
+                {settings.gifProvider === 'giphy' ? '🎥' : '🎬'} Search GIF ({settings.gifProvider === 'giphy' ? 'Giphy' : 'Tenor'})
               </h3>
               <button
                 className="btn btn-secondary"

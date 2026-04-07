@@ -132,7 +132,7 @@ class VideoGenerator:
             "-stream_loop", "-1",        # Loop input indefinitely
             "-i", gif_path,
             "-t", str(video_duration),   # Trim to video duration
-            "-vf", f"scale={target_width}:-1:flags=lanczos,format=yuva420p",
+            "-vf", f"scale={target_width}:-1:flags=lanczos,format=yuv420p",
             "-c:v", "libx264",
             "-crf", "18",
             "-preset", "fast",
@@ -291,7 +291,19 @@ class VideoGenerator:
             ]
         
         elif background_type == "image":
-            # CUDA-optimized background image processing
+            # Check if the background is an animated GIF
+            is_gif = background_value.lower().endswith(".gif")
+            
+            if is_gif:
+                # Use GIF directly with FFmpeg loop flags to preserve alpha/transparency
+                return [
+                    "-ignore_loop", "0",
+                    "-stream_loop", "-1",
+                    "-i", background_value,
+                    "-t", str(duration)
+                ]
+            
+            # Static image background
             processed_image = self._preprocess_background_image(background_value, width, height, temp_files=temp_files)
             if self.hardware_codec and self.gpu_type == "nvidia":
                 # Optimized for NVENC with static image
@@ -317,9 +329,14 @@ class VideoGenerator:
         self,
         background_type: str,
         width: int,
-        height: int
+        height: int,
+        is_gif_background: bool = False
     ) -> str:
         """Build video filter for scaling/padding with CUDA acceleration"""
+        
+        # GIF backgrounds need scale+pad to exact dimensions (GIF→MP4 only scales width)
+        if is_gif_background:
+            return f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p"
         
         # Add pixel format conversion for GPU compatibility
         if background_type == "image" and self.hardware_codec and self.gpu_type == "nvidia":
@@ -478,6 +495,7 @@ class VideoGenerator:
             cmd.extend(["-thread_queue_size", "2048"])
         
         # Add background input
+        is_gif_bg = background_type == "image" and background_value.lower().endswith(".gif")
         cmd.extend(self._build_background_input(
             background_type, background_value, width, height, fps, duration
         ))
@@ -486,7 +504,7 @@ class VideoGenerator:
         cmd.extend(["-i", audio_path])
         
         # Add video filter if needed
-        vf = self._build_video_filter(background_type, width, height)
+        vf = self._build_video_filter(background_type, width, height, is_gif_background=is_gif_bg)
         if vf:
             cmd.extend(["-vf", vf])
         
@@ -741,9 +759,14 @@ class VideoGenerator:
         overlay_fn = "overlay_cuda" if use_cuda_filters else "overlay"
         
         # Background: ensure correct format and size
-        bg_needs_scale = (background_type == "image" and self.hardware_codec and self.gpu_type == "nvidia")
+        is_gif_bg = background_type == "image" and actual_bg_value.lower().endswith(".gif")
+        bg_needs_scale = is_gif_bg or (background_type == "image" and self.hardware_codec and self.gpu_type == "nvidia")
         if bg_needs_scale:
-            filter_parts.append(f"[0:v]format=yuv420p,{scale_fn}={width}:{height}[bg]")
+            if is_gif_bg:
+                # GIF: scale to exact size, preserve alpha with rgba format
+                filter_parts.append(f"[0:v]{scale_fn}={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[bg]")
+            else:
+                filter_parts.append(f"[0:v]format=yuv420p,{scale_fn}={width}:{height}[bg]")
             current_output = "[bg]"
         else:
             current_output = "[0:v]"

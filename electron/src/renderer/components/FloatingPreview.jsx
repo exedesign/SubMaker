@@ -401,7 +401,7 @@ function FloatingPreview() {
           </button>
           <button 
             onClick={() => setIsVisible(false)}
-            title="Gizle"
+            title="Hide"
           >
             <FiEyeOff size={12} />
           </button>
@@ -481,7 +481,7 @@ function FloatingPreview() {
               <span className="info-val" style={{ fontFamily: style.fontName }}>{style.fontName}</span>
             </div>
             <div className="info-row">
-              <span className="info-key">Boyut:</span>
+              <span className="info-key">Size:</span>
               <span className="info-val highlight">{style.fontSize}px</span>
             </div>
             <div className="info-row">
@@ -497,7 +497,7 @@ function FloatingPreview() {
               <span 
                 className="color-dot" 
                 style={{ background: style.color }}
-                title={`Metin: ${style.color}`}
+                title={`Text: ${style.color}`}
               />
               <span 
                 className="color-dot border" 

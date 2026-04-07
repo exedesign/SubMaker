@@ -297,9 +297,9 @@ function BackgroundSelector() {
                 className="btn btn-ghost"
                 style={{ fontSize: 10, padding: '2px 8px' }}
                 onClick={randomizeVisualizerPreset}
-                title="Rastgele preset"
+                title="Random preset"
               >
-                <FiShuffle size={11} /> Rastgele
+                <FiShuffle size={11} /> Random
               </button>
             </label>
 
@@ -307,7 +307,7 @@ function BackgroundSelector() {
             <input
               type="text"
               className="input"
-              placeholder="Preset ara..."
+              placeholder="Search preset..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{ marginBottom: 6, fontSize: 11 }}
@@ -416,7 +416,7 @@ function BackgroundSelector() {
           {/* Sensitivity */}
           <div className="form-group">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label className="label" style={{ marginBottom: 0 }}>Ses Hassasiyeti</label>
+              <label className="label" style={{ marginBottom: 0 }}>Audio Sensitivity</label>
               <span style={{
                 background: 'rgba(139, 92, 246, 0.2)',
                 padding: '2px 8px',
