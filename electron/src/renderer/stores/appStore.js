@@ -1000,6 +1000,10 @@ export const useAppStore = create((set, get) => ({
         return;
       }
       try {
+        // Debug: log logo data being sent to render
+        if (logos?.length > 0) {
+          console.log('[Render] Logos payload:', logos.map(l => ({ id: l.id, size: l.size, position: l.position, opacity: l.opacity, enabled: l.enabled })));
+        }
         const response = await api.post('/render', {
           audio_path: renderAudioPath,
           original_name: renderOptions.originalName || get().originalFileName,

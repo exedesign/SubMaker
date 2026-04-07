@@ -116,29 +116,29 @@ class VideoGenerator:
             print(f"⚠️ CUDA filter detection failed: {e}")
             self.has_cuda_filters = False
     
-    def _preconvert_gif_to_mp4(self, gif_path: str, target_width: int, video_duration: float) -> str:
+    def _preconvert_gif_to_webm(self, gif_path: str, target_width: int, video_duration: float) -> str:
         """
-        Pre-convert an animated GIF to a looped MP4 matching the video duration.
-        MP4 decode is ~5-10x faster than GIF decode in FFmpeg filter chains.
-        Also pre-scales to target width to eliminate scale filter in filter_complex.
+        Pre-convert an animated GIF to WebM (VP9 + yuva420p) preserving alpha.
+        VP9 supports alpha channel natively, and -stream_loop works reliably on WebM.
+        The caller then uses -stream_loop -1 -t duration on the resulting WebM.
         
-        Returns path to the temporary MP4 file.
+        Returns path to the temporary WebM file.
         """
-        temp_mp4 = str(TEMP_DIR / f"gif_{uuid.uuid4().hex[:8]}.mp4")
+        temp_webm = str(TEMP_DIR / f"gif_{uuid.uuid4().hex[:8]}.webm")
         
+        # Decode GIF → WebM with alpha (yuva420p preserves transparency)
         cmd = [
             self.ffmpeg_path, "-y",
-            "-ignore_loop", "0",        # Read all GIF loop frames
-            "-stream_loop", "-1",        # Loop input indefinitely
+            "-ignore_loop", "0",         # Read all frames from GIF (one full pass)
             "-i", gif_path,
-            "-t", str(video_duration),   # Trim to video duration
-            "-vf", f"scale={target_width}:-1:flags=lanczos,format=yuv420p",
-            "-c:v", "libx264",
-            "-crf", "18",
-            "-preset", "fast",
-            "-movflags", "+faststart",
+            "-vf", f"scale={target_width}:-1:flags=lanczos",
+            "-c:v", "libvpx-vp9",
+            "-pix_fmt", "yuva420p",      # YUV + Alpha channel
+            "-crf", "20",
+            "-b:v", "0",                 # Constant quality mode
+            "-auto-alt-ref", "0",        # Required for alpha in VP9
             "-an",                       # No audio
-            temp_mp4
+            temp_webm
         ]
         
         try:
@@ -148,21 +148,21 @@ class VideoGenerator:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=60
+                timeout=120
             )
-            if result.returncode == 0 and os.path.exists(temp_mp4):
+            if result.returncode == 0 and os.path.exists(temp_webm):
                 gif_size = os.path.getsize(gif_path)
-                mp4_size = os.path.getsize(temp_mp4)
-                print(f"[VideoGen] GIF→MP4: {gif_path} ({gif_size//1024}KB) → {temp_mp4} ({mp4_size//1024}KB)")
-                return temp_mp4
+                webm_size = os.path.getsize(temp_webm)
+                print(f"[VideoGen] GIF→WebM(alpha): {gif_path} ({gif_size//1024}KB) → {temp_webm} ({webm_size//1024}KB)")
+                return temp_webm
             else:
-                print(f"[VideoGen] GIF→MP4 conversion failed: {result.stderr[-500:]}")
+                print(f"[VideoGen] GIF→WebM conversion failed: {result.stderr[-500:]}")
                 return gif_path  # Fallback to original GIF
         except subprocess.TimeoutExpired:
-            print(f"[VideoGen] GIF→MP4 conversion timed out, using original GIF")
+            print(f"[VideoGen] GIF→WebM conversion timed out, using original GIF")
             return gif_path
         except Exception as e:
-            print(f"[VideoGen] GIF→MP4 conversion error: {e}, using original GIF")
+            print(f"[VideoGen] GIF→WebM conversion error: {e}, using original GIF")
             return gif_path
     
     def get_audio_duration(self, audio_path: str) -> float:
@@ -295,12 +295,15 @@ class VideoGenerator:
             is_gif = background_value.lower().endswith(".gif")
             
             if is_gif:
-                # Use GIF directly with FFmpeg loop flags to preserve alpha/transparency
+                # Two-step reliable GIF loop: GIF→WebM (single pass), then loop WebM
+                # This ignores ALL GIF metadata (loop count, delays) and guarantees looping
+                webm_path = self._preconvert_gif_to_webm(background_value, width, duration)
+                if temp_files is not None and webm_path != background_value:
+                    temp_files.append(webm_path)
                 return [
-                    "-ignore_loop", "0",
                     "-stream_loop", "-1",
-                    "-i", background_value,
-                    "-t", str(duration)
+                    "-i", webm_path,
+                    "-t", str(duration),
                 ]
             
             # Static image background
@@ -699,6 +702,9 @@ class VideoGenerator:
         elif logo and logo.get('enabled'):
             all_logos = [logo]
         
+        for i, lg in enumerate(all_logos):
+            print(f"[VideoGen] Logo {i+1} received: size={lg.get('size')}, pos=({lg.get('position',{}).get('x')},{lg.get('position',{}).get('y')}), opacity={lg.get('opacity')}, enabled={lg.get('enabled')}, hasImageData={bool(lg.get('imageData'))}, imagePath={lg.get('imagePath')}")
+        
         logo_entries = []  # (input_path, logo_config, was_gif_converted)
         
         for i, single_logo in enumerate(all_logos):
@@ -729,17 +735,17 @@ class VideoGenerator:
                 print(f"[VideoGen] Logo {i+1} path not found: {logo_path}")
                 continue
             
-            # A1-A2: Pre-convert GIF to MP4 with target size (A9: pre-scale)
+            # Pre-convert GIF → WebM (VP9 + alpha) for reliable looping & transparency
             logo_size_pct = single_logo.get('size', 15)
             target_logo_width = int(width * logo_size_pct / 100)
             was_gif = logo_path.lower().endswith('.gif')
             
             if was_gif:
-                converted_path = self._preconvert_gif_to_mp4(logo_path, target_logo_width, duration)
+                converted_path = self._preconvert_gif_to_webm(logo_path, target_logo_width, duration)
                 if converted_path != logo_path:
                     temp_files.append(converted_path)
                 logo_entries.append((converted_path, single_logo, True))
-                print(f"[VideoGen] Logo {i+1} (GIF→MP4): {converted_path}")
+                print(f"[VideoGen] Logo {i+1} (GIF→WebM): {converted_path}")
             else:
                 logo_entries.append((logo_path, single_logo, False))
                 print(f"[VideoGen] Logo {i+1} ready: {logo_path}")
@@ -747,8 +753,11 @@ class VideoGenerator:
         # Add logo inputs to FFmpeg command
         logo_base_idx = input_count
         for logo_path, _, was_gif in logo_entries:
-            # A3: No need for -ignore_loop since GIFs are pre-converted to MP4
-            cmd.extend(["-i", logo_path])
+            if was_gif:
+                # WebM pre-converted: -stream_loop -1 loops reliably on WebM container
+                cmd.extend(["-stream_loop", "-1", "-t", str(duration), "-i", logo_path])
+            else:
+                cmd.extend(["-i", logo_path])
             input_count += 1
         
         # ── Build filter_complex ──────────────────────────────────────
@@ -800,15 +809,14 @@ class VideoGenerator:
             output_label = "[vlogo]" if idx == len(logo_entries) - 1 else f"[vlogo{idx}]"
             logo_label = f"[logo{idx}]"
             
-            # A9: GIF→MP4 was already pre-scaled; static images still need scale
             if was_gif:
-                # Already scaled in _preconvert_gif_to_mp4 — only format + opacity
+                # Already pre-scaled in _preconvert_gif_to_webm — only format + opacity
                 scale_filter = f"[{input_idx}:v]format=rgba,colorchannelmixer=aa={logo_opacity}{logo_label}"
             else:
-                scale_filter = f"[{input_idx}:v]{scale_fn}={logo_width}:-1,format=rgba,colorchannelmixer=aa={logo_opacity}{logo_label}"
+                # Static image: scale + format + opacity
+                scale_filter = f"[{input_idx}:v]scale={logo_width}:-1:flags=lanczos,format=rgba,colorchannelmixer=aa={logo_opacity}{logo_label}"
             
-            # A3: No eof_action=repeat needed for pre-converted MP4 (already loops to full duration)
-            overlay_filter = f"{current_output}{logo_label}{overlay_fn}={pos_x}:{pos_y}{output_label}"
+            overlay_filter = f"{current_output}{logo_label}{overlay_fn}={pos_x}:{pos_y}:shortest=1{output_label}"
             
             filter_parts.append(scale_filter)
             filter_parts.append(overlay_filter)

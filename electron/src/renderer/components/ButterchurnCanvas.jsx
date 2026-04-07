@@ -102,6 +102,38 @@ let singletonAnimFrame = null;
 let singletonAudioConnected = null;
 let _singletonContextLost = false;
 
+// ── Global WebGL error suppression ──────────────────────────────────
+// Butterchurn preset shaders produce harmless WebGL warnings/errors
+// (INVALID_OPERATION, program not linked/valid, getAttribLocation, getUniformLocation).
+// These flood the console but don't affect visuals. We install a persistent
+// filter that silently drops them.
+const _nativeWarn = console.warn;
+const _nativeError = console.error;
+const _webglMsgPattern = /WebGL|INVALID_OPERATION|program not linked|program not valid|getAttribLocation|getUniformLocation|useProgram|no more errors/i;
+
+let _webglFilterActive = false;
+
+function enableWebGLFilter() {
+  if (_webglFilterActive) return;
+  _webglFilterActive = true;
+  console.warn = (...args) => {
+    if (typeof args[0] === 'string' && _webglMsgPattern.test(args[0])) return;
+    _nativeWarn.apply(console, args);
+  };
+  console.error = (...args) => {
+    if (typeof args[0] === 'string' && _webglMsgPattern.test(args[0])) return;
+    _nativeError.apply(console, args);
+  };
+}
+
+function disableWebGLFilter() {
+  if (!_webglFilterActive) return;
+  _webglFilterActive = false;
+  console.warn = _nativeWarn;
+  console.error = _nativeError;
+}
+// ─────────────────────────────────────────────────────────────────────
+
 function stopRenderLoop() {
   if (singletonAnimFrame) {
     cancelAnimationFrame(singletonAnimFrame);
@@ -111,6 +143,7 @@ function stopRenderLoop() {
 
 function destroySingleton() {
   stopRenderLoop();
+  disableWebGLFilter();
   // Remove context event listeners before destroying
   if (singletonCanvas) {
     singletonCanvas.removeEventListener('webglcontextlost', _onContextLost);
@@ -209,23 +242,10 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
 
       if (!mountedRef.current) return false;
 
-      // Suppress WebGL shader compilation warnings from butterchurn
-      // These are harmless (preset shaders with minor GLSL incompatibilities) but flood the console
-      // We temporarily filter console.warn/error during init to keep the console clean
-      const _origWarn = console.warn;
-      const _origError = console.error;
-      const webglFilter = (...args) => {
-        const msg = args[0];
-        if (typeof msg === 'string' && (msg.includes('WebGL') || msg.includes('INVALID_OPERATION') || msg.includes('program not linked') || msg.includes('program not valid'))) return;
-        _origWarn.apply(console, args);
-      };
-      const webglErrorFilter = (...args) => {
-        const msg = args[0];
-        if (typeof msg === 'string' && (msg.includes('WebGL') || msg.includes('INVALID_OPERATION') || msg.includes('program not linked') || msg.includes('program not valid'))) return;
-        _origError.apply(console, args);
-      };
-      console.warn = webglFilter;
-      console.error = webglErrorFilter;
+      if (!mountedRef.current) return false;
+
+      // Enable persistent WebGL error filter — stays active while visualizer is alive
+      enableWebGLFilter();
 
       // Let butterchurn create and manage its own WebGL context
       const viz = butterchurn.createVisualizer(ctx, canvas, {
@@ -234,10 +254,6 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
         pixelRatio: 1,
         textureRatio: 1,
       });
-
-      // Restore original console methods
-      console.warn = _origWarn;
-      console.error = _origError;
 
       if (!mountedRef.current) return false;
 
@@ -257,9 +273,7 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
         : keys[Math.floor(Math.random() * keys.length)];
       let loadedPreset = null;
       const candidates = [initialPresetName, ...keys.sort(() => Math.random() - 0.5).slice(0, 10)];
-      // Suppress WebGL shader warnings during preset loading (same filter as init)
-      console.warn = webglFilter;
-      console.error = webglErrorFilter;
+      // WebGL filter already active — shader errors suppressed globally
       for (const name of candidates) {
         try {
           const presetData = await loadPresetByName(name);
@@ -268,14 +282,11 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
           loadedPreset = name;
           break;
         } catch (e) {
-          // Use original warn for our own messages
-          _origWarn(`Butterchurn: preset '${name}' load failed:`, e.message);
+          _nativeWarn(`Butterchurn: preset '${name}' load failed:`, e.message);
         }
       }
-      console.warn = _origWarn;
-      console.error = _origError;
       if (!loadedPreset) {
-        console.error('Butterchurn: no preset could be loaded');
+        _nativeError('Butterchurn: no preset could be loaded');
         return false;
       }
 
@@ -415,17 +426,12 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
     async function changePreset() {
       const presetData = await loadPresetByName(presetName);
       if (presetData && singletonViz) {
-        // Suppress WebGL shader warnings during preset switch
-        const _w = console.warn, _e = console.error;
-        const wf = (...a) => { if (typeof a[0] === 'string' && (a[0].includes('WebGL') || a[0].includes('INVALID_OPERATION'))) return; _w.apply(console, a); };
-        const ef = (...a) => { if (typeof a[0] === 'string' && (a[0].includes('WebGL') || a[0].includes('INVALID_OPERATION'))) return; _e.apply(console, a); };
-        console.warn = wf; console.error = ef;
+        // WebGL filter already active globally — no need for local suppression
         try {
           singletonViz.loadPreset(presetData, 2.0);
         } catch (e) {
-          _w('Butterchurn: preset load failed:', presetName, e.message);
+          _nativeWarn('Butterchurn: preset load failed:', presetName, e.message);
         }
-        console.warn = _w; console.error = _e;
       }
     }
     changePreset();
