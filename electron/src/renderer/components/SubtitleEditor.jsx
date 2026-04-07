@@ -28,6 +28,7 @@ function SubtitleEditor() {
     setPlaybackTime,
     audioMixer,
     createKaraokeMp3,
+    createVocalMp3,
   } = useAppStore();
 
   const [showRetranscribeConfirm, setShowRetranscribeConfirm] = useState(false);
@@ -37,6 +38,8 @@ function SubtitleEditor() {
   const [syltMessage, setSyltMessage] = useState(''); // Detailed message for SYLT embedding
   const [karaokeStatus, setKaraokeStatus] = useState(null); // null | 'loading' | 'success' | 'error'
   const [karaokeMessage, setKaraokeMessage] = useState('');
+  const [vocalStatus, setVocalStatus] = useState(null); // null | 'loading' | 'success' | 'error'
+  const [vocalMessage, setVocalMessage] = useState('');
   const [mixerNotification, setMixerNotification] = useState(null); // Show when mixer is activated
   
   // Show notification when audio mixer is enabled
@@ -161,7 +164,30 @@ function SubtitleEditor() {
     }, 5000);
   };
 
+  const handleCreateVocalMp3 = async () => {
+    setVocalStatus('loading');
+    setVocalMessage('Creating vocal MP3...');
+    try {
+      const result = await createVocalMp3();
+      if (result?.success) {
+        setVocalStatus('success');
+        setVocalMessage(`✓ Saved: ${result.filename}`);
+      } else {
+        setVocalStatus('error');
+        setVocalMessage(`Error: ${result?.error || 'Failed'}`);
+      }
+    } catch (err) {
+      setVocalStatus('error');
+      setVocalMessage(`Error: ${err.message || 'Failed'}`);
+    }
+    setTimeout(() => {
+      setVocalStatus(null);
+      setVocalMessage('');
+    }, 5000);
+  };
+
   const hasInstrumental = !!audioMixer?.tracks?.instrumental?.filePath;
+  const hasVocals = !!audioMixer?.tracks?.vocals?.filePath;
 
   if (subtitles.length === 0) {
     return (
@@ -269,6 +295,32 @@ function SubtitleEditor() {
                karaokeStatus === 'success' ? 'Created!' :
                karaokeStatus === 'error' ? 'Error!' :
                'Karaoke MP3'}
+            </button>
+          )}
+
+          {/* Vocal MP3 Button — only when vocal stem is available */}
+          {hasVocals && (
+            <button
+              className="btn btn-sm"
+              onClick={handleCreateVocalMp3}
+              disabled={isProcessing || vocalStatus === 'loading'}
+              title="Create a new MP3 from the vocal stem with embedded lyrics (-vocal.mp3)"
+              style={{
+                background: vocalStatus === 'success' ? 'var(--accent-success)' :
+                            vocalStatus === 'error' ? 'var(--accent-error)' :
+                            'rgba(244, 114, 182, 0.9)',
+                color: '#fff',
+                fontSize: 11,
+                padding: '4px 10px',
+                gap: 4,
+                transition: 'background 0.2s',
+              }}
+            >
+              <FiMic size={13} />
+              {vocalStatus === 'loading' ? 'Creating...' :
+               vocalStatus === 'success' ? 'Created!' :
+               vocalStatus === 'error' ? 'Error!' :
+               'Vocal MP3'}
             </button>
           )}
 

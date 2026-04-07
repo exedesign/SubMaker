@@ -7,6 +7,7 @@ import sys
 import uuid
 import subprocess
 import threading
+import logging
 from pathlib import Path
 
 # Add backend to path
@@ -16,7 +17,39 @@ from flask import Flask, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 
-from config import SERVER_HOST, SERVER_PORT, DEBUG, TEMP_DIR, FFMPEG_PATH
+from config import SERVER_HOST, SERVER_PORT, DEBUG, TEMP_DIR, FFMPEG_PATH, IS_PRODUCTION
+
+# ---------------------------------------------------------------------------
+# Production log file — captures all print output for debugging packaged builds
+# ---------------------------------------------------------------------------
+if IS_PRODUCTION:
+    _USER_DATA = Path(os.environ.get('SUBMAKER_USER_DATA', Path.home() / 'SubMaker'))
+    _LOG_FILE = _USER_DATA / "backend.log"
+    _USER_DATA.mkdir(parents=True, exist_ok=True)
+    try:
+        _log_fh = open(_LOG_FILE, 'w', encoding='utf-8', buffering=1)  # line-buffered
+        # Tee stdout/stderr to both console and log file
+        class _Tee:
+            def __init__(self, *streams):
+                self.streams = streams
+            def write(self, data):
+                for s in self.streams:
+                    try:
+                        s.write(data)
+                        s.flush()
+                    except Exception:
+                        pass
+            def flush(self):
+                for s in self.streams:
+                    try:
+                        s.flush()
+                    except Exception:
+                        pass
+        sys.stdout = _Tee(sys.__stdout__, _log_fh)
+        sys.stderr = _Tee(sys.__stderr__, _log_fh)
+        print(f"[LOG] Backend log file: {_LOG_FILE}")
+    except Exception as _log_err:
+        print(f"[LOG] Failed to create log file: {_log_err}")
 from api.routes import api
 
 # ---------------------------------------------------------------------------

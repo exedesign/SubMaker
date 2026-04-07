@@ -1331,17 +1331,22 @@ def translate():
 def translate_secondary():
     """Translate subtitles for secondary language display"""
     from services.translation_service import get_translation_service as get_text_translator
+    from services.qwen_translation import get_qwen_service
     
     data = request.json
     subtitles = data.get("subtitles", [])
     target_lang = data.get("target_lang", "en")
     source_lang = data.get("source_lang", "auto")
+    provider = data.get("provider", "online")
     
     if not subtitles:
         return jsonify({"error": "subtitles required"}), 400
     
     try:
-        translator = get_text_translator()
+        if provider == "qwen":
+            translator = get_qwen_service()
+        else:
+            translator = get_text_translator()
         translated = translator.translate_subtitles(subtitles, target_lang, source_lang)
         
         # Apply RTL processing if needed
@@ -1365,17 +1370,22 @@ def translate_secondary():
 def translate_single():
     """Translate a single text"""
     from services.translation_service import get_translation_service as get_text_translator
+    from services.qwen_translation import get_qwen_service
     
     data = request.json
     text = data.get("text", "")
     target_lang = data.get("target_lang", "en")
     source_lang = data.get("source_lang", "auto")
+    provider = data.get("provider", "online")
     
     if not text:
         return jsonify({"error": "text required"}), 400
     
     try:
-        translator = get_text_translator()
+        if provider == "qwen":
+            translator = get_qwen_service()
+        else:
+            translator = get_text_translator()
         result = translator.translate_text(text, target_lang, source_lang)
         
         # Apply RTL processing if needed
@@ -1568,7 +1578,7 @@ def detect_rtl_from_subtitles(subtitles):
     return False
 
 def run_render_job(job_id, audio_path, subtitles, background, video_format,
-                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None, render_resolution=None, output_dir=None):
+                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None, render_resolution=None, output_dir=None, is_karaoke=False):
     """Background render job"""
     global _render_jobs
 
@@ -1744,7 +1754,8 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         def cancel_check():
             return _render_jobs.get(job_id, {}).get("status") == "cancelled"
         
-        print(f"[Render Job {job_id}] Generating video: audio={audio_path}, bg={background.get('type')}, logos={len(logos) if logos else 0}")
+        bg_type = background.get('type') if isinstance(background, dict) else background
+        print(f"[Render Job {job_id}] Generating video: audio={audio_path}, bg={bg_type}, logos={len(logos) if logos else 0}")
 
         # Visualizer video path (pre-rendered by frontend)
         visualizer_video_path = None
@@ -1752,21 +1763,34 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             visualizer_video_path = visualizer.get("videoPath")
         _render_jobs[job_id]["visualizer_video_path"] = visualizer_video_path
 
-        # Derive output path from original media location (not mixed temp path)
-        source_dir = os.path.dirname(original_audio_path)
-        source_stem = Path(original_audio_path).stem
+        # -----------------------------------------------------------
+        # Determine output filename and directory
+        # Priority: original_name > audio filename
+        # -----------------------------------------------------------
+        # 1) Stem name — always prefer original_name when provided
+        if original_name:
+            source_stem = Path(original_name).stem
+        else:
+            source_stem = Path(original_audio_path).stem
 
-        # If source is in temp dir, redirect output to OUTPUT_DIR with original filename
-        if str(TEMP_DIR) in str(Path(original_audio_path).resolve()):
-            source_dir = str(OUTPUT_DIR)
-            if original_name:
-                source_stem = Path(original_name).stem
-
-        # Override output directory if explicitly provided (e.g. batch karaoke render)
-        if output_dir and os.path.isdir(output_dir):
+        # 2) Output directory
+        if output_dir:
             source_dir = output_dir
+        elif str(TEMP_DIR).lower() in str(Path(original_audio_path).resolve()).lower():
+            source_dir = str(OUTPUT_DIR)
+        else:
+            source_dir = os.path.dirname(original_audio_path)
 
-        render_output_path = os.path.join(source_dir, f"{source_stem}_{video_format}.{output_format}")
+        os.makedirs(source_dir, exist_ok=True)
+
+        # 3) Build filename: {name}-{format}[-krk].{ext}
+        krk_suffix = "-krk" if is_karaoke else ""
+        render_output_path = os.path.join(source_dir, f"{source_stem}-{video_format}{krk_suffix}.{output_format}")
+        print(f"[Render Job {job_id}] Output path: {render_output_path}")
+        print(f"[Render Job {job_id}] Audio: {audio_path} (exists={os.path.exists(audio_path)})")
+        print(f"[Render Job {job_id}] Subtitle: {subtitle_path} (exists={os.path.exists(subtitle_path)})")
+        if visualizer_video_path:
+            print(f"[Render Job {job_id}] Visualizer: {visualizer_video_path} (exists={os.path.exists(str(visualizer_video_path))})")
 
         result = generator.generate_video_with_subtitles(
             audio_path=audio_path,
@@ -1863,22 +1887,35 @@ def render_video():
     Returns job_id for progress tracking
     """
     try:
-        data = request.json
+        try:
+            data = request.json
+        except Exception as json_err:
+            print(f"[Render] ❌ JSON parse error: {json_err}")
+            return jsonify({"error": f"Invalid JSON body: {json_err}"}), 400
         
         if not data:
             return jsonify({"error": "No JSON data received"}), 400
+        
+        print(f"[Render] Request body size: {request.content_length} bytes")
         
         # Required fields
         audio_path = data.get("audio_path")
         subtitles = data.get("subtitles")
         
-        print(f"[Render] Received request: audio_path={audio_path}, subtitles_count={len(subtitles) if subtitles else 0}")
+        print(f"[Render] Received request: audio_path={audio_path}, subtitles_count={len(subtitles) if isinstance(subtitles, list) else 'N/A'}")
         
-        print(f"🔍 DEBUG: Subtitle has words? {subtitles[0].get('words') is not None if subtitles else False}")
-        if subtitles and subtitles[0].get('words'):
-            print(f"🔍 DEBUG: Words count = {len(subtitles[0]['words'])}")
-        else:
-            print(f"❌ DEBUG: NO WORDS DATA - Karaoke won't work!")
+        try:
+            if isinstance(subtitles, list) and len(subtitles) > 0 and isinstance(subtitles[0], dict):
+                has_words = subtitles[0].get('words') is not None
+                print(f"🔍 DEBUG: Subtitle has words? {has_words}")
+                if has_words:
+                    print(f"🔍 DEBUG: Words count = {len(subtitles[0]['words'])}")
+                else:
+                    print(f"❌ DEBUG: NO WORDS DATA - Karaoke won't work!")
+            else:
+                print(f"⚠️ DEBUG: subtitles type={type(subtitles).__name__}, unexpected format")
+        except Exception as dbg_err:
+            print(f"⚠️ DEBUG: Error inspecting subtitles: {dbg_err}")
         
         if not audio_path or not subtitles:
             return jsonify({"error": "audio_path and subtitles required"}), 400
@@ -1921,13 +1958,16 @@ def render_video():
         # Custom output directory (e.g. for batch karaoke render to original file location)
         output_dir = data.get("output_dir")
 
-        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, resolution={render_resolution}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}, output_dir={output_dir}")
+        # Karaoke flag — appends -krk suffix to output filename
+        is_karaoke = data.get("is_karaoke", False)
+
+        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, resolution={render_resolution}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}, output_dir={output_dir}, karaoke={is_karaoke}")
 
         # Start background thread
         thread = threading.Thread(
             target=run_render_job,
             args=(job_id, audio_path, subtitles, background, video_format,
-                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name, render_resolution, output_dir)
+                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name, render_resolution, output_dir, is_karaoke)
         )
         thread.daemon = True
         thread.start()
@@ -1940,8 +1980,9 @@ def render_video():
         
     except Exception as e:
         import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        tb = traceback.format_exc()
+        print(f"[Render] ❌ 500 ERROR in render_video: {e}\n{tb}")
+        return jsonify({"error": str(e), "traceback": tb}), 500
 
 
 @api.route("/render/status/<job_id>", methods=["GET"])
@@ -2438,6 +2479,89 @@ def export_karaoke_mp3():
             "sylt_written": embed_result.get("sylt", False),
             "uslt_written": embed_result.get("uslt", False),
             "subtitle_count": len(subtitles),
+        })
+
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(exc)}), 500
+
+
+# =============================================================================
+# Vocal MP3 — vocal stem → <name>-vocal.mp3 next to original file
+# =============================================================================
+
+@api.route("/export/vocal-mp3", methods=["POST"])
+def export_vocal_mp3():
+    """
+    Create a vocal MP3 from the vocal stem with optional embedded SYLT lyrics.
+    - Converts vocal WAV/FLAC → MP3 via ffmpeg (320 kbps)
+    - Names the file <original_stem>-vocal.mp3 next to the original file
+    - Embeds synchronized lyrics (SYLT) using mutagen
+    """
+    data = request.json
+    vocal_path    = data.get("vocal_path")      # abs path to vocal WAV/MP3
+    subtitles     = data.get("subtitles")        # [{start, end, text}, ...]
+    original_path = data.get("original_path")    # abs path to original media
+    language      = data.get("language", "und")
+    original_name = data.get("original_name")    # original filename
+
+    if not vocal_path or not original_path:
+        return jsonify({"error": "vocal_path and original_path are required"}), 400
+
+    if not os.path.isabs(vocal_path) or not os.path.exists(vocal_path):
+        return jsonify({"error": f"Vocal file not found: {vocal_path}"}), 404
+
+    if not os.path.isabs(original_path) or not os.path.exists(original_path):
+        return jsonify({"error": f"Original file not found: {original_path}"}), 404
+
+    try:
+        # Determine output dir and stem name
+        source_dir = os.path.dirname(original_path)
+        if str(TEMP_DIR) in str(Path(original_path).resolve()):
+            source_dir = str(OUTPUT_DIR)
+
+        name_base = original_name if original_name else os.path.basename(original_path)
+        stem = Path(name_base).stem
+        output_path = os.path.join(source_dir, f"{stem}-vocal.mp3")
+
+        ext = Path(vocal_path).suffix.lower()
+
+        if ext == ".mp3":
+            import shutil
+            shutil.copy2(vocal_path, output_path)
+        else:
+            ffmpeg_path = str(FFMPEG_PATH) if FFMPEG_PATH else "ffmpeg"
+            cmd = [
+                ffmpeg_path, "-y",
+                "-i", vocal_path,
+                "-codec:a", "libmp3lame",
+                "-b:a", "320k",
+                "-id3v2_version", "3",
+                output_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                raise RuntimeError(f"ffmpeg conversion failed:\n{result.stderr[-800:]}")
+
+        print(f"[Vocal MP3] Wrote: {output_path}")
+
+        # Embed SYLT if subtitles provided
+        sylt_written = False
+        if subtitles and len(subtitles) > 0:
+            from services.lyrics_tagger import get_lyrics_tagger
+            tagger = get_lyrics_tagger()
+            if tagger.is_available():
+                embed_result = tagger.write_synced_lyrics(output_path, subtitles, language=language)
+                sylt_written = embed_result.get("sylt", False)
+
+        return jsonify({
+            "success": True,
+            "output_path": output_path,
+            "output_dir": os.path.dirname(output_path),
+            "filename": os.path.basename(output_path),
+            "sylt_written": sylt_written,
+            "subtitle_count": len(subtitles) if subtitles else 0,
         })
 
     except Exception as exc:

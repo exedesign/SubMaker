@@ -38,8 +38,9 @@
   "build": {
     "appId": "com.submaker.app",
     "productName": "SubMaker",
+    "copyright": "Copyright © 2026 SubMaker",
     "directories": {
-      "output": "release"
+      "output": "release/build"
     },
     "files": [
       "dist/**/*",
@@ -47,7 +48,24 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "public/icon.png"
+      "icon": "public/icon.ico",
+      "legalTrademarks": "Copyright © 2026 SubMaker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico",
+      "installerHeader": "public/installer-header.bmp",
+      "installerSidebar": "public/installer-sidebar.bmp",
+      "license": "public/license.txt",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SubMaker",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "installerLanguages": ["en_US", "tr_TR"]
     },
     "mac": {
       "target": "dmg",
@@ -68,6 +86,21 @@
           "!venv/**",
           "!venv/**/*"
         ]
+      },
+      {
+        "from": "../resources/fonts",
+        "to": "resources/fonts",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../resources/presets",
+        "to": "resources/presets",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../resources/models",
+        "to": "resources/models",
+        "filter": ["**/*"]
       }
     ]
   }

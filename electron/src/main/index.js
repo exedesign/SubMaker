@@ -263,11 +263,23 @@ function startPythonBackend() {
   // Verify the backend script exists before attempting to spawn
   if (!fs.existsSync(backendPath)) {
     console.error(`❌ [MAIN] Backend script not found: ${backendPath}`);
+    dialog.showErrorBox('SubMaker - Backend Not Found',
+      `Backend script not found at:\n${backendPath}\n\nPlease reinstall SubMaker.`);
     return;
   }
 
   console.log(`🚀 [MAIN] Starting Python backend: ${backendPath}`);
   console.log(`🚀 [MAIN] Backend cwd: ${backendCwd}`);
+
+  // Build environment for backend
+  const backendEnv = {
+    ...process.env,
+    PYTHONUNBUFFERED: '1',
+  };
+  if (!isDev) {
+    backendEnv.SUBMAKER_PRODUCTION = '1';
+    backendEnv.SUBMAKER_USER_DATA = path.join(app.getPath('userData'), '..', 'SubMaker');
+  }
 
   // Try common Python executable names
   const pythonCandidates = process.platform === 'win32'
@@ -277,6 +289,8 @@ function startPythonBackend() {
   const trySpawn = (idx) => {
     if (idx >= pythonCandidates.length) {
       console.error('❌ [MAIN] No working Python executable found. Tried:', pythonCandidates.join(', '));
+      dialog.showErrorBox('SubMaker - Python Not Found',
+        'Python not found on this system.\n\nPlease install Python 3.10+ from https://www.python.org/downloads/\nand make sure it is added to PATH.\n\nAfter installing Python, run:\npip install flask flask-cors flask-socketio eventlet faster-whisper librosa soundfile audio-separator mutagen numpy tqdm pydub');
       return;
     }
     const pyExe = pythonCandidates[idx];
@@ -286,10 +300,11 @@ function startPythonBackend() {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: backendCwd,
       shell: true,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: backendEnv,
     });
 
     let spawnFailed = false;
+    let stderrBuffer = '';
 
     pythonProcess.on('error', (err) => {
       spawnFailed = true;
@@ -302,6 +317,12 @@ function startPythonBackend() {
     pythonProcess.on('close', (code) => {
       if (code !== null && code !== 0) {
         console.warn(`⚠️ [MAIN] Python (${pyExe}) exited with code ${code}`);
+        // Show import errors to user
+        if (stderrBuffer.includes('ModuleNotFoundError') || stderrBuffer.includes('No module named')) {
+          const missingModule = stderrBuffer.match(/No module named '([^']+)'/)?.[1] || 'unknown';
+          dialog.showErrorBox('SubMaker - Missing Python Package',
+            `Python package '${missingModule}' is not installed.\n\nPlease run:\npip install -r backend/requirements.txt\n\nFull error:\n${stderrBuffer.slice(-500)}`);
+        }
       }
       pythonProcess = null;
     });
@@ -312,6 +333,7 @@ function startPythonBackend() {
 
     pythonProcess.stderr.on('data', (data) => {
       const msg = data.toString().trim();
+      stderrBuffer += msg + '\n';
       // Flask prints startup info to stderr — that's normal
       if (msg.includes('Running on') || msg.includes('WARNING')) {
         console.log(`Python: ${msg}`);
@@ -853,10 +875,17 @@ ipcMain.handle('viz:pipe-start', async (event, { width, height, fps }) => {
     _vizPipeProcess = null;
   }
 
-  // Compute output path in the project's temp dir (same as backend TEMP_DIR)
-  // __dirname = .../electron/src/main → project root = ../../..
-  const projectRoot = path.resolve(__dirname, '..', '..', '..');
-  const tempDir = path.join(projectRoot, 'temp');
+  // Compute output path — must match backend's TEMP_DIR so paths are consistent.
+  // In production: use SUBMAKER_USER_DATA/temp (same as backend).
+  // In dev: use project root's temp directory.
+  let tempDir;
+  if (isDev) {
+    const projectRoot = path.resolve(__dirname, '..', '..', '..');
+    tempDir = path.join(projectRoot, 'temp');
+  } else {
+    const userData = path.join(app.getPath('userData'), '..', 'SubMaker');
+    tempDir = path.join(userData, 'temp');
+  }
   if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
   const uuid = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   const outputPath = path.join(tempDir, `viz_${uuid}.mp4`);

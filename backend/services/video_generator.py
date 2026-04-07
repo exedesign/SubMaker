@@ -892,10 +892,20 @@ class VideoGenerator:
                 pass
         
         if process.returncode != 0:
-            raise RuntimeError(f"FFmpeg render failed: {stderr}")
+            # Log last 1000 chars of stderr for diagnostics
+            stderr_tail = stderr[-1000:] if len(stderr) > 1000 else stderr
+            print(f"[VideoGen] ❌ FFmpeg failed (exit code {process.returncode}):\n{stderr_tail}")
+            raise RuntimeError(f"FFmpeg render failed (exit code {process.returncode}): {stderr_tail}")
         
         if progress_callback:
             progress_callback(99, "Finishing...")
+        
+        # Verify output file exists and is not empty
+        if not os.path.exists(output_path):
+            raise RuntimeError(f"Render completed but output file not found: {output_path}")
+        output_size = os.path.getsize(output_path)
+        if output_size < 1000:
+            raise RuntimeError(f"Render produced suspiciously small file ({output_size} bytes): {output_path}")
         
         gpu_info = f" ({self.gpu_type.upper()} GPU)" if self.hardware_codec else " (CPU)"
         cuda_info = " + CUDA filters" if use_cuda_filters else ""

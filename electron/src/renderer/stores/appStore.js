@@ -172,6 +172,9 @@ export const useAppStore = create((set, get) => ({
       waveformColor: '#00FF88',// Bright green (more visible)
       enhancement: 1.2,        // Optimized boost
     },
+
+    // Translation provider: 'online' (MyMemory/Lingva) or 'qwen' (Qwen2.5 local)
+    translationProvider: 'online',
   },
 
   // Model Settings - per-language model selection (faster-whisper)
@@ -1014,6 +1017,7 @@ export const useAppStore = create((set, get) => ({
           audio_mixer: mixerConfig,
           render_resolution: renderResolution,
           output_dir: renderOptions.outputDir || null,
+          is_karaoke: renderOptions.isKaraoke || false,
         });
 
         if (!response.data.success || !response.data.job_id) {
@@ -1228,7 +1232,11 @@ export const useAppStore = create((set, get) => ({
           console.log(`Render completed for ${fmt}:`, result.outputPath);
         } catch (err) {
           console.error(`Render failed for ${fmt}:`, err);
-          results.push({ format: fmt, label: formatLabels[fmt], success: false, error: err.message });
+          if (err.response?.data) {
+            console.error(`[Render] Backend error details:`, err.response.data);
+            if (err.response.data.traceback) console.error(`[Render] Backend traceback:\n`, err.response.data.traceback);
+          }
+          results.push({ format: fmt, label: formatLabels[fmt], success: false, error: err.response?.data?.error || err.message });
         }
 
         if (isMulti) {
@@ -1681,6 +1689,38 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  // Create vocal MP3: vocal stem + embedded SYLT lyrics → <name>-vocal.mp3
+  createVocalMp3: async () => {
+    const { subtitles, originalMediaPath, originalFileName, audioMixer, language } = get();
+    const vocalsTrack = audioMixer?.tracks?.vocals;
+
+    if (!vocalsTrack?.filePath) {
+      throw new Error('Vocal track not available. Please run vocal separation first.');
+    }
+    if (!originalMediaPath) {
+      throw new Error('Original media path is not available.');
+    }
+
+    set({ isLoading: true, loadingMessage: 'Creating Vocal MP3...' });
+    try {
+      const result = await fetchJson(`${API_URL}/export/vocal-mp3`, {
+        method: 'POST',
+        body: {
+          vocal_path: vocalsTrack.filePath,
+          subtitles: subtitles || [],
+          original_path: originalMediaPath,
+          original_name: originalFileName || null,
+          language: language || 'und',
+        },
+      });
+      set({ isLoading: false });
+      return result;
+    } catch (err) {
+      set({ isLoading: false, error: `Vocal MP3 failed: ${err.message}` });
+      throw err;
+    }
+  },
+
   // Export lyrics in various formats
   exportLyrics: async (format) => {
     const { subtitles, originalMediaPath, language } = get();
@@ -1762,7 +1802,8 @@ export const useAppStore = create((set, get) => ({
       const response = await api.post('/translate/secondary', {
         subtitles: subtitles,
         target_lang: secondarySubtitle.targetLanguage,
-        source_lang: detectedLanguage || 'auto'
+        source_lang: detectedLanguage || 'auto',
+        provider: get().settings.translationProvider || 'online'
       });
       
       console.log('[Store] Translation response:', response.data);
@@ -2327,15 +2368,15 @@ export const useAppStore = create((set, get) => ({
 
             const originalDir = item.filePath.replace(/[\\/][^\\/]+$/, '');
             const originalNameNoExt = item.fileName.replace(/\.[^.]+$/, '');
-            const krkName = `${originalNameNoExt}-krk`;
 
             console.log('[Batch] Karaoke render with instrumental:', instrumentalPath);
-            console.log('[Batch] Output dir:', originalDir, 'name:', krkName);
+            console.log('[Batch] Output dir:', originalDir, 'name:', originalNameNoExt);
 
             const renderResult = await get().render({
               audioPath: instrumentalPath,
-              originalName: krkName,
+              originalName: originalNameNoExt,
               outputDir: originalDir,
+              isKaraoke: true,
             });
             currentPhase = 'idle';
             if (renderResult) {

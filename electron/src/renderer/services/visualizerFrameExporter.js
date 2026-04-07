@@ -357,13 +357,21 @@ async function renderFramesPipe(butterchurn, presetKeys, presetName, audioBuffer
   });
   await safeLoadPreset(viz, presetKeys, presetName);
 
+  // Warm-up: render a few frames before capture so the preset's internal state
+  // (warp mesh, motion vectors, per-frame equations) is initialized.
+  // Without this, some presets produce a static/frozen output.
+  const frameInterval = 1 / fps;
+  for (let w = 0; w < 5; w++) {
+    const lvl = getAudioLevelsAtTime(audioBuffer, Math.min(w * frameInterval, audioBuffer.duration - 0.01));
+    try { viz.render({ elapsedTime: frameInterval, audioLevels: lvl }); } catch {}
+  }
+
   const pixelBuf = new Uint8Array(width * height * 4);
 
   // Start FFmpeg pipe process (main process computes correct temp dir path)
   const { encoder } = await window.electronAPI.vizPipeStart({ width, height, fps });
   console.log(`[VizExport:Pipe] FFmpeg started: encoder=${encoder}`);
 
-  const frameInterval = 1 / fps;
   let capturedFrames = 0;
   let renderErrors = 0;
   let lastPixelHash = 0;
@@ -456,11 +464,11 @@ async function renderFramesPipe(butterchurn, presetKeys, presetName, audioBuffer
     throw new Error('Visualizer export failed: no frames captured');
   }
 
-  // Frozen frame threshold: if >50% frames were frozen, the output is unusable
+  // Frozen frame threshold: if >50% frames were frozen, warn but still produce output.
+  // The backend composites this over the actual background (GIF/image/color),
+  // so even a static visualizer overlay is better than no visualizer at all.
   if (frozenCount > totalFrames * 0.5) {
-    console.error(`[VizExport:Pipe] Too many frozen frames (${frozenCount}/${totalFrames}), output unusable`);
-    try { await window.electronAPI.vizPipeCancel(); } catch {}
-    throw new Error(`Visualizer export failed: ${frozenCount}/${totalFrames} frames frozen (WebGL context issue)`);
+    console.warn(`[VizExport:Pipe] High frozen frame ratio (${frozenCount}/${totalFrames}), output may be static but continuing`);
   }
 
   if (onProgress) onProgress(85);
@@ -510,6 +518,13 @@ async function renderFramesPipeSocketIO(butterchurn, presetKeys, presetName, aud
   });
   await safeLoadPreset(viz, presetKeys, presetName);
 
+  // Warm-up: render a few frames before capture so the preset's internal state is initialized
+  const frameInterval = 1 / fps;
+  for (let w = 0; w < 5; w++) {
+    const lvl = getAudioLevelsAtTime(audioBuffer, Math.min(w * frameInterval, audioBuffer.duration - 0.01));
+    try { viz.render({ elapsedTime: frameInterval, audioLevels: lvl }); } catch {}
+  }
+
   const pixelBuf = new Uint8Array(width * height * 4);
 
   const { encoder } = await new Promise((resolve, reject) => {
@@ -520,7 +535,6 @@ async function renderFramesPipeSocketIO(butterchurn, presetKeys, presetName, aud
   });
   console.log(`[VizExport:WS] FFmpeg started: encoder=${encoder}`);
 
-  const frameInterval = 1 / fps;
   let capturedFrames = 0;
   let renderErrors = 0;
   let lastPixelHash = 0;

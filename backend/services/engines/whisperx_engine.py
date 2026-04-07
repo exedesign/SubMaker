@@ -27,46 +27,16 @@ FASTER_WHISPER_MODELS = [
         "description": "Fast, high accuracy (recommended)",
     },
     {
-        "id": "large-v3",
-        "name": "Large V3 (1550M)",
-        "size_mb": 2900,
-        "description": "Highest accuracy, slower",
-    },
-    {
-        "id": "large-v3-turbo",
-        "name": "Large V3 Turbo (809M)",
-        "size_mb": 1600,
-        "description": "Large-v3 quality, turbo speed",
-    },
-    {
-        "id": "large-v2",
-        "name": "Large V2 (1550M)",
-        "size_mb": 2900,
-        "description": "Very high accuracy, slower",
-    },
-    {
         "id": "distil-large-v3",
         "name": "Distil Large V3 (756M)",
         "size_mb": 1500,
         "description": "Large-v3 distilled — fast, high accuracy",
     },
     {
-        "id": "medium",
-        "name": "Medium (769M)",
-        "size_mb": 1400,
-        "description": "Slower, high accuracy",
-    },
-    {
         "id": "small",
         "name": "Small (244M)",
         "size_mb": 460,
         "description": "Balanced speed/accuracy",
-    },
-    {
-        "id": "base",
-        "name": "Base (74M)",
-        "size_mb": 140,
-        "description": "Fast, medium accuracy",
     },
     {
         "id": "tiny",
@@ -103,16 +73,7 @@ class FasterWhisperEngine:
     # Model catalogue
     # ------------------------------------------------------------------
     def get_available_models(self, language: Optional[str] = None) -> List[Dict[str, Any]]:
-        models = [m.copy() for m in FASTER_WHISPER_MODELS]
-        if language == "tr":
-            models.append({
-                "id": "selimc/whisper-large-v3-turbo-turkish",
-                "name": "Turkish Fine-tuned (Turbo)",
-                "size_mb": 800,
-                "description": "Common Voice 17.0 Turkish fine-tune, best Turkish accuracy",
-                "recommended": True,
-            })
-        return models
+        return [m.copy() for m in FASTER_WHISPER_MODELS]
 
     # ------------------------------------------------------------------
     # Model loading
@@ -138,14 +99,38 @@ class FasterWhisperEngine:
                 logger.warning(f"cuDNN preload failed: {e}")
 
         logger.info(f"Loading Faster-Whisper model: {model_id} on {device} ({compute_type})")
-        self._model = WhisperModel(
-            model_id,
-            device=device,
-            compute_type=compute_type,
-            download_root=str(MODELS_DIR),
-            cpu_threads=os.cpu_count() or 4,
-            num_workers=1,
-        )
+        logger.info(f"Model download/cache dir: {MODELS_DIR}")
+
+        # Check if a flat (non-HuggingFace-cache) model directory exists
+        flat_model_dir = os.path.join(str(MODELS_DIR), model_id)
+        if os.path.isdir(flat_model_dir) and any(
+            f.endswith(".bin") for f in os.listdir(flat_model_dir)
+        ):
+            model_path = flat_model_dir
+            logger.info(f"Using local flat model directory: {model_path}")
+        else:
+            model_path = model_id
+            logger.info(f"Using HuggingFace model ID: {model_path}")
+
+        try:
+            self._model = WhisperModel(
+                model_path,
+                device=device,
+                compute_type=compute_type,
+                download_root=str(MODELS_DIR),
+                cpu_threads=os.cpu_count() or 4,
+                num_workers=1,
+            )
+        except Exception as e:
+            err_msg = str(e)
+            if "snapshot" in err_msg or "internet" in err_msg.lower() or "locate the files" in err_msg:
+                raise RuntimeError(
+                    f"Model '{model_id}' not found locally and could not be downloaded. "
+                    f"Cache dir: {MODELS_DIR}. "
+                    f"Please check your internet connection — models are downloaded on first use (~1-3 GB per model). "
+                    f"Original error: {err_msg}"
+                ) from e
+            raise
         self._model_id = model_id
         self._device = device
         self._compute_type = compute_type

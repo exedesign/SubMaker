@@ -2,21 +2,37 @@
 SubMaker Configuration
 """
 import os
+import sys
 from pathlib import Path
+
+# Detect production mode (set by Electron main process)
+IS_PRODUCTION = os.environ.get('SUBMAKER_PRODUCTION') == '1'
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
 BACKEND_DIR = Path(__file__).parent
 RESOURCES_DIR = BASE_DIR / "resources"
-MODELS_DIR = RESOURCES_DIR / "models"
 FONTS_DIR = RESOURCES_DIR / "fonts"
 PRESETS_DIR = RESOURCES_DIR / "presets"
-TEMP_DIR = BASE_DIR / "temp"
-OUTPUT_DIR = BASE_DIR / "output"
+
+# In production, use user-writable locations for temp/output
+if IS_PRODUCTION:
+    _USER_DATA = Path(os.environ.get('SUBMAKER_USER_DATA', Path.home() / 'SubMaker'))
+    TEMP_DIR = _USER_DATA / "temp"
+    OUTPUT_DIR = _USER_DATA / "output"
+    # Models are bundled with the installer in resources/models
+    MODELS_DIR = RESOURCES_DIR / "models"
+else:
+    TEMP_DIR = BASE_DIR / "temp"
+    OUTPUT_DIR = BASE_DIR / "output"
+    MODELS_DIR = RESOURCES_DIR / "models"
 
 # Create directories if they don't exist
 for dir_path in [MODELS_DIR, FONTS_DIR, PRESETS_DIR, TEMP_DIR, OUTPUT_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
+
+# Qwen2.5 translation model
+QWEN_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct-AWQ"
 
 # Server settings
 SERVER_HOST = "127.0.0.1"
@@ -35,16 +51,16 @@ WHISPER_COMPUTE_TYPE = "int8"  # Options: auto, int8, float16, float32 - int8 fo
 
 # Language-specific model sizes for optimal performance
 LANGUAGE_MODELS = {
-    'ar': 'medium',   # Arabic: Use larger model for better accuracy
+    'ar': 'small',    # Arabic: Use larger model for better accuracy
     'tr': 'turbo',    # Turkish: Turbo for best speed/accuracy
     'en': 'turbo',    # English: Turbo for speed
     'es': 'turbo',    # Spanish: Turbo
     'fr': 'turbo',    # French: Turbo
     'de': 'turbo',    # German: Turbo
     'ru': 'turbo',    # Russian: Turbo
-    'zh': 'medium',   # Chinese: Larger model needed
-    'ja': 'medium',   # Japanese: Larger model needed
-    'ko': 'medium'    # Korean: Larger model needed
+    'zh': 'small',    # Chinese: Larger model needed
+    'ja': 'small',    # Japanese: Larger model needed
+    'ko': 'small'     # Korean: Larger model needed
 }
 
 # Language-specific transcription parameters

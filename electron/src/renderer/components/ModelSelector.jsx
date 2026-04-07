@@ -24,26 +24,9 @@ const Toggle = ({ enabled, onClick }) => (
 const WHISPER_MODELS = {
   default: [
     { value: 'turbo', label: 'Turbo (809M)', description: 'Fast, high accuracy (recommended)' },
-    { value: 'large-v3', label: 'Large V3 (1550M)', description: 'Highest accuracy, slow' },
-    { value: 'large-v3-turbo', label: 'Large V3 Turbo (809M)', description: 'Large-v3 quality, turbo speed' },
-    { value: 'large-v2', label: 'Large V2 (1550M)', description: 'Very high accuracy, slow' },
     { value: 'distil-large-v3', label: 'Distil Large V3 (756M)', description: 'Large-v3 distil — fast, high accuracy' },
-    { value: 'medium', label: 'Medium (769M)', description: 'Slow, high accuracy' },
     { value: 'small', label: 'Small (244M)', description: 'Balanced speed/accuracy' },
-    { value: 'base', label: 'Base (74M)', description: 'Fast, medium accuracy' },
     { value: 'tiny', label: 'Tiny (39M)', description: 'Fastest, low accuracy' },
-  ],
-  tr: [
-    { value: 'turbo', label: 'Turbo (809M)', description: 'Fast, high accuracy (recommended)' },
-    { value: 'large-v3', label: 'Large V3 (1550M)', description: 'Highest accuracy, slow' },
-    { value: 'large-v3-turbo', label: 'Large V3 Turbo (809M)', description: 'Large-v3 quality, turbo speed' },
-    { value: 'large-v2', label: 'Large V2 (1550M)', description: 'Very high accuracy, slow' },
-    { value: 'distil-large-v3', label: 'Distil Large V3 (756M)', description: 'Large-v3 distil — fast, high accuracy' },
-    { value: 'medium', label: 'Medium (769M)', description: 'Slow, high accuracy' },
-    { value: 'small', label: 'Small (244M)', description: 'Balanced speed/accuracy' },
-    { value: 'base', label: 'Base (74M)', description: 'Fast, medium accuracy' },
-    { value: 'tiny', label: 'Tiny (39M)', description: 'Fastest, low accuracy' },
-    { value: 'selimc/whisper-large-v3-turbo-turkish', label: 'Turkish Fine-tuned (Turbo)', description: 'Common Voice 17.0 Turkish fine-tune, best Turkish accuracy', recommended: true },
   ],
 };
 

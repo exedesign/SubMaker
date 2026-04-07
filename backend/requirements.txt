@@ -7,6 +7,12 @@ faster-whisper>=1.0.0
 # Translation (Offline)
 argostranslate>=1.10.0
 
+# Local LLM Translation (Qwen2.5-3B-Instruct-AWQ)
+transformers>=4.40.0
+accelerate>=0.30.0
+datasets  # Required by autoawq model loading
+autoawq  # AWQ quantization backend (Windows: pip install autoawq --no-build-isolation --no-deps)
+
 # Arabic Support (RTL)
 arabic-reshaper>=3.0.0
 python-bidi>=0.4.2
