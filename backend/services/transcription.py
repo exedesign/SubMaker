@@ -49,6 +49,15 @@ class TranscriptionService:
 
         # RTL (Right-to-Left) languages that need special handling
         self.RTL_LANGUAGES = {'ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'}
+
+        # Register with VRAM manager
+        from services.vram_manager import get_vram_manager
+        get_vram_manager().register("whisper", self.unload)
+
+    def unload(self):
+        """Free GPU memory held by the Whisper model."""
+        if self.engine:
+            self.engine.unload_model()
     
     def get_optimal_model_size(self, language: Optional[str]) -> str:
         """Get optimal model size for a specific language"""

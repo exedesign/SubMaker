@@ -3,7 +3,7 @@ import { useAppStore } from '../stores/appStore';
 import { fetchJson } from '../services/electronTransport';
 import { 
   FiFolder, FiClock, FiMusic, FiEdit3, FiVideo, FiCheck, 
-  FiLoader, FiMic, FiFilm, FiX 
+  FiLoader, FiMic, FiFilm, FiX, FiImage 
 } from 'react-icons/fi';
 
 function StatusBar() {
@@ -67,6 +67,9 @@ function StatusBar() {
   const getProcessType = () => {
     if (vocalSeparating) return 'vocal';
     const step = processingStep?.toLowerCase() || '';
+    if (step.includes('cover art') || step.includes('flux') || step.includes('diffusion step') || step.includes('text encoder') || step.includes('pipeline ready') || step.includes('image generation')) {
+      return 'coverart';
+    }
     if (step.includes('transcri') || step.includes('transkrip') || step.includes('model') || step.includes('whisper')) {
       return 'transcribe';
     }
@@ -149,6 +152,7 @@ function StatusBar() {
             {processType === 'render' && <FiFilm className="process-icon spin-slow" size={18} />}
             {processType === 'upload' && <FiMusic className="process-icon" size={18} />}
             {processType === 'vocal' && <FiMusic className="process-icon pulse" size={18} />}
+            {processType === 'coverart' && <FiImage className="process-icon pulse" size={18} />}
             {processType === 'other' && <FiLoader className="process-icon spin" size={18} />}
             
             <span className="process-title">
@@ -156,6 +160,7 @@ function StatusBar() {
               {processType === 'render' && `Rendering${batchLabel}`}
               {processType === 'upload' && 'Uploading File'}
               {processType === 'vocal' && 'Vocal Isolation'}
+              {processType === 'coverart' && 'Cover Art Generation'}
               {processType === 'other' && 'Processing'}
             </span>
             {elapsedStr && (
@@ -187,10 +192,10 @@ function StatusBar() {
             className="process-cancel-btn"
             onClick={effectiveCancel}
             title="Cancel"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, width: 'auto', padding: '0 10px', fontSize: 11, fontWeight: 500 }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, width: 'auto', padding: '0 10px', fontSize: 11, fontWeight: 500, marginLeft: 'auto', flexShrink: 0 }}
           >
             <FiX size={14} />
-            <span>Cancel {processType === 'transcribe' ? 'Transcription' : processType === 'render' ? 'Render' : processType === 'upload' ? 'Upload' : processType === 'vocal' ? 'Separation' : 'Process'}</span>
+            <span>Cancel {processType === 'transcribe' ? 'Transcription' : processType === 'render' ? 'Render' : processType === 'upload' ? 'Upload' : processType === 'vocal' ? 'Separation' : processType === 'coverart' ? 'Generation' : 'Process'}</span>
           </button>
         </div>
       </div>

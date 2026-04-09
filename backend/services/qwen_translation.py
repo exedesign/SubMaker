@@ -55,13 +55,26 @@ class QwenTranslationService:
         self._loaded = False
         self._unload_timer = None
 
-    def _ensure_loaded(self):
-        """Lazy-load model on first use"""
+        # Register with VRAM manager
+        from services.vram_manager import get_vram_manager
+        get_vram_manager().register("qwen", self.unload)
+
+    def ensure_loaded(self):
+        """Lazy-load model on first use. Public so other services can share the model."""
         if self._loaded:
             return
         with self._lock:
             if self._loaded:
                 return
+
+            # Evict any other model (e.g. Whisper) before loading Qwen
+            from services.vram_manager import get_vram_manager
+            get_vram_manager().acquire("qwen")
+
+            # Suppress AWQ deprecation and missing CUDA extension warnings
+            import warnings
+            warnings.filterwarnings("ignore", message=".*AutoAWQ is officially deprecated.*")
+            warnings.filterwarnings("ignore", message=".*naive.*slow.*implementation.*")
 
             # Use local bundled model if available, otherwise fall back to HuggingFace
             if (LOCAL_QWEN_DIR / "model.safetensors").exists():
@@ -85,6 +98,15 @@ class QwenTranslationService:
             self.model.eval()
             self._loaded = True
             print("[Qwen] Model loaded successfully")
+
+    def get_model_and_tokenizer(self):
+        """Ensure model is loaded and return (model, tokenizer) for shared use."""
+        self.ensure_loaded()
+        return self.model, self.tokenizer
+
+    @property
+    def is_loaded(self):
+        return self._loaded
 
     def unload(self):
         """Free GPU memory — call after translation batch is done"""
@@ -111,7 +133,7 @@ class QwenTranslationService:
             return {'success': True, 'translated': '', 'source_lang': source_lang}
 
         try:
-            self._ensure_loaded()
+            self.ensure_loaded()
 
             target_language = LANGUAGE_NAMES.get(target_lang, target_lang)
             system_msg = SYSTEM_PROMPT.format(target_language=target_language)
@@ -153,7 +175,7 @@ class QwenTranslationService:
             print(f"[Qwen] Translation error: {e}")
             return {'success': False, 'error': str(e), 'translated': text}
 
-    def _schedule_unload(self, delay: float = 30.0):
+    def _schedule_unload(self, delay: float = 120.0):
         """Schedule model unload after a delay — allows concurrent requests to finish"""
         if self._unload_timer:
             self._unload_timer.cancel()
@@ -185,7 +207,7 @@ class QwenTranslationService:
             if (i + 1) % 10 == 0:
                 print(f"[Qwen] Translated {i + 1}/{len(subtitles)} subtitles")
 
-        # Schedule unload after 30 seconds of inactivity
+        # Schedule unload after idle period
         self._schedule_unload()
 
         return translated_subtitles
@@ -196,10 +218,10 @@ class QwenTranslationService:
 
 
 # Singleton
-_qwen_service = None
+_qwen_service: Optional[QwenTranslationService] = None
 
 def get_qwen_service() -> QwenTranslationService:
-    """Get or create the Qwen translation service singleton"""
+    """Get the shared singleton QwenTranslationService instance."""
     global _qwen_service
     if _qwen_service is None:
         _qwen_service = QwenTranslationService()

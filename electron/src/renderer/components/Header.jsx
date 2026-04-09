@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { FiFilm, FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft, FiTrash2, FiDroplet } from 'react-icons/fi';
+import { FiFilm, FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft, FiTrash2, FiDroplet, FiHeart } from 'react-icons/fi';
+import { useAppStore } from '../stores/appStore';
+import packageJson from '../../../package.json';
 import THEMES from '../themes';
 
 const Toggle = ({ enabled, onClick }) => (
@@ -12,10 +14,11 @@ const Toggle = ({ enabled, onClick }) => (
     </svg>
   </button>
 );
-import { useAppStore } from '../stores/appStore';
 
 function Header() {
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+  const [gpuUnloading, setGpuUnloading] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const isElectron = !!window.electronAPI;
   const {
@@ -23,6 +26,7 @@ function Header() {
     mediaFile, originalFileName, mediaType, uploadFile,
     currentStep, subtitles,
     cacheInfo, fetchCacheInfo, clearCache,
+    systemStats, fetchSystemStats, unloadAllModels,
   } = useAppStore();
 
   const handleChangeSource = useCallback(async () => {
@@ -90,6 +94,13 @@ function Header() {
     return () => clearInterval(iv);
   }, [fetchCacheInfo]);
 
+  // System stats polling (GPU VRAM + CPU)
+  useEffect(() => {
+    fetchSystemStats();
+    const iv = setInterval(fetchSystemStats, 3000);
+    return () => clearInterval(iv);
+  }, [fetchSystemStats]);
+
   // Startup cache cleanup (if enabled)
   useEffect(() => {
     if (settings.cleanCacheOnStartup) {
@@ -101,7 +112,7 @@ function Header() {
   return (
     <>
       <header className="header">
-        <div className="header-logo">
+        <div className="header-logo" onClick={() => setShowAbout(true)} style={{ cursor: 'pointer' }} title="About SubMaker">
           <FiFilm />
           <span>SubMaker</span>
         </div>
@@ -136,6 +147,76 @@ function Header() {
 
         {/* Cache indicator — right next to settings gear */}
         <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+
+          {/* GPU VRAM bar */}
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '4px 8px', borderRadius: 6,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)',
+              height: 28, minWidth: 90, position: 'relative', overflow: 'hidden',
+              WebkitAppRegion: 'no-drag', cursor: 'pointer',
+              transition: 'border-color 0.2s',
+            }}
+            title={`GPU VRAM: ${systemStats.gpuUsedMb} / ${systemStats.gpuTotalMb} MB (${systemStats.gpuPercent}%) — Click to unload all models`}
+            onClick={async () => {
+              if (gpuUnloading) return;
+              setGpuUnloading(true);
+              try {
+                await unloadAllModels();
+                setTimeout(() => fetchSystemStats(), 500);
+              } finally {
+                setGpuUnloading(false);
+              }
+            }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary-color)'}
+            onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
+          >
+            <div style={{
+              position: 'absolute', left: 0, top: 0, bottom: 0,
+              width: `${Math.min(100, systemStats.gpuPercent)}%`,
+              background: systemStats.gpuPercent > 80 ? 'rgba(239,68,68,0.35)' : systemStats.gpuPercent > 50 ? 'rgba(249,115,22,0.3)' : 'rgba(99,102,241,0.25)',
+              borderRadius: 6, transition: 'width 0.8s ease, background 0.5s',
+            }} />
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ position: 'relative', zIndex: 1, opacity: 0.7, flexShrink: 0, color: '#6366f1' }}>
+              <rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/>
+            </svg>
+            <span style={{ position: 'relative', zIndex: 1, fontSize: 10, fontWeight: 600, color: gpuUnloading ? '#f59e0b' : 'var(--text-secondary)', whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace" }}>
+              {gpuUnloading
+                ? 'Unloading...'
+                : systemStats.gpuTotalMb > 0
+                  ? `${(systemStats.gpuUsedMb / 1024).toFixed(1)}/${(systemStats.gpuTotalMb / 1024).toFixed(0)}G`
+                  : 'N/A'
+              }
+            </span>
+          </div>
+
+          {/* CPU bar */}
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '4px 8px', borderRadius: 6,
+              background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)',
+              height: 28, minWidth: 65, position: 'relative', overflow: 'hidden',
+              WebkitAppRegion: 'no-drag',
+            }}
+            title={`CPU Usage: ${systemStats.cpuPercent}%`}
+          >
+            <div style={{
+              position: 'absolute', left: 0, top: 0, bottom: 0,
+              width: `${Math.min(100, systemStats.cpuPercent)}%`,
+              background: systemStats.cpuPercent > 80 ? 'rgba(239,68,68,0.35)' : systemStats.cpuPercent > 50 ? 'rgba(249,115,22,0.3)' : 'rgba(34,197,94,0.25)',
+              borderRadius: 6, transition: 'width 0.8s ease, background 0.5s',
+            }} />
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ position: 'relative', zIndex: 1, opacity: 0.7, flexShrink: 0, color: '#22c55e' }}>
+              <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/>
+            </svg>
+            <span style={{ position: 'relative', zIndex: 1, fontSize: 10, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace" }}>
+              {systemStats.cpuPercent}%
+            </span>
+          </div>
+
+          {/* Temp size / clear */}
           <div
             style={{
               display: 'flex',
@@ -189,6 +270,13 @@ function Header() {
             onClick={() => setShowSettings(true)}
           >
             <FiSettings />
+          </button>
+          <button
+            className="btn btn-ghost btn-icon about-heart-btn"
+            title="About"
+            onClick={() => setShowAbout(true)}
+          >
+            <FiHeart style={{ color: '#ef4444', fill: '#ef4444' }} />
           </button>
         </div>
 
@@ -535,6 +623,136 @@ function Header() {
               >
                 OK
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* About Modal */}
+      {showAbout && (
+        <div className="about-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowAbout(false); }}>
+          <div className="about-modal">
+            <div className="about-modal-header">
+              <h3><FiHeart size={18} style={{ color: '#ef4444', fill: '#ef4444' }} /> About SubMaker</h3>
+              <button className="btn btn-secondary" onClick={() => setShowAbout(false)} style={{ padding: 8 }}>
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="about-modal-body">
+              {/* Author */}
+              <div className="about-author">
+                <div className="about-app-name">SubMaker</div>
+                <div className="about-version">v{packageJson.version}</div>
+                <div className="about-desc">Professional subtitle generator with AI-powered transcription, translation, cover art generation and audio visualization.</div>
+
+                {/* Features */}
+                <div className="about-features">
+                  <div className="about-feature"><span className="about-feature-icon">🎙️</span><span>AI-powered speech-to-text transcription with word-level timing using Faster-Whisper, supporting 99 languages with automatic language detection</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">🌍</span><span>Local AI translation with Qwen 2.5, enabling dual-subtitle output in any language pair — no internet connection required</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">🎨</span><span>AI cover art generation powered by FLUX.2 Klein with NF4 quantization — produces high-quality images directly on your GPU with text overlay support and 17 typography styles</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">🎵</span><span>Real-time audio visualization with Butterchurn (Milkdrop) presets, waveform display and beat-reactive effects synced to your music</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">🎤</span><span>AI vocal isolation using BS-Roformer models — separate vocals from instrumentals for cleaner transcription results</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">📝</span><span>Advanced lyrics import with LRC/SRT parsing, manual timing editor and real-time synchronized preview</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">🎬</span><span>Video export with embedded subtitles, customizable fonts, colors, positions and background options including transparency</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">💾</span><span>Full offline operation — all AI models run locally on your machine with intelligent VRAM management for consumer GPUs</span></div>
+                </div>
+
+                <div className="about-author-info">
+                  <span className="about-label">Developer</span>
+                  <span className="about-value">Fatih EKE</span>
+                </div>
+                <div className="about-author-info">
+                  <span className="about-label">Contact</span>
+                  <a className="about-link" href="mailto:fatiheke@gmail.com">fatiheke@gmail.com</a>
+                </div>
+              </div>
+
+              {/* Technologies */}
+              <div className="about-tech-title">Technologies & Credits</div>
+              <div className="about-tech-list">
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Electron</div>
+                  <div className="about-tech-desc">Cross-platform desktop application framework by GitHub/Microsoft. Enables building native apps with web technologies.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">React 18</div>
+                  <div className="about-tech-desc">JavaScript UI library by Meta. Component-based architecture for building interactive user interfaces.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Vite</div>
+                  <div className="about-tech-desc">Next-generation frontend build tool. Lightning-fast HMR and optimized production builds.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Zustand</div>
+                  <div className="about-tech-desc">Lightweight state management for React. Minimal boilerplate with powerful subscription model.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Flask + SocketIO</div>
+                  <div className="about-tech-desc">Python web framework with real-time WebSocket support. Powers the backend API and streaming progress updates.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Faster-Whisper</div>
+                  <div className="about-tech-desc">CTranslate2-based Whisper implementation by SYSTRAN. Up to 4x faster than OpenAI Whisper with word-level timestamps.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Qwen 2.5-3B AWQ</div>
+                  <div className="about-tech-desc">Large language model by Alibaba Cloud. Used for AI translation and lyrics analysis with AWQ quantization for efficient GPU inference.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">FLUX.2 Klein</div>
+                  <div className="about-tech-desc">4B parameter text-to-image model by Black Forest Labs. NF4 quantized for cover art generation on consumer GPUs.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Hugging Face Diffusers</div>
+                  <div className="about-tech-desc">State-of-the-art diffusion model library. Provides pipeline infrastructure for image generation.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">BitsAndBytes</div>
+                  <div className="about-tech-desc">Quantization library by Tim Dettmers. Enables NF4/INT8 quantization for running large models on limited VRAM.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">PyTorch + CUDA</div>
+                  <div className="about-tech-desc">Deep learning framework by Meta with NVIDIA CUDA GPU acceleration. Foundation for all AI inference operations.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Audio-Separator</div>
+                  <div className="about-tech-desc">BS-Roformer based vocal isolation. Separates vocals from instrumentals using HyperACE v2 and Resurrection UNWA models.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Butterchurn</div>
+                  <div className="about-tech-desc">WebGL Milkdrop visualizer by Jordan Berg. Real-time music visualization with thousands of community presets.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Librosa</div>
+                  <div className="about-tech-desc">Audio analysis library for Python. Provides audio feature extraction, waveform analysis and signal processing.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">Mutagen</div>
+                  <div className="about-tech-desc">Python module for handling audio metadata. Reads and writes ID3 tags for MP3 and other audio formats.</div>
+                </div>
+                <div className="about-tech-item">
+                  <div className="about-tech-name">FFmpeg</div>
+                  <div className="about-tech-desc">Complete multimedia framework. Audio/video encoding, decoding, transcoding and muxing operations.</div>
+                </div>
+              </div>
+            </div>
+            <div className="about-modal-footer">
+              <button
+                className="about-support-btn"
+                onClick={() => {
+                  const url = 'https://kreosus.com/exedesign#creator-profile-support';
+                  if (window.electronAPI?.openExternal) {
+                    window.electronAPI.openExternal(url);
+                  } else {
+                    window.open(url, '_blank');
+                  }
+                }}
+              >
+                <FiHeart size={15} className="about-support-heart" /> Support
+              </button>
+              <span>© 2026 Fatih EKE — All rights reserved</span>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, marginTop: 2 }}>
+                Made with VS Code, GitHub Copilot &amp; Claude
+              </span>
             </div>
           </div>
         </div>

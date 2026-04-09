@@ -19,7 +19,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 from config import TEMP_DIR, OUTPUT_DIR, FONTS_DIR, SUPPORTED_LANGUAGES, TENOR_API_KEY, TENOR_CLIENT_KEY, GIPHY_API_KEY, FFMPEG_PATH, ENABLE_GPU_ACCELERATION, PRESETS_DIR, VOCAL_CACHE_DIR
 from services import (
     TranscriptionService,
-    TranslationService,
     ArabicTextProcessor,
     VideoGenerator,
     SubtitleEngine,
@@ -69,7 +68,6 @@ api = Blueprint("api", __name__)
 
 # Service instances (lazy loaded)
 _transcription_service = None
-_translation_service = None
 _video_generator = None
 _subtitle_engine = None
 
@@ -79,13 +77,6 @@ def get_transcription_service():
     if _transcription_service is None:
         _transcription_service = TranscriptionService()
     return _transcription_service
-
-
-def get_translation_service():
-    global _translation_service
-    if _translation_service is None:
-        _translation_service = TranslationService()
-    return _translation_service
 
 
 def get_video_generator():
@@ -652,37 +643,6 @@ def get_languages():
             for code, name in SUPPORTED_LANGUAGES
         ]
     })
-
-
-@api.route("/translation/packages", methods=["GET"])
-def get_translation_packages():
-    """Get available and installed translation packages"""
-    try:
-        service = get_translation_service()
-        return jsonify({
-            "available": service.get_available_packages(),
-            "installed": service.get_installed_packages()
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@api.route("/translation/install", methods=["POST"])
-def install_translation_package():
-    """Install a translation language pair"""
-    data = request.json
-    from_code = data.get("from_code")
-    to_code = data.get("to_code")
-    
-    if not from_code or not to_code:
-        return jsonify({"error": "from_code and to_code required"}), 400
-    
-    try:
-        service = get_translation_service()
-        service.install_language_pair(from_code, to_code)
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================
@@ -1289,64 +1249,24 @@ def transcribe_stream():
 
 
 # =============================================================================
-# Translation
-# =============================================================================
-
-@api.route("/translate", methods=["POST"])
-def translate():
-    """Translate subtitles to another language"""
-    data = request.json
-    subtitles = data.get("subtitles")
-    from_code = data.get("from_code")
-    to_code = data.get("to_code")
-    
-    if not subtitles or not from_code or not to_code:
-        return jsonify({"error": "subtitles, from_code, and to_code required"}), 400
-    
-    try:
-        service = get_translation_service()
-        translated = service.translate_subtitles(
-            subtitles,
-            from_code,
-            to_code
-        )
-        
-        # Apply Arabic processing if needed
-        if ArabicTextProcessor.is_rtl_language(to_code):
-            translated = ArabicTextProcessor.process_subtitles(translated, to_code)
-        
-        return jsonify({
-            "success": True,
-            "subtitles": translated
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# =============================================================================
-# Secondary Subtitle Translation (Dual Language Support)
+# Translation (Qwen 2.5 only)
 # =============================================================================
 
 @api.route("/translate/secondary", methods=["POST"])
 def translate_secondary():
-    """Translate subtitles for secondary language display"""
-    from services.translation_service import get_translation_service as get_text_translator
+    """Translate subtitles using Qwen 2.5"""
     from services.qwen_translation import get_qwen_service
     
     data = request.json
     subtitles = data.get("subtitles", [])
     target_lang = data.get("target_lang", "en")
     source_lang = data.get("source_lang", "auto")
-    provider = data.get("provider", "online")
     
     if not subtitles:
         return jsonify({"error": "subtitles required"}), 400
     
     try:
-        if provider == "qwen":
-            translator = get_qwen_service()
-        else:
-            translator = get_text_translator()
+        translator = get_qwen_service()
         translated = translator.translate_subtitles(subtitles, target_lang, source_lang)
         
         # Apply RTL processing if needed
@@ -1368,24 +1288,19 @@ def translate_secondary():
 
 @api.route("/translate/single", methods=["POST"])
 def translate_single():
-    """Translate a single text"""
-    from services.translation_service import get_translation_service as get_text_translator
+    """Translate a single text using Qwen 2.5"""
     from services.qwen_translation import get_qwen_service
     
     data = request.json
     text = data.get("text", "")
     target_lang = data.get("target_lang", "en")
     source_lang = data.get("source_lang", "auto")
-    provider = data.get("provider", "online")
     
     if not text:
         return jsonify({"error": "text required"}), 400
     
     try:
-        if provider == "qwen":
-            translator = get_qwen_service()
-        else:
-            translator = get_text_translator()
+        translator = get_qwen_service()
         result = translator.translate_text(text, target_lang, source_lang)
         
         # Apply RTL processing if needed
@@ -1400,10 +1315,10 @@ def translate_single():
 @api.route("/translate/languages", methods=["GET"])
 def get_translation_languages():
     """Get supported translation languages"""
-    from services.translation_service import get_translation_service as get_text_translator
+    from services.qwen_translation import get_qwen_service
     
     try:
-        translator = get_text_translator()
+        translator = get_qwen_service()
         languages = translator.get_supported_languages()
         return jsonify({
             "success": True,
@@ -2697,3 +2612,380 @@ def playlist_read_sylt():
         "subtitles": subtitles,
         "count": len(subtitles),
     })
+
+
+# ======================================================================
+# Cover Art — Multi-model image generation + Lyrics analysis (Qwen 2.5)
+# ======================================================================
+
+@api.route('/cover-art/models', methods=['GET'])
+def cover_art_models():
+    """Return available cover art models with metadata and defaults."""
+    from services.cover_art_generator import get_available_models
+    return jsonify({"success": True, "models": get_available_models()})
+
+
+@api.route('/cover-art/default-prompt', methods=['GET'])
+def cover_art_default_prompt():
+    """Return the default system prompt so the frontend can display and reset to it."""
+    from services.lyrics_analyzer import DEFAULT_SYSTEM_PROMPT
+    return jsonify({"success": True, "defaultPrompt": DEFAULT_SYSTEM_PROMPT})
+
+
+@api.route('/cover-art/analyze', methods=['POST'])
+def cover_art_analyze():
+    """Analyze lyrics with Qwen 2.5 and return structured visual tags."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    lyrics = data.get('lyrics', '').strip()
+    if not lyrics:
+        return jsonify({"error": "lyrics field is required"}), 400
+
+    system_prompt = data.get('systemPrompt')  # Optional user-custom prompt
+
+    try:
+        from services.lyrics_analyzer import get_lyrics_analyzer
+        analyzer = get_lyrics_analyzer()
+        result = analyzer.analyze_lyrics(lyrics, system_prompt=system_prompt)
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        print(f"[CoverArt] Analysis error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Active cover art generation jobs
+_coverart_jobs = {}
+
+
+class _CoverArtCancelled(Exception):
+    """Raised when cover art generation is cancelled by user."""
+    pass
+
+
+def _run_coverart_job(job_id, model_id, prompt, width, height, steps, cfg_scale, seed):
+    """Background thread for cover art generation with progress tracking."""
+    import time
+    start_time = time.monotonic()
+    try:
+        _coverart_jobs[job_id]["status"] = "processing"
+
+        def on_progress(pct, message, preview=None):
+            # Check cancellation on every progress update
+            if _coverart_jobs.get(job_id, {}).get("status") == "cancelled":
+                raise _CoverArtCancelled("Generation cancelled by user")
+            _coverart_jobs[job_id]["progress"] = pct
+            _coverart_jobs[job_id]["step"] = message
+            if preview:
+                _coverart_jobs[job_id]["preview_image"] = preview
+
+        from services.cover_art_generator import get_cover_art_generator
+        generator = get_cover_art_generator(model_id)
+        result = generator.generate(
+            prompt=prompt,
+            negative_prompt="",
+            width=width,
+            height=height,
+            num_inference_steps=steps,
+            guidance_scale=cfg_scale,
+            seed=seed,
+            progress_callback=on_progress,
+        )
+        # Don't overwrite cancelled status
+        if _coverart_jobs.get(job_id, {}).get("status") == "cancelled":
+            return
+        elapsed = round(time.monotonic() - start_time, 1)
+        _coverart_jobs[job_id]["status"] = "completed"
+        _coverart_jobs[job_id]["progress"] = 100
+        _coverart_jobs[job_id]["step"] = "Complete"
+        _coverart_jobs[job_id]["result"] = result
+        _coverart_jobs[job_id]["result"]["elapsed_seconds"] = elapsed
+    except _CoverArtCancelled:
+        print(f"[CoverArt Job {job_id}] Cancelled by user")
+        _coverart_jobs[job_id]["status"] = "cancelled"
+        _coverart_jobs[job_id]["step"] = "Cancelled"
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        if _coverart_jobs.get(job_id, {}).get("status") != "cancelled":
+            _coverart_jobs[job_id]["status"] = "error"
+            _coverart_jobs[job_id]["error"] = str(e)
+
+
+@api.route('/cover-art/generate', methods=['POST'])
+def cover_art_generate():
+    """Start async cover art generation job. Returns job_id for polling."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    prompt = data.get('prompt', '').strip()
+    if not prompt:
+        return jsonify({"error": "prompt field is required"}), 400
+
+    model_id = data.get('model', 'flux-klein').strip()
+    width = int(data.get('width', 1024))
+    height = int(data.get('height', 1024))
+    steps = int(data.get('steps', 9))
+    cfg_scale = float(data.get('cfgScale', 1.5))
+    seed = int(data.get('seed', -1))
+
+    # Validate model
+    from config import COVER_ART_MODELS
+    if model_id not in COVER_ART_MODELS:
+        return jsonify({"error": f"Unknown model: {model_id}"}), 400
+
+    # Clamp values per model defaults
+    model_defaults = COVER_ART_MODELS[model_id]["defaults"]
+    width = max(512, min(1024, width))
+    height = max(512, min(1024, height))
+    steps = max(model_defaults.get("minSteps", 1), min(model_defaults.get("maxSteps", 50), steps))
+    cfg_scale = max(model_defaults.get("minCfg", 0.0), min(model_defaults.get("maxCfg", 20.0), cfg_scale))
+
+    job_id = str(uuid.uuid4())
+    _coverart_jobs[job_id] = {
+        "status": "starting",
+        "progress": 0,
+        "step": "Starting image generation...",
+        "error": None,
+        "result": None,
+        "preview_image": None,
+    }
+
+    t = threading.Thread(
+        target=_run_coverart_job,
+        args=(job_id, model_id, prompt, width, height, steps, cfg_scale, seed),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify({"success": True, "job_id": job_id})
+
+
+@api.route('/cover-art/generate/status/<job_id>', methods=['GET'])
+def cover_art_generate_status(job_id):
+    """Poll cover art generation job progress."""
+    if job_id not in _coverart_jobs:
+        return jsonify({"error": "Job not found"}), 404
+
+    job = _coverart_jobs[job_id]
+    resp = {
+        "job_id": job_id,
+        "status": job["status"],
+        "progress": job["progress"],
+        "step": job["step"],
+        "error": job["error"],
+        "preview_image": job.get("preview_image"),
+    }
+    if job["status"] == "completed" and job["result"]:
+        resp.update(job["result"])
+        # Clean up completed job after delivering result
+        del _coverart_jobs[job_id]
+    elif job["status"] == "error":
+        del _coverart_jobs[job_id]
+    elif job["status"] == "cancelled":
+        del _coverart_jobs[job_id]
+    return jsonify(resp)
+
+
+@api.route('/cover-art/cancel/<job_id>', methods=['POST'])
+def cover_art_cancel(job_id):
+    """Cancel a cover art generation job (best effort)."""
+    if job_id in _coverart_jobs:
+        _coverart_jobs[job_id]["status"] = "cancelled"
+        return jsonify({"success": True})
+    return jsonify({"error": "Job not found"}), 404
+
+
+@api.route('/cover-art/alternatives', methods=['POST'])
+def cover_art_alternatives():
+    """Get 3 alternative suggestions for a tag using Qwen 2.5."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    tag_type = data.get('tagType', '').strip()
+    tag_value = data.get('tagValue', '').strip()
+    context = data.get('context', '').strip()
+
+    if not tag_type or not tag_value:
+        return jsonify({"error": "tagType and tagValue are required"}), 400
+
+    try:
+        from services.lyrics_analyzer import get_lyrics_analyzer
+        analyzer = get_lyrics_analyzer()
+        alternatives = analyzer.get_alternatives(tag_type, tag_value, context)
+        return jsonify({"success": True, "alternatives": alternatives})
+    except Exception as e:
+        print(f"[CoverArt] Alternatives error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route('/cover-art/save', methods=['POST'])
+def cover_art_save():
+    """Save generated cover art image to disk."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    image_base64 = data.get('imageBase64', '').strip()
+    filename = data.get('filename', 'cover_art').strip()
+    target_dir = data.get('targetDir', '').strip()
+
+    if not image_base64:
+        return jsonify({"error": "imageBase64 is required"}), 400
+
+    try:
+        import base64, re
+        from pathlib import Path
+
+        # Sanitize filename
+        safe_name = re.sub(r'[^\w\-.]', '_', filename)
+        if not safe_name.lower().endswith('.png'):
+            safe_name += '.png'
+
+        # Determine save directory
+        if target_dir and Path(target_dir).is_dir():
+            out_path = Path(target_dir) / safe_name
+        else:
+            from config import OUTPUT_DIR
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            out_path = OUTPUT_DIR / safe_name
+
+        img_bytes = base64.b64decode(image_base64)
+        out_path.write_bytes(img_bytes)
+        print(f"[CoverArt] Saved: {out_path}")
+        return jsonify({"success": True, "path": str(out_path)})
+    except Exception as e:
+        print(f"[CoverArt] Save error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@api.route('/cover-art/embed', methods=['POST'])
+def cover_art_embed():
+    """Embed cover art into audio file (ID3 APIC tag) and save PNG next to it."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    image_base64 = data.get('imageBase64', '').strip()
+    audio_path = data.get('audioPath', '').strip()
+
+    if not image_base64 or not audio_path:
+        return jsonify({"error": "imageBase64 and audioPath are required"}), 400
+
+    try:
+        import base64
+        from pathlib import Path
+        from mutagen.mp3 import MP3
+        from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+        from mutagen.flac import FLAC, Picture
+        from mutagen.mp4 import MP4, MP4Cover
+        from mutagen.oggvorbis import OggVorbis
+
+        audio = Path(audio_path)
+        if not audio.exists():
+            return jsonify({"error": f"Audio file not found: {audio_path}"}), 404
+
+        img_bytes = base64.b64decode(image_base64)
+        ext = audio.suffix.lower()
+
+        # 1) Embed cover art into audio file
+        if ext == '.mp3':
+            try:
+                tags = ID3(str(audio))
+            except ID3NoHeaderError:
+                from mutagen.id3 import ID3 as ID3Class
+                tags = ID3Class()
+            # Remove existing APIC frames
+            tags.delall('APIC')
+            tags.add(APIC(
+                encoding=3,  # UTF-8
+                mime='image/png',
+                type=3,  # Front cover
+                desc='Cover',
+                data=img_bytes,
+            ))
+            tags.save(str(audio), v2_version=4)
+        elif ext == '.flac':
+            flac = FLAC(str(audio))
+            pic = Picture()
+            pic.type = 3
+            pic.mime = 'image/png'
+            pic.desc = 'Cover'
+            pic.data = img_bytes
+            flac.clear_pictures()
+            flac.add_picture(pic)
+            flac.save()
+        elif ext in ('.m4a', '.mp4', '.aac'):
+            mp4 = MP4(str(audio))
+            mp4.tags['covr'] = [MP4Cover(img_bytes, imageformat=MP4Cover.FORMAT_PNG)]
+            mp4.save()
+        elif ext == '.ogg':
+            ogg = OggVorbis(str(audio))
+            import base64 as b64mod
+            pic = Picture()
+            pic.type = 3
+            pic.mime = 'image/png'
+            pic.desc = 'Cover'
+            pic.data = img_bytes
+            ogg['metadata_block_picture'] = [b64mod.b64encode(pic.write()).decode('ascii')]
+            ogg.save()
+        else:
+            return jsonify({"error": f"Unsupported audio format: {ext}"}), 400
+
+        # 2) Save PNG next to audio file with same name
+        png_path = audio.with_suffix('.png')
+        png_path.write_bytes(img_bytes)
+
+        print(f"[CoverArt] Embedded cover into: {audio}")
+        print(f"[CoverArt] Saved PNG: {png_path}")
+        return jsonify({
+            "success": True,
+            "audioPath": str(audio),
+            "pngPath": str(png_path),
+        })
+    except Exception as e:
+        print(f"[CoverArt] Embed error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# ── System Stats ──────────────────────────────────────────────
+
+@api.route('/system/stats', methods=['GET'])
+def system_stats():
+    """Return GPU VRAM and CPU usage for monitoring bars."""
+    import psutil
+
+    cpu_percent = psutil.cpu_percent(interval=0.1)
+
+    gpu_used_mb = 0
+    gpu_total_mb = 0
+    gpu_percent = 0
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_used_mb = torch.cuda.memory_reserved() / (1024 * 1024)
+            gpu_total_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+            gpu_percent = round((gpu_used_mb / gpu_total_mb) * 100, 1) if gpu_total_mb > 0 else 0
+    except Exception:
+        pass
+
+    return jsonify({
+        "cpu_percent": round(cpu_percent, 1),
+        "gpu_used_mb": round(gpu_used_mb),
+        "gpu_total_mb": round(gpu_total_mb),
+        "gpu_percent": round(gpu_percent, 1),
+    })
+
+
+@api.route('/system/unload-all', methods=['POST'])
+def system_unload_all():
+    """Unload ALL GPU-resident models to free VRAM."""
+    from services.vram_manager import get_vram_manager
+    vram = get_vram_manager()
+    unloaded = vram.release_all()
+    return jsonify({"success": True, "unloaded": unloaded})

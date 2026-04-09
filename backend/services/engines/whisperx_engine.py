@@ -137,6 +137,27 @@ class FasterWhisperEngine:
         logger.info("Faster-Whisper model loaded successfully!")
 
     # ------------------------------------------------------------------
+    # Unload
+    # ------------------------------------------------------------------
+    def unload_model(self) -> None:
+        """Free GPU/CPU memory held by the loaded model."""
+        if self._model is None:
+            return
+        logger.info(f"Unloading Faster-Whisper model: {self._model_id}")
+        del self._model
+        self._model = None
+        self._model_id = None
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        logger.info("Faster-Whisper model unloaded")
+
+    # ------------------------------------------------------------------
     # Transcribe
     # ------------------------------------------------------------------
     def transcribe(

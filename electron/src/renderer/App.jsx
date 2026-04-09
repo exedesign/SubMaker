@@ -12,8 +12,21 @@ import THEMES from './themes';
 const isPreviewScreen = new URLSearchParams(window.location.search).has('previewScreen');
 
 function MainApp() {
-  const { checkBackendHealth, backendStatus, previewMode, settings } = useAppStore();
+  const { checkBackendHealth, backendStatus, previewMode, settings, generateCoverArt, coverArt } = useAppStore();
   const fastPollRef = useRef(null);
+
+  // Global Ctrl+Enter → Generate Cover Art
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        const { coverArt, generateCoverArt } = useAppStore.getState();
+        if (!coverArt.isGenerating) generateCoverArt();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Apply color theme to :root CSS variables
   useEffect(() => {

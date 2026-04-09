@@ -8,6 +8,10 @@ import { fetchJson, fetchFormData, streamJsonEvents } from '../services/electron
 
 const API_URL = window.API_URL || 'http://localhost:5000/api';
 
+// Debounced auto-generate timer for tag/prompt changes
+let _autoGenTimer = null;
+const AUTO_GEN_DELAY = 600; // ms after last tag change before auto-generating
+
 // Create axios instance — uses regular XMLHttpRequest just like Chrome.
 // No IPC proxy: Electron's Chromium network stack is identical to Chrome's.
 const api = axios.create({
@@ -173,8 +177,7 @@ export const useAppStore = create((set, get) => ({
       enhancement: 1.2,        // Optimized boost
     },
 
-    // Translation provider: 'online' (MyMemory/Lingva) or 'qwen' (Qwen2.5 local)
-    translationProvider: 'online',
+    // Translation uses Qwen2.5 locally
   },
 
   // Model Settings - per-language model selection (faster-whisper)
@@ -234,6 +237,31 @@ export const useAppStore = create((set, get) => ({
   
   // Preview mode
   previewMode: 'docked', // 'docked' or 'floating'
+  rightPanelTab: 'preview', // 'preview' or 'coverArt'
+
+  // Cover Art Generator
+  coverArt: {
+    selectedModel: 'flux-klein',  // Active model ID
+    tags: [],                // [{id, type, value, position, alternatives}]
+    freeTextSegments: [],    // [{id, text, position}] — free text between tags
+    rawPrompt: '',           // Qwen-generated base prompt
+    editedPrompt: '',        // User-edited final prompt (tags + freeText merged)
+    steps: 4,                // 4-12 (4 = fast, good quality with Turbo)
+    cfgScale: 1.5,           // 0.0-2.0 (1.5 default)
+    seed: -1,                // -1 = random
+    seedLocked: false,       // Auto-lock after first generation
+    lastUsedSeed: null,      // Last seed used for generation
+    width: 512,
+    height: 512,
+    previewImage: null,      // Live preview base64 JPEG during generation
+    systemPrompt: '',        // Custom Qwen system prompt (empty = use backend default)
+    defaultSystemPrompt: '',  // Fetched from backend once, used for reset
+    isAnalyzing: false,
+    isGenerating: false,
+    currentJobId: null,        // Active generation job ID for cancellation
+    generatedImage: null,    // base64 PNG string
+    history: [],             // [{image_base64, prompt, seed, timestamp}]
+  },
   
   // Processing state
   isProcessing: false,
@@ -939,6 +967,35 @@ export const useAppStore = create((set, get) => ({
   // Cache management
   cacheInfo: { sizeBytes: 0, fileCount: 0 },
 
+  // System stats (GPU VRAM + CPU)
+  systemStats: { cpuPercent: 0, gpuUsedMb: 0, gpuTotalMb: 0, gpuPercent: 0 },
+
+  fetchSystemStats: async () => {
+    try {
+      const res = await fetch(`${API_URL}/system/stats`);
+      if (res.ok) {
+        const d = await res.json();
+        set({ systemStats: {
+          cpuPercent: d.cpu_percent || 0,
+          gpuUsedMb: d.gpu_used_mb || 0,
+          gpuTotalMb: d.gpu_total_mb || 0,
+          gpuPercent: d.gpu_percent || 0,
+        }});
+      }
+    } catch (e) { /* silent */ }
+  },
+
+  unloadAllModels: async () => {
+    try {
+      const res = await fetch(`${API_URL}/system/unload-all`, { method: 'POST' });
+      if (res.ok) {
+        const d = await res.json();
+        return d.unloaded || [];
+      }
+    } catch (e) { console.warn('Unload all failed:', e); }
+    return [];
+  },
+
   fetchCacheInfo: async () => {
     try {
       const res = await fetch(`${API_URL}/temp/cache-info`);
@@ -971,6 +1028,380 @@ export const useAppStore = create((set, get) => ({
   
   // Preview mode
   setPreviewMode: (mode) => set({ previewMode: mode }),
+  setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
+
+  // ============================================================
+  // Cover Art Actions
+  // ============================================================
+  setCoverArt: (updates) => set((s) => ({
+    coverArt: { ...s.coverArt, ...updates }
+  })),
+
+  fetchDefaultSystemPrompt: async () => {
+    try {
+      const res = await fetch(`${API_URL}/cover-art/default-prompt`);
+      const data = await res.json();
+      if (data.success && data.defaultPrompt) {
+        const { coverArt } = get();
+        const updates = { defaultSystemPrompt: data.defaultPrompt };
+        // Only set systemPrompt if it hasn't been customized yet
+        if (!coverArt.systemPrompt) {
+          updates.systemPrompt = data.defaultPrompt;
+        }
+        set(s => ({ coverArt: { ...s.coverArt, ...updates } }));
+      }
+    } catch (e) {
+      console.error('[CoverArt] Failed to fetch default prompt:', e);
+    }
+  },
+
+  analyzeLyrics: async () => {
+    const { subtitles, coverArt } = get();
+    const lyrics = subtitles.map(s => s.text).join('\n');
+    if (!lyrics.trim()) return;
+
+    set(s => ({ coverArt: { ...s.coverArt, isAnalyzing: true } }));
+    try {
+      const body = { lyrics };
+      // Only send systemPrompt if user customized it (differs from backend default)
+      if (coverArt.systemPrompt && coverArt.systemPrompt !== coverArt.defaultSystemPrompt) {
+        body.systemPrompt = coverArt.systemPrompt;
+      }
+
+      const res = await fetch(`${API_URL}/cover-art/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const tags = (data.tags || []).map((t, i) => ({ ...t, id: i + 1 }));
+        set(s => ({
+          coverArt: {
+            ...s.coverArt,
+            tags,
+            rawPrompt: data.raw_prompt || '',
+            editedPrompt: data.raw_prompt || '',
+            isAnalyzing: false,
+          }
+        }));
+      } else {
+        throw new Error(data.error || 'Analysis failed');
+      }
+    } catch (e) {
+      console.error('[CoverArt] Analysis error:', e);
+      set(s => ({ coverArt: { ...s.coverArt, isAnalyzing: false } }));
+    }
+  },
+
+  generateCoverArt: async () => {
+    const { coverArt, cancelCoverArt } = get();
+    const prompt = coverArt.editedPrompt || coverArt.rawPrompt;
+    if (!prompt.trim()) return;
+
+    // If already generating, cancel the current job first
+    if (coverArt.isGenerating && coverArt.currentJobId) {
+      await cancelCoverArt();
+      // Small delay to let backend process cancellation
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    set(s => ({
+      coverArt: { ...s.coverArt, isGenerating: true, currentJobId: null, previewImage: null },
+      isProcessing: true,
+      processingProgress: 0,
+      processingStep: 'Starting cover art generation...',
+    }));
+    try {
+      const seed = coverArt.seedLocked && coverArt.lastUsedSeed != null
+        ? coverArt.lastUsedSeed
+        : coverArt.seed;
+
+      const res = await fetch(`${API_URL}/cover-art/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          model: coverArt.selectedModel,
+          width: coverArt.width,
+          height: coverArt.height,
+          steps: coverArt.steps,
+          cfgScale: coverArt.cfgScale,
+          seed,
+        }),
+      });
+      const startData = await res.json();
+      if (!startData.success || !startData.job_id) {
+        throw new Error(startData.error || 'Failed to start generation');
+      }
+
+      const jobId = startData.job_id;
+      set(s => ({ coverArt: { ...s.coverArt, currentJobId: jobId } }));
+
+      // Poll for progress
+      const result = await new Promise((resolve, reject) => {
+        let pollFailures = 0;
+        const MAX_POLL_FAILURES = 60;
+
+        const pollTimeout = setTimeout(() => {
+          clearInterval(pollInterval);
+          reject(new Error('Cover art generation timeout (10 min)'));
+        }, 10 * 60 * 1000);
+
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`${API_URL}/cover-art/generate/status/${jobId}`);
+
+            // Handle HTTP errors (especially 404 = backend crashed/restarted)
+            if (!statusRes.ok) {
+              if (statusRes.status === 404) {
+                clearInterval(pollInterval);
+                clearTimeout(pollTimeout);
+                reject(new Error('Generation job lost — backend may have restarted'));
+                return;
+              }
+              // Other HTTP errors (500, etc)
+              pollFailures++;
+              if (pollFailures >= MAX_POLL_FAILURES) {
+                clearInterval(pollInterval);
+                clearTimeout(pollTimeout);
+                reject(new Error('Generation polling failed'));
+              }
+              return;
+            }
+
+            const status = await statusRes.json();
+            pollFailures = 0;
+
+            set(s => ({
+              processingProgress: status.progress || 0,
+              processingStep: status.step || 'Generating cover art...',
+              coverArt: {
+                ...s.coverArt,
+                previewImage: status.preview_image || s.coverArt.previewImage,
+              },
+            }));
+
+            if (status.status === 'completed') {
+              clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
+              resolve(status);
+            } else if (status.status === 'error') {
+              clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
+              reject(new Error(status.error || 'Generation failed'));
+            } else if (status.status === 'cancelled') {
+              clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
+              reject(new Error('__CANCELLED__'));
+            }
+          } catch (err) {
+            pollFailures++;
+            if (pollFailures >= MAX_POLL_FAILURES) {
+              clearInterval(pollInterval);
+              clearTimeout(pollTimeout);
+              reject(new Error('Generation polling failed'));
+            }
+          }
+        }, 500);
+      });
+
+      const wasFirstGen = !get().coverArt.generatedImage;
+      const elapsedSeconds = result.elapsed_seconds || null;
+      set(s => ({
+        coverArt: {
+          ...s.coverArt,
+          generatedImage: result.image_base64,
+          lastUsedSeed: result.seed,
+          seedLocked: wasFirstGen ? true : s.coverArt.seedLocked,
+          isGenerating: false,
+          previewImage: null,
+          currentJobId: null,
+          lastGenerationTime: elapsedSeconds,
+          history: [
+            { image_base64: result.image_base64, prompt, seed: result.seed, timestamp: Date.now() },
+            ...s.coverArt.history,
+          ].slice(0, 20),
+        },
+        isProcessing: false,
+        processingProgress: 0,
+        processingStep: '',
+      }));
+
+      // Auto-save PNG next to the original audio file
+      try {
+        const { originalMediaPath } = get();
+        if (originalMediaPath) {
+          const parts = originalMediaPath.replace(/\\/g, '/').split('/');
+          const audioName = parts.pop().replace(/\.[^.]+$/, '');
+          const audioDir = parts.join('/');
+          await fetch(`${API_URL}/cover-art/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              imageBase64: result.image_base64,
+              filename: audioName + '_cover',
+              targetDir: audioDir,
+            }),
+          });
+          console.log('[CoverArt] Auto-saved next to audio file');
+        }
+      } catch (autoSaveErr) {
+        console.warn('[CoverArt] Auto-save failed:', autoSaveErr);
+      }
+    } catch (e) {
+      if (e.message !== '__CANCELLED__') {
+        console.error('[CoverArt] Generation error:', e);
+      }
+      set(s => ({
+        coverArt: { ...s.coverArt, isGenerating: false, previewImage: null, currentJobId: null },
+        isProcessing: false,
+        processingProgress: 0,
+        processingStep: '',
+      }));
+    }
+  },
+
+  cancelCoverArt: async () => {
+    const { coverArt } = get();
+    if (!coverArt.currentJobId) return;
+    try {
+      await fetch(`${API_URL}/cover-art/cancel/${coverArt.currentJobId}`, { method: 'POST' });
+      console.log('[CoverArt] Cancel requested for job:', coverArt.currentJobId);
+    } catch (e) {
+      console.warn('[CoverArt] Cancel request failed:', e);
+    }
+  },
+
+  updateCoverArtPrompt: (newPrompt) => {
+    set(s => ({ coverArt: { ...s.coverArt, editedPrompt: newPrompt } }));
+    // Auto-generate after prompt change (debounced) — skip if already generating
+    const { coverArt } = get();
+    if (coverArt.generatedImage && !coverArt.isGenerating) {
+      clearTimeout(_autoGenTimer);
+      _autoGenTimer = setTimeout(() => {
+        // Re-check: don't fire if a generation started while we waited
+        if (!get().coverArt.isGenerating) get().generateCoverArt();
+      }, 1200);
+    }
+  },
+
+  updateCoverArtTag: (tagId, newValue) => {
+    set(s => {
+      const tags = s.coverArt.tags.map(t =>
+        t.id === tagId ? { ...t, value: newValue } : t
+      );
+      // Rebuild prompt from tags
+      const prompt = tags.map(t => t.value).filter(Boolean).join(', ');
+      return { coverArt: { ...s.coverArt, tags, editedPrompt: prompt || s.coverArt.rawPrompt } };
+    });
+    // Auto-generate after tag change (debounced)
+    const { coverArt } = get();
+    if (coverArt.generatedImage) {
+      clearTimeout(_autoGenTimer);
+      _autoGenTimer = setTimeout(() => get().generateCoverArt(), AUTO_GEN_DELAY);
+    }
+  },
+
+  removeCoverArtTag: (tagId) => {
+    set(s => {
+      const tags = s.coverArt.tags.filter(t => t.id !== tagId);
+      const prompt = tags.map(t => t.value).filter(Boolean).join(', ');
+      return { coverArt: { ...s.coverArt, tags, editedPrompt: prompt || s.coverArt.rawPrompt } };
+    });
+    // Auto-generate after tag removal (debounced)
+    const { coverArt } = get();
+    if (coverArt.generatedImage) {
+      clearTimeout(_autoGenTimer);
+      _autoGenTimer = setTimeout(() => get().generateCoverArt(), AUTO_GEN_DELAY);
+    }
+  },
+
+  toggleSeedLock: () => {
+    set(s => ({
+      coverArt: {
+        ...s.coverArt,
+        seedLocked: !s.coverArt.seedLocked,
+        seed: s.coverArt.seedLocked ? -1 : s.coverArt.seed,
+      }
+    }));
+  },
+
+  fetchCoverArtAlternatives: async (tagId) => {
+    const { coverArt, subtitles } = get();
+    const tag = coverArt.tags.find(t => t.id === tagId);
+    if (!tag) return;
+
+    const context = subtitles.map(s => s.text).join('\n').slice(0, 500);
+    try {
+      const res = await fetch(`${API_URL}/cover-art/alternatives`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tagType: tag.type, tagValue: tag.value, context }),
+      });
+      const data = await res.json();
+      if (data.success && data.alternatives) {
+        set(s => ({
+          coverArt: {
+            ...s.coverArt,
+            tags: s.coverArt.tags.map(t =>
+              t.id === tagId ? { ...t, alternatives: data.alternatives } : t
+            ),
+          }
+        }));
+      }
+    } catch (e) {
+      console.error('[CoverArt] Alternatives fetch error:', e);
+    }
+  },
+
+  saveCoverArt: async (filename) => {
+    const { coverArt } = get();
+    if (!coverArt.generatedImage) return;
+    try {
+      const res = await fetch(`${API_URL}/cover-art/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: coverArt.generatedImage, filename }),
+      });
+      const data = await res.json();
+      if (data.success) return data.path;
+    } catch (e) {
+      console.error('[CoverArt] Save error:', e);
+    }
+    return null;
+  },
+
+  downloadCoverArt: () => {
+    const { coverArt } = get();
+    if (!coverArt.generatedImage) return;
+    const link = document.createElement('a');
+    link.href = `data:image/png;base64,${coverArt.generatedImage}`;
+    link.download = `cover_art_${coverArt.lastUsedSeed || Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  },
+
+  embedCoverArt: async () => {
+    const { coverArt, originalMediaPath } = get();
+    if (!coverArt.generatedImage || !originalMediaPath) return { success: false, error: 'No image or audio file' };
+    try {
+      const res = await fetch('http://localhost:5000/api/cover-art/embed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: coverArt.generatedImage,
+          audioPath: originalMediaPath,
+        }),
+      });
+      const data = await res.json();
+      return data;
+    } catch (e) {
+      console.error('[CoverArt] Embed failed:', e);
+      return { success: false, error: e.message };
+    }
+  },
   
   // Active render job
   renderJobId: null,
@@ -1807,7 +2238,6 @@ export const useAppStore = create((set, get) => ({
         subtitles: subtitles,
         target_lang: secondarySubtitle.targetLanguage,
         source_lang: detectedLanguage || 'auto',
-        provider: get().settings.translationProvider || 'online'
       });
       
       console.log('[Store] Translation response:', response.data);

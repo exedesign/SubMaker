@@ -12,6 +12,7 @@ import BackgroundSelector from './BackgroundSelector';
 import FormatSelector from './FormatSelector';
 import PlaylistPanel from './PlaylistPanel';
 import BatchPanel from './BatchPanel';
+import CoverArtPanel from './CoverArtPanel';
 
 // Utility function to convert backend file paths to HTTP URLs
 const getImageUrl = (imagePath) => {
@@ -66,6 +67,8 @@ function PreviewPanel() {
     playlist,
     isProcessing,
     detectedLanguage,
+    rightPanelTab,
+    setRightPanelTab,
   } = useAppStore();
 
   // RTL language detection
@@ -1190,23 +1193,30 @@ function PreviewPanel() {
         />
         
         <div className="preview-header">
-          <span className="preview-title">
-            <FiEye size={12} />
-            Live Preview
-          </span>
+          {/* Tab Switcher */}
+          <div className="preview-tabs">
+            <button
+              className={`preview-tab ${rightPanelTab === 'preview' ? 'active' : ''}`}
+              onClick={() => setRightPanelTab('preview')}
+            >
+              <FiEye size={11} />
+              Preview
+            </button>
+            <button
+              className={`preview-tab ${rightPanelTab === 'coverArt' ? 'active' : ''}`}
+              onClick={() => setRightPanelTab('coverArt')}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              Cover Art
+            </button>
+          </div>
           <div className="preview-actions">
-            <button
-              onClick={handleOpenSecondScreen}
-              title="Open on second display"
-            >
-              <FiMonitor size={12} />
-            </button>
-            <button
-              onClick={toggleFullscreen}
-              title="Fullscreen"
-            >
-              <FiMaximize size={12} />
-            </button>
+            {rightPanelTab === 'preview' && (
+              <>
+                <button onClick={handleOpenSecondScreen} title="Open on second display"><FiMonitor size={12} /></button>
+                <button onClick={toggleFullscreen} title="Fullscreen"><FiMaximize size={12} /></button>
+              </>
+            )}
             <button
               onClick={() => setPreviewMode('floating')}
               title="Switch to floating mode"
@@ -1216,7 +1226,7 @@ function PreviewPanel() {
           </div>
         </div>
         <div className="preview-content">
-          {previewContent}
+          {rightPanelTab === 'coverArt' ? <CoverArtPanel /> : previewContent}
         </div>
       </div>
     );

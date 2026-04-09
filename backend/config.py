@@ -34,6 +34,30 @@ for dir_path in [MODELS_DIR, FONTS_DIR, PRESETS_DIR, TEMP_DIR, OUTPUT_DIR]:
 # Qwen2.5 translation model
 QWEN_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct-AWQ"
 
+# FLUX.2 Klein 4B settings (loaded with BitsAndBytes NF4 quantization)
+FLUX_KLEIN_MODEL_REPO = "black-forest-labs/FLUX.2-klein-4B"
+
+# Cover Art Model Registry — all available image generation models
+COVER_ART_MODELS = {
+    "flux-klein": {
+        "name": "FLUX.2 Klein 4B",
+        "description": "4B param rectified flow transformer (full NF4 quantized). Fast iteration with Qwen3 text encoder.",
+        "generator_class": "services.generators.flux_klein.FluxKleinGenerator",
+        "vram_estimate": "~3.5 GB",
+        "supports_text_macros": True,
+        "defaults": {
+            "steps": 4,
+            "cfgScale": 1.0,
+            "width": 1024,
+            "height": 1024,
+            "maxSteps": 50,
+            "minSteps": 1,
+            "maxCfg": 20.0,
+            "minCfg": 0.0,
+        },
+    },
+}
+
 # Server settings
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 5000

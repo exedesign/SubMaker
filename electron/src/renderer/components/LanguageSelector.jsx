@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiGlobe, FiArrowRight, FiRefreshCw, FiAlertCircle, FiInfo, FiLoader, FiCpu } from 'react-icons/fi';
+import { FiArrowRight, FiRefreshCw, FiAlertCircle, FiInfo, FiLoader } from 'react-icons/fi';
 
 // All Whisper-supported languages (99 languages)
 const LANGUAGES = [
@@ -140,7 +140,6 @@ function LanguageSelector() {
     subtitles,
     isProcessing,
     settings,
-    setSettings,
     secondarySubtitle,
     setSecondaryLanguage,
     translateToSecondary,
@@ -236,35 +235,6 @@ function LanguageSelector() {
           
           {secondarySubtitle.targetLanguage !== 'none' && (
           <>
-          {/* Translation Provider Toggle */}
-          <div style={{
-            display: 'flex',
-            gap: 4,
-            marginTop: 4,
-            borderRadius: 6,
-            overflow: 'hidden',
-            border: '1px solid var(--border-color)',
-          }}>
-            <button
-              className={`btn btn-sm ${settings.translationProvider !== 'qwen' ? 'btn-primary' : 'btn-ghost'}`}
-              style={{ flex: 1, borderRadius: 0, border: 'none', fontSize: 11, padding: '4px 6px' }}
-              onClick={() => setSettings({ translationProvider: 'online' })}
-              title="Internet-based translation (MyMemory / Lingva)"
-            >
-              <FiGlobe size={12} style={{ marginRight: 4 }} />
-              Online
-            </button>
-            <button
-              className={`btn btn-sm ${settings.translationProvider === 'qwen' ? 'btn-primary' : 'btn-ghost'}`}
-              style={{ flex: 1, borderRadius: 0, border: 'none', fontSize: 11, padding: '4px 6px' }}
-              onClick={() => setSettings({ translationProvider: 'qwen' })}
-              title="Local Qwen2.5 AI translation (GPU)"
-            >
-              <FiCpu size={12} style={{ marginRight: 4 }} />
-              Qwen2.5
-            </button>
-          </div>
-
           <button
             className="btn btn-primary"
             style={{ width: '100%', marginTop: 4 }}

@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Shell operations
   openPath: (path) => ipcRenderer.invoke('shell:openPath', path),
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
 
   // App info
   getAppPath: (name) => ipcRenderer.invoke('app:getPath', name),

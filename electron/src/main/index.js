@@ -282,9 +282,19 @@ function startPythonBackend() {
   }
 
   // Try common Python executable names
-  const pythonCandidates = process.platform === 'win32'
+  // Prefer venv Python if it exists (has all dependencies installed)
+  const venvPython = process.platform === 'win32'
+    ? path.join(backendCwd, 'backend', 'venv', 'Scripts', 'python.exe')
+    : path.join(backendCwd, 'backend', 'venv', 'bin', 'python');
+
+  const pythonCandidates = [];
+  if (isDev && fs.existsSync(venvPython)) {
+    pythonCandidates.push(venvPython);
+    console.log(`🐍 [MAIN] Found venv Python: ${venvPython}`);
+  }
+  pythonCandidates.push(...(process.platform === 'win32'
     ? ['python', 'python3', 'py']
-    : ['python3', 'python'];
+    : ['python3', 'python']));
 
   const trySpawn = (idx) => {
     if (idx >= pythonCandidates.length) {
@@ -675,6 +685,14 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
     ],
   });
   return result;
+});
+
+// Open URL in default browser
+ipcMain.handle('shell:openExternal', async (event, url) => {
+  // Only allow http/https URLs
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    return shell.openExternal(url);
+  }
 });
 
 // Open folder in explorer (highlights the file if it exists)
