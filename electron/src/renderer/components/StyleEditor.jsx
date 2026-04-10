@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiUpload, FiX, FiImage, FiSearch, FiLoader } from 'react-icons/fi';
+import { FiUpload, FiX, FiImage, FiSearch, FiLoader, FiRotateCcw } from 'react-icons/fi';
 import axios from 'axios';
 
 const API_URL = window.API_URL || 'http://localhost:5000/api';
@@ -46,7 +46,7 @@ const LOGO_ANCHORS = [
 ];
 
 function StyleEditor() {
-  const { style, setStyle, logos, selectedLogoId, setLogoImage, clearLogo, clearAllLogos, updateLogo, setLogoAnchor, selectLogo, settings, secondarySubtitle, setSecondaryStyle } = useAppStore();
+  const { style, setStyle, logos, selectedLogoId, setLogoImage, clearLogo, clearAllLogos, updateLogo, setLogoAnchor, selectLogo, bumpLogoInteraction, settings, secondarySubtitle, setSecondaryStyle } = useAppStore();
   const logoInputRef = useRef(null);
   
   // Get selected logo
@@ -140,8 +140,34 @@ function StyleEditor() {
   const isDual = settings.dualSubtitleEnabled;
   const secStyle = isDual ? secondarySubtitle.style : null;
   
+  const defaultStyle = {
+    fontName: 'Arial', fontSize: 96, color: '#FFFFFF', borderColor: '#000000',
+    borderWidth: 4, shadowDepth: 2, bold: false, italic: false,
+    alignment: 2, marginVertical: 100, marginHorizontal: 20, offsetX: 0, offsetY: 0,
+  };
+  const defaultSecStyle = {
+    fontName: 'Arial', fontSize: 72, color: '#FFFFFF', borderColor: '#000000',
+    borderWidth: 4, shadowDepth: 2, bold: false, italic: false,
+    alignment: 5, marginVertical: 240, marginHorizontal: 20, offsetX: 0, offsetY: 0,
+  };
+
   return (
     <div>
+      {/* Reset All Styles */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+        <button
+          className="btn btn-secondary"
+          onClick={() => {
+            setStyle(defaultStyle);
+            if (isDual) setSecondaryStyle(defaultSecStyle);
+          }}
+          style={{ padding: '3px 8px', fontSize: 10, opacity: 0.7, display: 'flex', alignItems: 'center', gap: 4 }}
+          title="Reset All Styles"
+        >
+          <FiRotateCcw size={11} /> Reset
+        </button>
+      </div>
+
       {/* Font Family */}
       <div className="form-group">
         <label className="label">Font</label>
@@ -361,13 +387,6 @@ function StyleEditor() {
               </button>
             ))}
           </div>
-          <button
-            className="btn btn-secondary"
-            onClick={() => setStyle({ alignment: 2, offsetX: 0, offsetY: 0, marginVertical: 50 })}
-            style={{ width: 100, marginTop: 4, fontSize: 10, padding: '3px 0', opacity: 0.7 }}
-          >
-            ↺ Reset
-          </button>
         </div>
         {isDual && (
           <div className="form-group" style={{ flex: 'none' }}>
@@ -389,17 +408,51 @@ function StyleEditor() {
                 </button>
               ))}
             </div>
-            <button
-              className="btn btn-secondary"
-              onClick={() => setSecondaryStyle({ alignment: 5, offsetX: 0, offsetY: 0, marginVertical: 120 })}
-              style={{ width: 100, marginTop: 4, fontSize: 10, padding: '3px 0', opacity: 0.7 }}
-            >
-              ↺ Reset
-            </button>
           </div>
         )}
       </div>
       
+      {/* Margins (shared for both primary & secondary) */}
+      <div className="form-group">
+        <label className="label">Margins</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              Horizontal: {style.marginHorizontal ?? 20}px
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              value={style.marginHorizontal ?? 20}
+              onChange={(e) => {
+                const v = parseInt(e.target.value);
+                setStyle({ marginHorizontal: v });
+                if (isDual) setSecondaryStyle({ marginHorizontal: v });
+              }}
+              className="slider"
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              Vertical: {style.marginVertical ?? 100}px
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="400"
+              value={style.marginVertical ?? 100}
+              onChange={(e) => {
+                const v = parseInt(e.target.value);
+                setStyle({ marginVertical: v });
+                if (isDual) setSecondaryStyle({ marginVertical: v });
+              }}
+              className="slider"
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Fine Adjustment */}
       <div className="form-group">
         <label className="label">Fine Adjustment</label>
@@ -565,7 +618,10 @@ function StyleEditor() {
         {/* Selected Logo Settings */}
         {selectedLogo && (
           <>
-            <div style={{ 
+            <div 
+              onPointerDown={bumpLogoInteraction}
+              onChange={bumpLogoInteraction}
+              style={{ 
               background: 'var(--bg-secondary)', 
               borderRadius: 8, 
               padding: 12,

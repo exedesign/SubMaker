@@ -1529,6 +1529,11 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         ref_w, ref_h = PLAYRES_REF.get(video_format, (1920, 1080))
         engine.set_resolution(ref_w, ref_h)
         print(f"[Render Job {job_id}] Subtitle PlayRes set to fixed reference: {ref_w}x{ref_h} (video will be scaled by ASS)")
+
+        # Normalize margins: stored as 16:9 (1920×1080) reference → scale to current format
+        BASE_W, BASE_H = 1920, 1080
+        def norm_h(v): return round(v / BASE_W * ref_w)
+        def norm_v(v): return round(v / BASE_H * ref_h)
         
         _render_jobs[job_id]["progress"] = 10
         _render_jobs[job_id]["step"] = "Applying style settings..."
@@ -1547,7 +1552,9 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             bold=bool(style.get("bold", False)),
             italic=bool(style.get("italic", False)),
             alignment=int(style.get("alignment", 2)),
-            margin_vertical=int(style.get("marginVertical", style.get("margin_vertical", 50))),
+            margin_vertical=norm_v(int(style.get("marginVertical", style.get("margin_vertical", 50)))),
+            margin_left=norm_h(int(style.get("marginHorizontal", 20))),
+            margin_right=norm_h(int(style.get("marginHorizontal", 20))),
             offset_x=int(style.get("offsetX", 0)),
             offset_y=int(style.get("offsetY", 0))
         )
@@ -1595,7 +1602,9 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
                 bold=bool(sec_style_data.get("bold", False)),
                 italic=bool(sec_style_data.get("italic", False)),
                 alignment=int(sec_style_data.get("alignment", 2)),
-                margin_vertical=int(sec_style_data.get("marginVertical", 120)),
+                margin_vertical=norm_v(int(sec_style_data.get("marginVertical", 120))),
+                margin_left=norm_h(int(sec_style_data.get("marginHorizontal", 20))),
+                margin_right=norm_h(int(sec_style_data.get("marginHorizontal", 20))),
                 offset_x=int(sec_style_data.get("offsetX", 0)),
                 offset_y=int(sec_style_data.get("offsetY", 0))
             )
@@ -2935,8 +2944,8 @@ def cover_art_embed():
         else:
             return jsonify({"error": f"Unsupported audio format: {ext}"}), 400
 
-        # 2) Save PNG next to audio file with same name
-        png_path = audio.with_suffix('.png')
+        # 2) Save PNG next to audio file with _cover suffix
+        png_path = audio.parent / f"{audio.stem}_cover.png"
         png_path.write_bytes(img_bytes)
 
         print(f"[CoverArt] Embedded cover into: {audio}")

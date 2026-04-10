@@ -119,6 +119,7 @@ export const useAppStore = create((set, get) => ({
     italic: false,
     alignment: 2, // bottom center
     marginVertical: 100, // Increased margin for 4K
+    marginHorizontal: 20, // Horizontal margin (left/right)
     offsetX: 0, // Horizontal fine adjustment
     offsetY: 0, // Vertical fine adjustment
   },
@@ -135,6 +136,7 @@ export const useAppStore = create((set, get) => ({
   // Logo/Watermark settings (multiple logos supported)
   logos: [],
   selectedLogoId: null,
+  logoInteractionTs: 0,
   
   // ==========================================================================
   // Secondary Subtitle (Dual Language) Settings
@@ -153,6 +155,7 @@ export const useAppStore = create((set, get) => ({
       bold: false,
       italic: false,
       marginVertical: 240, // Below primary subtitle - increased for 4K
+      marginHorizontal: 20, // Horizontal margin (left/right)
       // Position control
       alignment: 5, // 1-9 grid (5 = center bottom)
       offsetX: 0, // Horizontal offset (-100 to +100)
@@ -179,6 +182,71 @@ export const useAppStore = create((set, get) => ({
 
     // Translation uses Qwen2.5 locally
   },
+
+  // Keyboard shortcuts — keys are action IDs, values are key combo strings
+  shortcuts: {
+    // Global
+    generateCoverArt: { keys: 'Ctrl+Enter', label: 'Generate Cover Art' },
+    // Timeline / Playback
+    seekBackward: { keys: 'ArrowLeft', label: 'Seek Backward' },
+    seekForward: { keys: 'ArrowRight', label: 'Seek Forward' },
+    goToStart: { keys: 'Home', label: 'Go to Start' },
+    playPause: { keys: 'Space', label: 'Play / Pause' },
+    toggleSplitMode: { keys: 'S', label: 'Toggle Split Mode' },
+    exitSplitMode: { keys: 'Escape', label: 'Exit Split Mode' },
+    // Playlist
+    nextTrack: { keys: 'Ctrl+ArrowRight', label: 'Next Track' },
+    prevTrack: { keys: 'Ctrl+ArrowLeft', label: 'Previous Track' },
+    // Visualizer
+    vizPrevPreset: { keys: 'ArrowUp', label: 'Previous Visualizer Preset' },
+    vizNextPreset: { keys: 'ArrowDown', label: 'Next Visualizer Preset' },
+    // Logo / Object
+    logoMoveUp: { keys: 'ArrowUp', label: 'Move Object Up' },
+    logoMoveDown: { keys: 'ArrowDown', label: 'Move Object Down' },
+    logoMoveLeft: { keys: 'ArrowLeft', label: 'Move Object Left' },
+    logoMoveRight: { keys: 'ArrowRight', label: 'Move Object Right' },
+    logoMoveUpFast: { keys: 'Shift+ArrowUp', label: 'Move Object Up (10px)' },
+    logoMoveDownFast: { keys: 'Shift+ArrowDown', label: 'Move Object Down (10px)' },
+    logoMoveLeftFast: { keys: 'Shift+ArrowLeft', label: 'Move Object Left (10px)' },
+    logoMoveRightFast: { keys: 'Shift+ArrowRight', label: 'Move Object Right (10px)' },
+    logoLayerUp: { keys: 'Ctrl+ArrowUp', label: 'Object Layer Up' },
+    logoLayerDown: { keys: 'Ctrl+ArrowDown', label: 'Object Layer Down' },
+  },
+
+  setShortcut: (actionId, newKeys) => set((state) => ({
+    shortcuts: {
+      ...state.shortcuts,
+      [actionId]: { ...state.shortcuts[actionId], keys: newKeys },
+    },
+  })),
+
+  resetShortcuts: () => set((state) => {
+    // Reset to defaults
+    const defaults = {
+      generateCoverArt: { keys: 'Ctrl+Enter', label: 'Generate Cover Art' },
+      seekBackward: { keys: 'ArrowLeft', label: 'Seek Backward' },
+      seekForward: { keys: 'ArrowRight', label: 'Seek Forward' },
+      goToStart: { keys: 'Home', label: 'Go to Start' },
+      playPause: { keys: 'Space', label: 'Play / Pause' },
+      toggleSplitMode: { keys: 'S', label: 'Toggle Split Mode' },
+      exitSplitMode: { keys: 'Escape', label: 'Exit Split Mode' },
+      nextTrack: { keys: 'Ctrl+ArrowRight', label: 'Next Track' },
+      prevTrack: { keys: 'Ctrl+ArrowLeft', label: 'Previous Track' },
+      vizPrevPreset: { keys: 'ArrowUp', label: 'Previous Visualizer Preset' },
+      vizNextPreset: { keys: 'ArrowDown', label: 'Next Visualizer Preset' },
+      logoMoveUp: { keys: 'ArrowUp', label: 'Move Object Up' },
+      logoMoveDown: { keys: 'ArrowDown', label: 'Move Object Down' },
+      logoMoveLeft: { keys: 'ArrowLeft', label: 'Move Object Left' },
+      logoMoveRight: { keys: 'ArrowRight', label: 'Move Object Right' },
+      logoMoveUpFast: { keys: 'Shift+ArrowUp', label: 'Move Object Up (10px)' },
+      logoMoveDownFast: { keys: 'Shift+ArrowDown', label: 'Move Object Down (10px)' },
+      logoMoveLeftFast: { keys: 'Shift+ArrowLeft', label: 'Move Object Left (10px)' },
+      logoMoveRightFast: { keys: 'Shift+ArrowRight', label: 'Move Object Right (10px)' },
+      logoLayerUp: { keys: 'Ctrl+ArrowUp', label: 'Object Layer Up' },
+      logoLayerDown: { keys: 'Ctrl+ArrowDown', label: 'Object Layer Down' },
+    };
+    return { shortcuts: defaults };
+  }),
 
   // Model Settings - per-language model selection (faster-whisper)
   modelSettings: {
@@ -898,8 +966,25 @@ export const useAppStore = create((set, get) => ({
   
   clearAllLogos: () => set({ logos: [], selectedLogoId: null }),
   
-  selectLogo: (id) => set({ selectedLogoId: id }),
-  
+  selectLogo: (id) => set({ selectedLogoId: id, logoInteractionTs: Date.now() }),
+  bumpLogoInteraction: () => set({ logoInteractionTs: Date.now() }),
+
+  moveLogoLayerUp: (id) => set((state) => {
+    const idx = state.logos.findIndex(l => l.id === id);
+    if (idx < 0 || idx >= state.logos.length - 1) return state;
+    const newLogos = [...state.logos];
+    [newLogos[idx], newLogos[idx + 1]] = [newLogos[idx + 1], newLogos[idx]];
+    return { logos: newLogos };
+  }),
+
+  moveLogoLayerDown: (id) => set((state) => {
+    const idx = state.logos.findIndex(l => l.id === id);
+    if (idx <= 0) return state;
+    const newLogos = [...state.logos];
+    [newLogos[idx - 1], newLogos[idx]] = [newLogos[idx], newLogos[idx - 1]];
+    return { logos: newLogos };
+  }),
+
   setLogoPosition: (id, x, y) => set((state) => ({
     logos: state.logos.map(logo => 
       logo.id === id ? { ...logo, position: { x, y }, anchor: 'custom' } : logo
@@ -911,7 +996,9 @@ export const useAppStore = create((set, get) => ({
       'top-left': { x: 5, y: 5 },
       'top-center': { x: 50, y: 5 },
       'top-right': { x: 95, y: 5 },
+      'center-left': { x: 5, y: 50 },
       'center': { x: 50, y: 50 },
+      'center-right': { x: 95, y: 50 },
       'bottom-left': { x: 5, y: 95 },
       'bottom-center': { x: 50, y: 95 },
       'bottom-right': { x: 95, y: 95 },
@@ -1085,6 +1172,8 @@ export const useAppStore = create((set, get) => ({
             isAnalyzing: false,
           }
         }));
+        // Auto-generate first image after successful analysis
+        setTimeout(() => get().generateCoverArt(), 100);
       } else {
         throw new Error(data.error || 'Analysis failed');
       }
@@ -1291,8 +1380,14 @@ export const useAppStore = create((set, get) => ({
       const tags = s.coverArt.tags.map(t =>
         t.id === tagId ? { ...t, value: newValue } : t
       );
-      // Rebuild prompt from tags
-      const prompt = tags.map(t => t.value).filter(Boolean).join(', ');
+      // Preserve text overlay macros from current prompt
+      const textMacros = (s.coverArt.editedPrompt || '').match(/,?\s*text\[[^\]]+\](?:@[\w-]+)?(?::\w+)?/gi) || [];
+      // Rebuild prompt from tags + preserved text macros
+      let prompt = tags.map(t => t.value).filter(Boolean).join(', ');
+      if (textMacros.length > 0) {
+        const macroStr = textMacros.map(m => m.replace(/^,\s*/, '')).join(', ');
+        prompt = prompt ? `${prompt}, ${macroStr}` : macroStr;
+      }
       return { coverArt: { ...s.coverArt, tags, editedPrompt: prompt || s.coverArt.rawPrompt } };
     });
     // Auto-generate after tag change (debounced)
@@ -1306,7 +1401,13 @@ export const useAppStore = create((set, get) => ({
   removeCoverArtTag: (tagId) => {
     set(s => {
       const tags = s.coverArt.tags.filter(t => t.id !== tagId);
-      const prompt = tags.map(t => t.value).filter(Boolean).join(', ');
+      // Preserve text overlay macros from current prompt
+      const textMacros = (s.coverArt.editedPrompt || '').match(/,?\s*text\[[^\]]+\](?:@[\w-]+)?(?::\w+)?/gi) || [];
+      let prompt = tags.map(t => t.value).filter(Boolean).join(', ');
+      if (textMacros.length > 0) {
+        const macroStr = textMacros.map(m => m.replace(/^,\s*/, '')).join(', ');
+        prompt = prompt ? `${prompt}, ${macroStr}` : macroStr;
+      }
       return { coverArt: { ...s.coverArt, tags, editedPrompt: prompt || s.coverArt.rawPrompt } };
     });
     // Auto-generate after tag removal (debounced)

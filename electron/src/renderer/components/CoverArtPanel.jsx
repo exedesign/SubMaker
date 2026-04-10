@@ -96,6 +96,9 @@ function CoverArtPanel() {
             rows={3}
           />
         )}
+
+        {/* Text Overlay chips + add — integrated in prompt area */}
+        <TextOverlayHelper />
       </div>
 
       {/* Direct prompt edit (when tags present, show raw prompt below) */}
@@ -110,9 +113,6 @@ function CoverArtPanel() {
           />
         </div>
       )}
-
-      {/* Text Overlay Helper — always visible */}
-      <TextOverlayHelper />
 
       {/* Control Buttons */}
       <div className="cover-art-controls">

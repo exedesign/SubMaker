@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { matchesShortcut } from '../utils/shortcutHelper';
 import { FiMaximize2, FiX } from 'react-icons/fi';
 
-function SingleLogo({ logo, containerRef, isSelected, onSelect, onRemove }) {
+function SingleLogo({ logo, containerRef, isSelected, onSelect, onRemove, zIndex }) {
   const { setLogoPosition, updateLogo } = useAppStore();
   const logoRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -87,7 +88,7 @@ function SingleLogo({ logo, containerRef, isSelected, onSelect, onRemove }) {
     opacity: logo.opacity / 100,
     cursor: isDragging ? 'grabbing' : 'grab',
     userSelect: 'none',
-    zIndex: isSelected ? 101 : 100,
+    zIndex: isSelected ? 200 : 100 + zIndex,
     outline: isSelected ? '2px solid var(--accent-primary)' : 'none',
     outlineOffset: 4,
     borderRadius: 4,
@@ -180,20 +181,130 @@ function SingleLogo({ logo, containerRef, isSelected, onSelect, onRemove }) {
 }
 
 function LogoOverlay({ containerRef, scaleFactor = 1 }) {
-  const { logos, selectedLogoId, selectLogo, removeLogo } = useAppStore();
-  
+  const { logos, selectedLogoId, selectLogo, removeLogo, setLogoPosition, moveLogoLayerUp, moveLogoLayerDown } = useAppStore();
+  const logoInteractionTs = useAppStore((s) => s.logoInteractionTs);
+  const autoDeselectTimer = useRef(null);
+
+  // Keyboard controls: Arrow keys = move pixel by pixel, Shift+Arrow = 10px, Ctrl+Up/Down = layer order
+  // Uses capture phase + stopImmediatePropagation so when a logo IS selected,
+  // other global handlers (timeline seek, playlist, visualizer) don't fire.
+  // When no logo is selected, the event passes through normally.
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // No logo selected → let other handlers (visualizer, timeline, etc.) handle the keys
+      const currentSelectedId = useAppStore.getState().selectedLogoId;
+      if (!currentSelectedId) return;
+
+      const sc = useAppStore.getState().shortcuts;
+
+      // Ctrl+Up/Down = change layer order
+      if (matchesShortcut(e, sc.logoLayerUp.keys)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        moveLogoLayerUp(currentSelectedId);
+        // Reset auto-deselect timer
+        if (autoDeselectTimer.current) clearTimeout(autoDeselectTimer.current);
+        autoDeselectTimer.current = setTimeout(() => selectLogo(null), 3000);
+        return;
+      }
+      if (matchesShortcut(e, sc.logoLayerDown.keys)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        moveLogoLayerDown(currentSelectedId);
+        if (autoDeselectTimer.current) clearTimeout(autoDeselectTimer.current);
+        autoDeselectTimer.current = setTimeout(() => selectLogo(null), 3000);
+        return;
+      }
+
+      // Ctrl+Left/Right should pass through to playlist (next/prev track)
+      if (e.ctrlKey) return;
+
+      // Only intercept arrow keys
+      const { key } = e;
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return;
+
+      // Arrow keys = move position
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const container = containerRef?.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+
+      // Determine step from matching fast or normal shortcuts
+      let pxStep = 1;
+      if (matchesShortcut(e, sc.logoMoveUpFast.keys) || matchesShortcut(e, sc.logoMoveDownFast.keys) ||
+          matchesShortcut(e, sc.logoMoveLeftFast.keys) || matchesShortcut(e, sc.logoMoveRightFast.keys)) {
+        pxStep = 10;
+      }
+
+      const pctX = (pxStep / rect.width) * 100;
+      const pctY = (pxStep / rect.height) * 100;
+
+      const logo = useAppStore.getState().logos.find(l => l.id === currentSelectedId);
+      if (!logo) return;
+
+      let newX = logo.position.x;
+      let newY = logo.position.y;
+
+      if (key === 'ArrowLeft') newX = Math.max(0, newX - pctX);
+      if (key === 'ArrowRight') newX = Math.min(100, newX + pctX);
+      if (key === 'ArrowUp') newY = Math.max(0, newY - pctY);
+      if (key === 'ArrowDown') newY = Math.min(100, newY + pctY);
+
+      setLogoPosition(currentSelectedId, newX, newY);
+
+      // Reset auto-deselect timer
+      if (autoDeselectTimer.current) clearTimeout(autoDeselectTimer.current);
+      autoDeselectTimer.current = setTimeout(() => selectLogo(null), 3000);
+    };
+
+    // Capture phase → runs BEFORE bubble-phase handlers in other components
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [containerRef, selectLogo, setLogoPosition, moveLogoLayerUp, moveLogoLayerDown]);
+
+  // Auto-deselect after 3 seconds of inactivity (also resets on sidebar interactions via logoInteractionTs)
+  useEffect(() => {
+    if (!selectedLogoId) return;
+    if (autoDeselectTimer.current) clearTimeout(autoDeselectTimer.current);
+    autoDeselectTimer.current = setTimeout(() => selectLogo(null), 3000);
+    return () => { if (autoDeselectTimer.current) clearTimeout(autoDeselectTimer.current); };
+  }, [selectedLogoId, selectLogo, logoInteractionTs]);
+
+  // Click on preview frame background → deselect
+  useEffect(() => {
+    const container = containerRef?.current;
+    if (!container || !selectedLogoId) return;
+    const handleClick = (e) => {
+      // Only deselect if click is directly on the frame (not on a logo child)
+      if (e.target === container || e.target.classList.contains('frame-safe-area') || e.target.classList.contains('frame-format-badge')) {
+        selectLogo(null);
+      }
+    };
+    container.addEventListener('click', handleClick);
+    return () => container.removeEventListener('click', handleClick);
+  }, [containerRef, selectedLogoId, selectLogo]);
+
+  // Reset timer on any logo interaction
+  const handleLogoSelect = useCallback((id) => {
+    if (autoDeselectTimer.current) clearTimeout(autoDeselectTimer.current);
+    autoDeselectTimer.current = setTimeout(() => selectLogo(null), 3000);
+    selectLogo(id);
+  }, [selectLogo]);
+
   if (!logos || logos.length === 0) return null;
   
   return (
     <>
-      {logos.map(logo => (
+      {logos.map((logo, index) => (
         <SingleLogo
           key={logo.id}
           logo={logo}
           containerRef={containerRef}
           isSelected={selectedLogoId === logo.id}
-          onSelect={() => selectLogo(logo.id)}
+          onSelect={() => handleLogoSelect(logo.id)}
           onRemove={() => removeLogo(logo.id)}
+          zIndex={index}
         />
       ))}
     </>

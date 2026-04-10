@@ -779,6 +779,12 @@ ipcMain.handle('preview:openOnSecondDisplay', async () => {
   // Ensure it stays on the target display
   previewWindow.setBounds({ x, y, width, height });
 
+  // Start in pseudo-fullscreen on the second display
+  previewWindow._prevBounds = { x, y, width, height };
+  previewWindow._pseudoFullscreen = true;
+  previewWindow.setAlwaysOnTop(true, 'screen-saver');
+  previewWindow.setBounds(second.bounds, true);
+
   previewWindow.on('closed', () => {
     previewWindow = null;
     if (mainWindow && !mainWindow.isDestroyed()) {

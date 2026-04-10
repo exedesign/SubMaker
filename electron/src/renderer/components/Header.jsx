@@ -3,6 +3,7 @@ import { FiFilm, FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, F
 import { useAppStore } from '../stores/appStore';
 import packageJson from '../../../package.json';
 import THEMES from '../themes';
+import KeyboardShortcuts from './KeyboardShortcuts';
 
 const Toggle = ({ enabled, onClick }) => (
   <button onClick={onClick} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, lineHeight: 0 }}>
@@ -17,6 +18,7 @@ const Toggle = ({ enabled, onClick }) => (
 
 function Header() {
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('general');
   const [showAbout, setShowAbout] = useState(false);
   const [gpuUnloading, setGpuUnloading] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -314,7 +316,7 @@ function Header() {
             background: 'var(--bg-primary)',
             borderRadius: 12,
             width: '90%',
-            maxWidth: 450,
+            maxWidth: 550,
             maxHeight: '85vh',
             overflow: 'hidden',
             display: 'flex',
@@ -334,15 +336,49 @@ function Header() {
               </h3>
               <button
                 className="btn btn-secondary"
-                onClick={() => setShowSettings(false)}
+                onClick={() => { setShowSettings(false); setSettingsTab('general'); }}
                 style={{ padding: 8 }}
               >
                 <FiX size={16} />
               </button>
             </div>
+
+            {/* Tabs */}
+            <div style={{
+              display: 'flex',
+              borderBottom: '1px solid var(--border-color)',
+              padding: '0 16px',
+            }}>
+              {[
+                { id: 'general', label: 'General' },
+                { id: 'shortcuts', label: 'Keyboard Shortcuts' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setSettingsTab(tab.id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    borderBottom: settingsTab === tab.id ? '2px solid var(--primary-color)' : '2px solid transparent',
+                    padding: '10px 16px',
+                    fontSize: 13,
+                    fontWeight: settingsTab === tab.id ? 600 : 400,
+                    color: settingsTab === tab.id ? 'var(--primary-color)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
             
             {/* Settings Content */}
             <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
+              {settingsTab === 'shortcuts' ? (
+                <KeyboardShortcuts />
+              ) : (
+              <>
               {/* Color Theme */}
               <div className="form-group">
                 <label className="label" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -608,6 +644,8 @@ function Header() {
                   Automatically clear temp files and vocal cache when the application starts.
                 </p>
               </div>
+              </>
+              )}
             </div>
             
             {/* Footer */}
@@ -619,7 +657,7 @@ function Header() {
             }}>
               <button
                 className="btn btn-primary"
-                onClick={() => setShowSettings(false)}
+                onClick={() => { setShowSettings(false); setSettingsTab('general'); }}
               >
                 OK
               </button>
@@ -736,19 +774,75 @@ function Header() {
               </div>
             </div>
             <div className="about-modal-footer">
-              <button
-                className="about-support-btn"
-                onClick={() => {
-                  const url = 'https://kreosus.com/exedesign#creator-profile-support';
-                  if (window.electronAPI?.openExternal) {
-                    window.electronAPI.openExternal(url);
-                  } else {
-                    window.open(url, '_blank');
-                  }
-                }}
-              >
-                <FiHeart size={15} className="about-support-heart" /> Support
-              </button>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', textAlign: 'center', marginBottom: 10, fontStyle: 'italic', lineHeight: 1.4 }}>
+                Loved this? Support me to make the next one even better.
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', width: '100%', marginBottom: 8 }}>
+                {/* Kreosus */}
+                <button
+                  className="about-support-btn"
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={() => {
+                    const url = 'https://kreosus.com/exedesign#creator-profile-support';
+                    if (window.electronAPI?.openExternal) {
+                      window.electronAPI.openExternal(url);
+                    } else {
+                      window.open(url, '_blank');
+                    }
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="#f59e0b" strokeWidth="2" fill="none"/>
+                    <text x="12" y="16" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#f59e0b">K</text>
+                  </svg>
+                  <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600 }}>Kreosus</span>
+                    <span style={{ fontSize: 9, opacity: 0.7 }}>Support</span>
+                  </span>
+                </button>
+                {/* Patreon - Monthly */}
+                <button
+                  className="about-support-btn"
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={() => {
+                    const url = 'https://www.patreon.com/10985664/join';
+                    if (window.electronAPI?.openExternal) {
+                      window.electronAPI.openExternal(url);
+                    } else {
+                      window.open(url, '_blank');
+                    }
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14.82 2.41c3.96 0 7.18 3.24 7.18 7.21 0 3.96-3.22 7.18-7.18 7.18-3.97 0-7.21-3.22-7.21-7.18 0-3.97 3.24-7.21 7.21-7.21M2 21.6h3.5V2.41H2V21.6z" fill="#FF424D"/>
+                  </svg>
+                  <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600 }}>Patreon</span>
+                    <span style={{ fontSize: 9, opacity: 0.7 }}>Monthly</span>
+                  </span>
+                </button>
+                {/* Patreon - One-time */}
+                <button
+                  className="about-support-btn"
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={() => {
+                    const url = 'https://www.patreon.com/cw/fatiheke/shop';
+                    if (window.electronAPI?.openExternal) {
+                      window.electronAPI.openExternal(url);
+                    } else {
+                      window.open(url, '_blank');
+                    }
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14.82 2.41c3.96 0 7.18 3.24 7.18 7.21 0 3.96-3.22 7.18-7.18 7.18-3.97 0-7.21-3.22-7.21-7.18 0-3.97 3.24-7.21 7.21-7.21M2 21.6h3.5V2.41H2V21.6z" fill="#FF424D"/>
+                  </svg>
+                  <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600 }}>Patreon</span>
+                    <span style={{ fontSize: 9, opacity: 0.7 }}>One-time</span>
+                  </span>
+                </button>
+              </div>
               <span>© 2026 Fatih EKE — All rights reserved</span>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, marginTop: 2 }}>
                 Made with VS Code, GitHub Copilot &amp; Claude

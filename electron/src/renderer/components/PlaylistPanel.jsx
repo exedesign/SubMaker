@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { matchesShortcut } from '../utils/shortcutHelper';
 import { fetchFormData } from '../services/electronTransport';
 import {
   FiPlus, FiTrash2, FiPlay, FiPause,
@@ -162,21 +163,22 @@ export default function PlaylistPanel() {
     const handleKeyDown = (e) => {
       if (e.target.matches('input, textarea, select, [contenteditable]')) return;
       const state = useAppStore.getState().playlist;
+      const sc = useAppStore.getState().shortcuts;
 
-      if (e.ctrlKey && e.code === 'ArrowRight') {
+      if (matchesShortcut(e, sc.nextTrack.keys)) {
         if (state.tracks.length === 0) return;
         e.preventDefault();
         nextTrack();
         return;
       }
-      if (e.ctrlKey && e.code === 'ArrowLeft') {
+      if (matchesShortcut(e, sc.prevTrack.keys)) {
         if (state.tracks.length === 0) return;
         e.preventDefault();
         prevTrack();
         return;
       }
 
-      if (e.code === 'Space' && state.isActive) {
+      if (matchesShortcut(e, sc.playPause.keys) && state.isActive) {
         e.preventDefault();
         const audio = getAudio();
         if (audio.paused) {
@@ -189,7 +191,7 @@ export default function PlaylistPanel() {
       }
 
       // Also handle Space when tracks exist but nothing is active yet — start first track
-      if (e.code === 'Space' && !state.isActive && state.tracks.length > 0 && !useAppStore.getState().mediaFile) {
+      if (matchesShortcut(e, sc.playPause.keys) && !state.isActive && state.tracks.length > 0 && !useAppStore.getState().mediaFile) {
         e.preventDefault();
         setCurrentTrack(0);
         return;
@@ -197,11 +199,11 @@ export default function PlaylistPanel() {
 
       if (state.isActive && !e.ctrlKey) {
         const step = settings?.seekStep ?? 5;
-        if (e.code === 'ArrowLeft') {
+        if (matchesShortcut(e, sc.seekBackward.keys)) {
           e.preventDefault();
           const audio = getAudio();
           audio.currentTime = Math.max(0, audio.currentTime - step);
-        } else if (e.code === 'ArrowRight') {
+        } else if (matchesShortcut(e, sc.seekForward.keys)) {
           e.preventDefault();
           const audio = getAudio();
           audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + step);

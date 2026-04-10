@@ -484,6 +484,31 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # Cache original styles before karaoke swap
         self.styles[primary_style.name] = primary_style
         self.styles[secondary_style.name] = secondary_style
+
+        # Anti-overlap: ensure secondary margin doesn't collide with primary
+        pri_zone = 'bottom' if primary_style.alignment <= 3 else 'middle' if primary_style.alignment <= 6 else 'top'
+        sec_zone = 'bottom' if secondary_style.alignment <= 3 else 'middle' if secondary_style.alignment <= 6 else 'top'
+        if pri_zone == sec_zone and pri_zone in ('bottom', 'top'):
+            container_w = self.video_width - 2 * max(primary_style.margin_left, 20)
+            avg_char_w = primary_style.font_size * 0.55
+            chars_per_line = max(1, int(container_w / avg_char_w))
+            # Estimate max line count from all primary subtitles
+            max_lines = 1
+            for s in primary_subtitles:
+                txt = s.get('text', '')
+                est = max(1, -(-len(txt) // chars_per_line))  # ceil division
+                if est > max_lines:
+                    max_lines = est
+            max_lines = min(max_lines, 3)  # cap at 3 lines
+            pri_height = primary_style.font_size * 1.2 * max_lines
+            gap = primary_style.font_size * 0.5
+            pri_margin = primary_style.margin_vertical + primary_style.offset_y
+            min_sec_margin = pri_margin + pri_height + gap
+            if secondary_style.margin_vertical < min_sec_margin:
+                secondary_style = dc_replace(secondary_style,
+                    margin_vertical=int(min_sec_margin)
+                )
+                self.styles[secondary_style.name] = secondary_style
         
         # Karaoke color setup for primary style (copy to avoid mutation)
         if animation.type == "karaoke" and primary_style:

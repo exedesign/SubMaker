@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useAppStore } from '../stores/appStore'
+import { matchesShortcut } from '../utils/shortcutHelper'
 
 // ── Sony ACID-style DAW Track Constants ──────────────────────────────────────
 const STEM_ORDER = ['original', 'vocals', 'instrumental', 'drums', 'bass', 'other']
@@ -1051,24 +1052,25 @@ const FlexibleTimeline = () => {
       if (!duration || duration <= 0) return
       // When playlist is active, let PlaylistPanel handle Arrow keys
       const pl = useAppStore.getState().playlist
-      if (pl.isActive && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) return
+      const sc = useAppStore.getState().shortcuts
+      if (pl.isActive && (matchesShortcut(e, sc.seekBackward.keys) || matchesShortcut(e, sc.seekForward.keys))) return
       
       // Arrow keys: seek by configurable step
-      if (e.code === 'ArrowLeft' && !e.target.matches('input,textarea')) {
+      if (matchesShortcut(e, sc.seekBackward.keys) && !e.target.matches('input,textarea')) {
         e.preventDefault()
         const step = settings?.seekStep ?? 5
         seek(Math.max(0, currentTime - step))
-      } else if (e.code === 'ArrowRight' && !e.target.matches('input,textarea')) {
+      } else if (matchesShortcut(e, sc.seekForward.keys) && !e.target.matches('input,textarea')) {
         e.preventDefault()
         const step = settings?.seekStep ?? 5
         seek(Math.min(duration, currentTime + step))
-      } else if (e.code === 'Home') {
+      } else if (matchesShortcut(e, sc.goToStart.keys)) {
         e.preventDefault()
         seek(0)
-      } else if (e.code === 'KeyS') {
+      } else if (matchesShortcut(e, sc.toggleSplitMode.keys)) {
         e.preventDefault()
         setSplitMode(!splitMode)
-      } else if (e.code === 'Escape') {
+      } else if (matchesShortcut(e, sc.exitSplitMode.keys)) {
         setSplitMode(false)
         setSplitPosition(null)
       }

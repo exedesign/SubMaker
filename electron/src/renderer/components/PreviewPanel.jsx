@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { matchesShortcut } from '../utils/shortcutHelper';
 import {
   FiEye, FiEyeOff, FiMinimize2, FiMaximize2, FiMove,
   FiExternalLink, FiSidebar, FiX, FiMaximize,
@@ -430,10 +431,11 @@ function PreviewPanel() {
     if (!visualizer.enabled) return;
     const handleKeyDown = (e) => {
       if (e.target.matches('input, textarea, select, [contenteditable]')) return;
-      if (e.code === 'ArrowUp') {
+      const sc = useAppStore.getState().shortcuts;
+      if (matchesShortcut(e, sc.vizPrevPreset.keys)) {
         e.preventDefault();
         cycleVisualizerPreset(-1);
-      } else if (e.code === 'ArrowDown') {
+      } else if (matchesShortcut(e, sc.vizNextPreset.keys)) {
         e.preventDefault();
         cycleVisualizerPreset(1);
       }
@@ -455,8 +457,20 @@ function PreviewPanel() {
     return () => el.removeEventListener('wheel', handleWheel);
   }, [visualizer.enabled, cycleVisualizerPreset]);
 
-  // Open preview on second display
+  // Open/close preview on second display (toggle)
+  const secondScreenWindowRef = useRef(null);
   const handleOpenSecondScreen = useCallback(async () => {
+    // Toggle: if already open, close it
+    if (isSecondDisplayOpen) {
+      if (window.electronAPI?.closePreviewWindow) {
+        await window.electronAPI.closePreviewWindow();
+      } else if (secondScreenWindowRef.current && !secondScreenWindowRef.current.closed) {
+        secondScreenWindowRef.current.close();
+        secondScreenWindowRef.current = null;
+      }
+      setIsSecondDisplayOpen(false);
+      return;
+    }
     if (window.electronAPI?.openPreviewOnSecondDisplay) {
       const result = await window.electronAPI.openPreviewOnSecondDisplay();
       if (result?.error === 'no_second_display') {
@@ -466,10 +480,21 @@ function PreviewPanel() {
       }
     } else {
       const url = window.location.origin + window.location.pathname + '?previewScreen=1';
-      window.open(url, '_blank', 'width=1280,height=720');
+      const win = window.open(url, 'submaker-preview', 'width=1280,height=720');
+      secondScreenWindowRef.current = win;
       setIsSecondDisplayOpen(true);
+      // Track web window close
+      if (win) {
+        const checkClosed = setInterval(() => {
+          if (win.closed) {
+            clearInterval(checkClosed);
+            secondScreenWindowRef.current = null;
+            setIsSecondDisplayOpen(false);
+          }
+        }, 500);
+      }
     }
-  }, []);
+  }, [isSecondDisplayOpen]);
 
   // Track second display window open/close
   useEffect(() => {
@@ -495,6 +520,13 @@ function PreviewPanel() {
       aspectRatio: videoFormat === 'vertical' ? '9:16' : videoFormat === 'square' ? '1:1' : '16:9',
     };
   }, [videoFormat]);
+
+  // Normalize margins: convert 16:9 (1920×1080) reference values to current format
+  // so the same slider value produces the same visual proportion in every aspect ratio.
+  // marginH is a % of 1920, marginV is a % of 1080 → remap to current format dims.
+  const BASE_W = 1920, BASE_H = 1080;
+  const normalizeMarginH = useCallback((val) => Math.round((val / BASE_W) * formatInfo.width), [formatInfo.width]);
+  const normalizeMarginV = useCallback((val) => Math.round((val / BASE_H) * formatInfo.height), [formatInfo.height]);
 
   // Preview dimensions - dynamic based on panel width
   const previewDimensions = useMemo(() => {
@@ -552,6 +584,16 @@ function PreviewPanel() {
 
   const { width: previewWidth, height: previewHeight, scaleFactor } = previewDimensions;
   const { width: fsWidth, height: fsHeight, scaleFactor: fsScaleFactor } = fullscreenDimensions;
+
+  // Margin guide lines — flash red guides when margin values change
+  const [marginGuideKey, setMarginGuideKey] = useState(0);
+  const marginGuideTimer = useRef(null);
+  useEffect(() => {
+    setMarginGuideKey(k => k + 1);
+    if (marginGuideTimer.current) clearTimeout(marginGuideTimer.current);
+    marginGuideTimer.current = setTimeout(() => setMarginGuideKey(0), 1200);
+    return () => { if (marginGuideTimer.current) clearTimeout(marginGuideTimer.current); };
+  }, [style.marginHorizontal, style.marginVertical]);
 
   // Scaled style
   const getScaledStyle = useMemo(() => ({
@@ -760,7 +802,8 @@ function PreviewPanel() {
         borderWidth: style.borderWidth,
         borderColor: style.borderColor,
         alignment: style.alignment,
-        marginVertical: style.marginVertical,
+        marginVertical: normalizeMarginV(style.marginVertical),
+        marginHorizontal: normalizeMarginH(style.marginHorizontal ?? 20),
         offsetX: style.offsetX || 0,
         offsetY: style.offsetY || 0,
       },
@@ -771,7 +814,11 @@ function PreviewPanel() {
       fmtWidth: formatInfo.width,
       fmtHeight: formatInfo.height,
       secondaryText: settings?.dualSubtitleEnabled ? (activeSecondarySubtitle?.translatedText || null) : null,
-      secondaryStyle: secondarySubtitle?.style || null,
+      secondaryStyle: secondarySubtitle?.style ? {
+        ...secondarySubtitle.style,
+        marginVertical: normalizeMarginV(secondarySubtitle.style.marginVertical ?? 120),
+        marginHorizontal: normalizeMarginH(secondarySubtitle.style.marginHorizontal ?? 20),
+      } : null,
       visualizer: {
         enabled: visualizer.enabled,
         presetName: visualizer.presetName,
@@ -804,6 +851,8 @@ function PreviewPanel() {
       const REF = { horizontal: { w: 1920, h: 1080 }, vertical: { w: 1080, h: 1920 }, square: { w: 1080, h: 1080 } };
       const rp = REF[vf] || REF.horizontal;
       const fmt = { width: rp.w, height: rp.h };
+      const _normH = (v) => Math.round((v / 1920) * fmt.width);
+      const _normV = (v) => Math.round((v / 1080) * fmt.height);
       const secSub = s.settings?.dualSubtitleEnabled ? s.secondarySubtitle : null;
       const state = {
         type: 'PREVIEW_STATE',
@@ -812,7 +861,9 @@ function PreviewPanel() {
           fontName: s.style.fontName, fontSize: s.style.fontSize, color: s.style.color,
           bold: s.style.bold, italic: s.style.italic, shadowDepth: s.style.shadowDepth,
           borderWidth: s.style.borderWidth, borderColor: s.style.borderColor,
-          alignment: s.style.alignment, marginVertical: s.style.marginVertical,
+          alignment: s.style.alignment,
+          marginVertical: _normV(s.style.marginVertical),
+          marginHorizontal: _normH(s.style.marginHorizontal ?? 20),
           offsetX: s.style.offsetX || 0, offsetY: s.style.offsetY || 0,
         },
         background: s.background,
@@ -821,7 +872,11 @@ function PreviewPanel() {
         isRtl: ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'].includes(s.detectedLanguage),
         fmtWidth: fmt.width, fmtHeight: fmt.height,
         secondaryText: secSub?.subtitles?.[0]?.translatedText || null,
-        secondaryStyle: secSub?.style || null,
+        secondaryStyle: secSub?.style ? {
+          ...secSub.style,
+          marginVertical: _normV(secSub.style.marginVertical ?? 120),
+          marginHorizontal: _normH(secSub.style.marginHorizontal ?? 20),
+        } : null,
         visualizer: {
           enabled: s.visualizer.enabled,
           presetName: s.visualizer.presetName,
@@ -907,6 +962,20 @@ function PreviewPanel() {
         <div className="frame-format-badge">{formatInfo.aspectRatio}</div>
         <div className="frame-safe-area" />
 
+        {/* Margin guide lines */}
+        {marginGuideKey > 0 && (
+          <div key={marginGuideKey} className="margin-guides" style={{ pointerEvents: 'none', position: 'absolute', inset: 0, zIndex: 10 }}>
+            {/* Left */}
+            <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${normalizeMarginH(style.marginHorizontal ?? 20) * scaleFactor}px`, width: 1, background: 'rgba(239,68,68,0.6)' }} />
+            {/* Right */}
+            <div style={{ position: 'absolute', top: 0, bottom: 0, right: `${normalizeMarginH(style.marginHorizontal ?? 20) * scaleFactor}px`, width: 1, background: 'rgba(239,68,68,0.6)' }} />
+            {/* Top */}
+            <div style={{ position: 'absolute', left: 0, right: 0, top: `${normalizeMarginV(style.marginVertical ?? 100) * scaleFactor}px`, height: 1, background: 'rgba(239,68,68,0.6)' }} />
+            {/* Bottom */}
+            <div style={{ position: 'absolute', left: 0, right: 0, bottom: `${normalizeMarginV(style.marginVertical ?? 100) * scaleFactor}px`, height: 1, background: 'rgba(239,68,68,0.6)' }} />
+          </div>
+        )}
+
         {/* Logo Overlay */}
         <LogoOverlay containerRef={previewFrameRef} scaleFactor={scaleFactor} />
         
@@ -916,12 +985,12 @@ function PreviewPanel() {
             className={`frame-subtitle ${animation.type}-mode`}
             style={{
               // ASS-matching position: alignment 7-9=top, 4-6=middle, 1-3=bottom
-              top: style.alignment >= 7 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * scaleFactor)}px` : style.alignment >= 4 ? '50%' : 'auto',
-              bottom: style.alignment <= 3 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * scaleFactor)}px` : 'auto',
+              top: style.alignment >= 7 ? `${Math.max(4, (normalizeMarginV(style.marginVertical) + (style.offsetY || 0)) * scaleFactor)}px` : style.alignment >= 4 ? '50%' : 'auto',
+              bottom: style.alignment <= 3 ? `${Math.max(4, (normalizeMarginV(style.marginVertical) + (style.offsetY || 0)) * scaleFactor)}px` : 'auto',
               transform: style.alignment >= 4 && style.alignment <= 6 ? 'translateY(-50%)' : undefined,
-              // ASS MarginL/MarginR: default 20 + offsetX
-              left: `${Math.max(0, (20 + (style.offsetX || 0)) * scaleFactor)}px`,
-              right: `${Math.max(0, (20 - (style.offsetX || 0)) * scaleFactor)}px`,
+              // ASS MarginL/MarginR: marginHorizontal + offsetX
+              left: `${Math.max(0, (normalizeMarginH(style.marginHorizontal ?? 20) + (style.offsetX || 0)) * scaleFactor)}px`,
+              right: `${Math.max(0, (normalizeMarginH(style.marginHorizontal ?? 20) - (style.offsetX || 0)) * scaleFactor)}px`,
               flexDirection: 'column',
               alignItems: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
               gap: '2px',
@@ -938,9 +1007,27 @@ function PreviewPanel() {
         {/* Secondary subtitle (translation) - separate container, NO animation */}
         {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (() => {
           const secAlign = secondarySubtitle?.style?.alignment || 5;
-          const secMarginV = secondarySubtitle?.style?.marginVertical || 120;
+          let secMarginV = normalizeMarginV(secondarySubtitle?.style?.marginVertical || 120);
           const secOffsetX = secondarySubtitle?.style?.offsetX || 0;
           const secOffsetY = secondarySubtitle?.style?.offsetY || 0;
+
+          // Anti-overlap: if both subtitles are in the same vertical zone, push secondary away
+          const priZone = style.alignment <= 3 ? 'bottom' : style.alignment <= 6 ? 'middle' : 'top';
+          const secZone = secAlign <= 3 ? 'bottom' : secAlign <= 6 ? 'middle' : 'top';
+          if (displayText && priZone === secZone && (priZone === 'bottom' || priZone === 'top')) {
+            const priMarginV = normalizeMarginV(style.marginVertical || 60) + (style.offsetY || 0);
+            const containerW = formatInfo.width - 2 * normalizeMarginH(style.marginHorizontal ?? 20); // container width in reference px
+            const avgCharW = style.fontSize * 0.55;
+            const charsPerLine = Math.max(1, Math.floor(containerW / avgCharW));
+            const estLines = Math.max(1, Math.ceil(displayText.length / charsPerLine));
+            const priHeight = style.fontSize * 1.2 * estLines;
+            const gap = style.fontSize * 0.5; // half font-size gap
+            const minSecMargin = priMarginV + priHeight + gap;
+            if (secMarginV < minSecMargin) {
+              secMarginV = minSecMargin;
+            }
+          }
+
           return (
           <div 
             className="frame-subtitle secondary-subtitle"
@@ -949,8 +1036,8 @@ function PreviewPanel() {
               top: secAlign >= 7 ? `${Math.max(4, (secMarginV + secOffsetY) * scaleFactor)}px` : secAlign >= 4 ? '50%' : 'auto',
               bottom: secAlign <= 3 ? `${Math.max(4, (secMarginV + secOffsetY) * scaleFactor)}px` : 'auto',
               transform: secAlign >= 4 && secAlign <= 6 ? 'translateY(-50%)' : undefined,
-              left: `${Math.max(0, (20 + secOffsetX) * scaleFactor)}px`,
-              right: `${Math.max(0, (20 - secOffsetX) * scaleFactor)}px`,
+              left: `${Math.max(0, (normalizeMarginH(secondarySubtitle?.style?.marginHorizontal ?? 20) + secOffsetX) * scaleFactor)}px`,
+              right: `${Math.max(0, (normalizeMarginH(secondarySubtitle?.style?.marginHorizontal ?? 20) - secOffsetX) * scaleFactor)}px`,
               flexDirection: 'column',
               alignItems: (secAlign % 3) === 1 ? 'flex-start' : (secAlign % 3) === 0 ? 'flex-end' : 'center',
               display: 'flex',
@@ -1114,11 +1201,11 @@ function PreviewPanel() {
             <div
               className={`frame-subtitle ${animation.type}-mode`}
               style={{
-                top: style.alignment >= 7 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * fsScaleFactor)}px` : style.alignment >= 4 ? '50%' : 'auto',
-                bottom: style.alignment <= 3 ? `${Math.max(4, (style.marginVertical + (style.offsetY || 0)) * fsScaleFactor)}px` : 'auto',
+                top: style.alignment >= 7 ? `${Math.max(4, (normalizeMarginV(style.marginVertical) + (style.offsetY || 0)) * fsScaleFactor)}px` : style.alignment >= 4 ? '50%' : 'auto',
+                bottom: style.alignment <= 3 ? `${Math.max(4, (normalizeMarginV(style.marginVertical) + (style.offsetY || 0)) * fsScaleFactor)}px` : 'auto',
                 transform: style.alignment >= 4 && style.alignment <= 6 ? 'translateY(-50%)' : undefined,
-                left: `${Math.max(0, (20 + (style.offsetX || 0)) * fsScaleFactor)}px`,
-                right: `${Math.max(0, (20 - (style.offsetX || 0)) * fsScaleFactor)}px`,
+                left: `${Math.max(0, (normalizeMarginH(style.marginHorizontal ?? 20) + (style.offsetX || 0)) * fsScaleFactor)}px`,
+                right: `${Math.max(0, (normalizeMarginH(style.marginHorizontal ?? 20) - (style.offsetX || 0)) * fsScaleFactor)}px`,
                 justifyContent: style.alignment % 3 === 1 ? 'flex-start' : style.alignment % 3 === 0 ? 'flex-end' : 'center',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -1135,7 +1222,7 @@ function PreviewPanel() {
           {/* Secondary subtitle */}
           {settings?.dualSubtitleEnabled && activeSecondarySubtitle?.translatedText && (() => {
             const secAlign = secondarySubtitle?.style?.alignment || 5;
-            const secMarginV = secondarySubtitle?.style?.marginVertical || 120;
+            const secMarginV = normalizeMarginV(secondarySubtitle?.style?.marginVertical || 120);
             const secOffsetX = secondarySubtitle?.style?.offsetX || 0;
             const secOffsetY = secondarySubtitle?.style?.offsetY || 0;
             return (
@@ -1145,8 +1232,8 @@ function PreviewPanel() {
                 top: secAlign >= 7 ? `${Math.max(4, (secMarginV + secOffsetY) * fsScaleFactor)}px` : secAlign >= 4 ? '50%' : 'auto',
                 bottom: secAlign <= 3 ? `${Math.max(4, (secMarginV + secOffsetY) * fsScaleFactor)}px` : 'auto',
                 transform: secAlign >= 4 && secAlign <= 6 ? 'translateY(-50%)' : undefined,
-                left: `${Math.max(0, (20 + secOffsetX) * fsScaleFactor)}px`,
-                right: `${Math.max(0, (20 - secOffsetX) * fsScaleFactor)}px`,
+                left: `${Math.max(0, (normalizeMarginH(secondarySubtitle?.style?.marginHorizontal ?? 20) + secOffsetX) * fsScaleFactor)}px`,
+                right: `${Math.max(0, (normalizeMarginH(secondarySubtitle?.style?.marginHorizontal ?? 20) - secOffsetX) * fsScaleFactor)}px`,
                 justifyContent: (secAlign % 3) === 1 ? 'flex-start' : (secAlign % 3) === 0 ? 'flex-end' : 'center',
                 alignItems: 'center',
                 display: 'flex',
@@ -1213,7 +1300,7 @@ function PreviewPanel() {
           <div className="preview-actions">
             {rightPanelTab === 'preview' && (
               <>
-                <button onClick={handleOpenSecondScreen} title="Open on second display"><FiMonitor size={12} /></button>
+                <button onClick={handleOpenSecondScreen} title={isSecondDisplayOpen ? 'Close second display' : 'Open on second display'} style={isSecondDisplayOpen ? { color: 'var(--accent-primary)' } : undefined}><FiMonitor size={12} /></button>
                 <button onClick={toggleFullscreen} title="Fullscreen"><FiMaximize size={12} /></button>
               </>
             )}
@@ -1266,7 +1353,8 @@ function PreviewPanel() {
           </button>
           <button
             onClick={handleOpenSecondScreen}
-            title="Open on second display"
+            title={isSecondDisplayOpen ? 'Close second display' : 'Open on second display'}
+            style={isSecondDisplayOpen ? { color: 'var(--accent-primary)' } : undefined}
           >
             <FiMonitor size={10} />
           </button>

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useAppStore } from './stores/appStore';
+import { matchesShortcut } from './utils/shortcutHelper';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
@@ -18,9 +19,9 @@ function MainApp() {
   // Global Ctrl+Enter → Generate Cover Art
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.ctrlKey && e.key === 'Enter') {
+      const { shortcuts, coverArt, generateCoverArt } = useAppStore.getState();
+      if (matchesShortcut(e, shortcuts.generateCoverArt.keys)) {
         e.preventDefault();
-        const { coverArt, generateCoverArt } = useAppStore.getState();
         if (!coverArt.isGenerating) generateCoverArt();
       }
     };

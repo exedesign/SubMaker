@@ -2157,6 +2157,11 @@ body.dragging-preview * {
 .preview-content .preview-frame-wrapper {
   display: flex;
   justify-content: center;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-secondary);
+  padding-bottom: 8px;
 }
 
 .preview-content .sidebar-section {
@@ -2205,6 +2210,16 @@ body.dragging-preview * {
   border-radius: 2px;
   pointer-events: none;
   z-index: 1;
+}
+
+/* Margin guide lines — fade out animation */
+.margin-guides {
+  animation: marginGuidesFade 1.2s ease-out forwards;
+}
+@keyframes marginGuidesFade {
+  0%   { opacity: 0.9; }
+  60%  { opacity: 0.7; }
+  100% { opacity: 0; }
 }
 
 .frame-subtitle {
@@ -3585,7 +3600,222 @@ body.dragging-preview * {
   color: var(--accent-primary);
 }
 
-/* Text Overlay Helper */
+/* ── Text Overlay Chip System ─────────────────────────────── */
+.text-overlay-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.text-overlay-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.text-overlay-chip-wrapper {
+  position: relative;
+}
+
+.text-overlay-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 3px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: rgba(20, 184, 166, 0.12);
+  color: #5eead4;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.3;
+}
+
+.text-overlay-chip:hover {
+  background: rgba(20, 184, 166, 0.2);
+}
+
+.text-overlay-chip.active {
+  border-color: #14b8a6;
+  background: rgba(20, 184, 166, 0.22);
+}
+
+.text-overlay-chip-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: #14b8a6;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.text-overlay-chip-text {
+  font-weight: 500;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-overlay-chip-meta {
+  font-size: 12px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+/* Text overlay dropdown (style + position panel) */
+.text-overlay-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+}
+
+.text-overlay-dropdown-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.text-overlay-dropdown-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  align-self: flex-start;
+}
+
+.text-overlay-style-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  width: 100%;
+}
+
+.text-overlay-style-opt {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 5px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.text-overlay-style-opt:hover {
+  background: rgba(20, 184, 166, 0.1);
+  color: var(--text-primary);
+  border-color: #14b8a6;
+}
+
+.text-overlay-style-opt.active {
+  background: #14b8a6;
+  color: #fff;
+  border-color: #14b8a6;
+}
+
+.text-overlay-pos-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
+  grid-template-rows: repeat(3, 32px);
+  gap: 3px;
+}
+
+/* Add new text overlay */
+.text-overlay-add {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.text-overlay-add:focus-within {
+  border-color: #14b8a6;
+}
+
+.text-overlay-add-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #14b8a6;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.text-overlay-add-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--text-primary);
+  outline: none;
+  min-width: 0;
+}
+
+.text-overlay-add-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.text-overlay-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: rgba(20, 184, 166, 0.12);
+  border: none;
+  color: #14b8a6;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.text-overlay-add-btn:hover:not(:disabled) {
+  background: rgba(20, 184, 166, 0.25);
+}
+
+.text-overlay-add-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Text Overlay Helper (legacy) */
 .tag-macro-section {
   display: flex;
   flex-direction: column;

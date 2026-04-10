@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { matchesShortcut } from '../utils/shortcutHelper';
 import { FiPlay, FiPause, FiVolume2, FiVolumeX, FiMaximize, FiSkipBack, FiSkipForward, FiChevronDown, FiChevronUp } from 'react-icons/fi';
 import SubtitleTimeline from './SubtitleTimeline';
 import useAudioMixer from '../hooks/useAudioMixer';
@@ -162,16 +163,17 @@ function VideoPreview() {
       // When playlist is active, let PlaylistPanel handle Space/Arrow
       const pl = useAppStore.getState().playlist;
       if (pl.isActive) return;
+      const sc = useAppStore.getState().shortcuts;
       // When playlist has tracks but no media file loaded, yield Space to PlaylistPanel
-      if (e.code === 'Space' && pl.tracks.length > 0 && !useAppStore.getState().mediaFile) return;
-      if (e.code === 'Space') {
+      if (matchesShortcut(e, sc.playPause.keys) && pl.tracks.length > 0 && !useAppStore.getState().mediaFile) return;
+      if (matchesShortcut(e, sc.playPause.keys)) {
         e.preventDefault();
         togglePlay();
-      } else if (e.code === 'ArrowLeft') {
+      } else if (matchesShortcut(e, sc.seekBackward.keys)) {
         e.preventDefault();
         const step = settings?.seekStep ?? 5;
         skip(-step);
-      } else if (e.code === 'ArrowRight') {
+      } else if (matchesShortcut(e, sc.seekForward.keys)) {
         e.preventDefault();
         const step = settings?.seekStep ?? 5;
         skip(step);

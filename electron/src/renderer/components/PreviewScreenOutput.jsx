@@ -89,7 +89,7 @@ function WcButton({ onClick, title, hoverBg, children }) {
 export default function PreviewScreenOutput() {
   const containerRef = useRef(null);
   const [state, setState] = useState(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(isElectron ? true : false);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
 
   // Track window size
@@ -194,8 +194,9 @@ export default function PreviewScreenOutput() {
   }, []);
 
   const handleClose = useCallback(() => {
-    if (isElectron) window.electronAPI.previewClose?.();
-    else window.close();
+    // Primary: direct window.close() works in both Electron BrowserWindow and web popup
+    // In Electron, this triggers the 'close' event on BrowserWindow which allows proper cleanup
+    window.close();
   }, []);
 
   //  Render values 
@@ -248,6 +249,7 @@ export default function PreviewScreenOutput() {
 
   const alignment = sty?.alignment ?? 2;
   const marginV   = sty?.marginVertical ?? 80;
+  const marginH   = sty?.marginHorizontal ?? 20;
 
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: isAlphaMode ? 'transparent' : '#000', overflow: 'hidden' }}>
@@ -267,13 +269,19 @@ export default function PreviewScreenOutput() {
         {isFullscreen && (
           <>
             <div
-              style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 8, zIndex: 20 }}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 36, zIndex: 20, cursor: 'default' }}
               onMouseEnter={() => { const b = document.getElementById('__ps-fsbar'); if (b) b.style.transform = 'translateY(0)'; }}
             />
             <div
               id="__ps-fsbar"
-              style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 19, transform: 'translateY(-100%)', transition: 'transform 0.2s' }}
-              onMouseLeave={() => { const b = document.getElementById('__ps-fsbar'); if (b) b.style.transform = 'translateY(-100%)'; }}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 21, transform: 'translateY(-100%)', transition: 'transform 0.25s ease' }}
+              onMouseLeave={(e) => {
+                // Only hide if mouse actually left the bar area (not into a child)
+                const rect = e.currentTarget.getBoundingClientRect();
+                if (e.clientY > rect.bottom || e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top) {
+                  e.currentTarget.style.transform = 'translateY(-100%)';
+                }
+              }}
             >
               <PreviewTitlebar
                 isFullscreen={isFullscreen}
@@ -344,8 +352,8 @@ export default function PreviewScreenOutput() {
               top: alignment >= 7 ? `${Math.max(4, (marginV + (state?.style?.offsetY || 0)) * sf)}px` : alignment >= 4 ? '50%' : 'auto',
               bottom: alignment <= 3 ? `${Math.max(4, (marginV + (state?.style?.offsetY || 0)) * sf)}px` : 'auto',
               transform: alignment >= 4 && alignment <= 6 ? 'translateY(-50%)' : undefined,
-              left: `${Math.max(0, (20 + (state?.style?.offsetX || 0)) * sf)}px`,
-              right: `${Math.max(0, (20 - (state?.style?.offsetX || 0)) * sf)}px`,
+              left: `${Math.max(0, (marginH + (state?.style?.offsetX || 0)) * sf)}px`,
+              right: `${Math.max(0, (marginH - (state?.style?.offsetX || 0)) * sf)}px`,
               display: 'flex',
               justifyContent: alignment % 3 === 1 ? 'flex-start' : alignment % 3 === 0 ? 'flex-end' : 'center',
               flexDirection: 'column',
@@ -370,8 +378,8 @@ export default function PreviewScreenOutput() {
               top: secAlign >= 7 ? `${Math.max(4, (secMarginV + secOffsetY) * sf)}px` : secAlign >= 4 ? '50%' : 'auto',
               bottom: secAlign <= 3 ? `${Math.max(4, (secMarginV + secOffsetY) * sf)}px` : 'auto',
               transform: secAlign >= 4 && secAlign <= 6 ? 'translateY(-50%)' : undefined,
-              left: `${Math.max(0, (20 + secOffsetX) * sf)}px`,
-              right: `${Math.max(0, (20 - secOffsetX) * sf)}px`,
+              left: `${Math.max(0, ((state.secondaryStyle.marginHorizontal ?? 20) + secOffsetX) * sf)}px`,
+              right: `${Math.max(0, ((state.secondaryStyle.marginHorizontal ?? 20) - secOffsetX) * sf)}px`,
               display: 'flex', justifyContent: 'center', alignItems: 'center',
               zIndex: 2,
             }}>
