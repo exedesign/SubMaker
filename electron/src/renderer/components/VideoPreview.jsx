@@ -12,7 +12,7 @@ function VideoPreview() {
     mediaFile,
     originalFileName,
     savedFileName,
-    mediaType,
+    mediaFileType,
     videoFormat,
     subtitles,
     style,
@@ -24,6 +24,8 @@ function VideoPreview() {
     secondarySubtitle,
     audioMixer: audioMixerState,
   } = useAppStore();
+
+  const isVideo = mediaFileType === 'video';
 
   const mixerEnabled = audioMixerState.enabled;
   const mixer = useAudioMixer();
@@ -200,7 +202,9 @@ function VideoPreview() {
   
   // Get background style
   const getBackgroundStyle = () => {
-    if (background.type === 'color') {
+    if (background.type === 'source') {
+      return { backgroundColor: '#000' };
+    } else if (background.type === 'color') {
       return { backgroundColor: background.value };
     } else if (background.type === 'image' && background.imagePath) {
       return { 
@@ -254,8 +258,69 @@ function VideoPreview() {
           margin: '0 auto',
         }}
       >
-        {/* Hidden audio element — disabled when mixer is active */}
+        {/* Media element — video or audio, disabled when mixer is active */}
         {mediaUrl && !mixerEnabled && (
+          isVideo ? (
+          <video
+            ref={audioRef}
+            src={mediaUrl}
+            crossOrigin="anonymous"
+            preload="metadata"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+            }}
+            onTimeUpdate={(e) => {
+              const time = e.target.currentTime;
+              setCurrentTime(time);
+              setPlaybackTime(time);
+            }}
+            onLoadedMetadata={(e) => {
+              setDuration(e.target.duration);
+              setIsLoaded(true);
+              setLoadError(null);
+            }}
+            onLoadedData={() => {
+              setIsLoaded(true);
+            }}
+            onCanPlay={() => {
+              setIsLoaded(true);
+            }}
+            onCanPlayThrough={() => {}}
+            onEnded={() => {
+              setIsPlaying(false);
+              setGlobalIsPlaying(false);
+            }}
+            onError={(e) => {
+              const error = e.target.error;
+              const errorMessages = {
+                1: 'MEDIA_ERR_ABORTED: Loading aborted',
+                2: 'MEDIA_ERR_NETWORK: Network error',
+                3: 'MEDIA_ERR_DECODE: Decode error',
+                4: 'MEDIA_ERR_SRC_NOT_SUPPORTED: Format not supported'
+              };
+              const message = error ? (errorMessages[error.code] || `Error code: ${error.code}`) : 'Unknown error';
+              console.error('Video load error:', message);
+              setLoadError(message);
+              setIsLoaded(false);
+            }}
+            onPause={() => {
+              setIsPlaying(false);
+              setGlobalIsPlaying(false);
+            }}
+            onPlay={() => {
+              setIsPlaying(true);
+              setGlobalIsPlaying(true);
+            }}
+            onStalled={() => {}}
+            onSuspend={() => {}}
+            onWaiting={() => {}}
+          />
+          ) : (
           <audio
             ref={audioRef}
             src={mediaUrl}
@@ -307,6 +372,7 @@ function VideoPreview() {
             onSuspend={() => {}}
             onWaiting={() => {}}
           />
+          )
         )}
         
         {/* Loading/Error indicator */}
@@ -319,7 +385,7 @@ function VideoPreview() {
             color: 'white',
             fontSize: 14,
           }}>
-            Loading audio...
+            {isVideo ? 'Loading video...' : 'Loading audio...'}
           </div>
         )}
         

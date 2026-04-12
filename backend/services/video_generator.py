@@ -615,6 +615,7 @@ class VideoGenerator:
         visualizer_opacity: float = 0.8,
         cancel_check: Optional[callable] = None,
         resolution: str = None,
+        media_type: str = "audio",
     ) -> Dict[str, Any]:
         """
         Generate video with burned-in subtitles in a single FFmpeg pass.
@@ -626,12 +627,15 @@ class VideoGenerator:
         if background_type == "image" and background_image:
             actual_bg_value = background_image
         
+        # Video-input mode: the input file IS a video — use its video + audio streams
+        is_video_input = media_type == "video"
+        
         # Validate inputs
         if not os.path.exists(audio_path):
-            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+            raise FileNotFoundError(f"{'Video' if is_video_input else 'Audio'} file not found: {audio_path}")
         
         # Handle blob URLs gracefully
-        if background_type == "image":
+        if not is_video_input and background_type == "image":
             if actual_bg_value.startswith("blob:") or not os.path.exists(actual_bg_value):
                 print(f"⚠️ Invalid image path: {actual_bg_value}, falling back to black")
                 background_type = "color"
@@ -672,18 +676,25 @@ class VideoGenerator:
         cmd.extend(["-threads", str(min(cpu_count, 8))])
         cmd.extend(["-thread_queue_size", "1024" if self.hardware_codec else "2048"])
         
-        # ── Input 0: Background ───────────────────────────────────────
-        bg_input = self._build_background_input(
-            background_type, actual_bg_value, width, height, fps, duration,
-            temp_files=temp_files
-        )
-        cmd.extend(bg_input)
-        input_count = 1  # background is [0]
-        
-        # ── Input 1: Audio ────────────────────────────────────────────
-        cmd.extend(["-i", audio_path])
-        audio_idx = input_count
-        input_count += 1
+        # ── Input 0: Background OR Video source ─────────────────────
+        if is_video_input:
+            # Video-input mode: use the video file as both video and audio source
+            cmd.extend(["-i", audio_path])
+            audio_idx = 0  # audio stream is in the same input
+            input_count = 1
+            print(f"[VideoGen] Video-input mode: {audio_path} (video + audio from same file)")
+        else:
+            bg_input = self._build_background_input(
+                background_type, actual_bg_value, width, height, fps, duration,
+                temp_files=temp_files
+            )
+            cmd.extend(bg_input)
+            input_count = 1  # background is [0]
+            
+            # ── Input 1: Audio ────────────────────────────────────────────
+            cmd.extend(["-i", audio_path])
+            audio_idx = input_count
+            input_count += 1
         
         # ── Input: Visualizer video (optional) ────────────────────────
         viz_input_idx = None
@@ -768,17 +779,23 @@ class VideoGenerator:
         overlay_fn = "overlay_cuda" if use_cuda_filters else "overlay"
         
         # Background: ensure correct format and size
-        is_gif_bg = background_type == "image" and actual_bg_value.lower().endswith(".gif")
-        bg_needs_scale = is_gif_bg or (background_type == "image" and self.hardware_codec and self.gpu_type == "nvidia")
-        if bg_needs_scale:
-            if is_gif_bg:
-                # GIF: scale to exact size, preserve alpha with rgba format
-                filter_parts.append(f"[0:v]{scale_fn}={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[bg]")
-            else:
-                filter_parts.append(f"[0:v]format=yuv420p,{scale_fn}={width}:{height}[bg]")
+        if is_video_input:
+            # Video-input mode: scale the source video to target resolution
+            filter_parts.append(f"[0:v]{scale_fn}={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[bg]")
             current_output = "[bg]"
+            print(f"[VideoGen] Video-input: scaling source video to {width}x{height}")
         else:
-            current_output = "[0:v]"
+            is_gif_bg = background_type == "image" and actual_bg_value.lower().endswith(".gif")
+            bg_needs_scale = is_gif_bg or (background_type == "image" and self.hardware_codec and self.gpu_type == "nvidia")
+            if bg_needs_scale:
+                if is_gif_bg:
+                    # GIF: scale to exact size, preserve alpha with rgba format
+                    filter_parts.append(f"[0:v]{scale_fn}={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[bg]")
+                else:
+                    filter_parts.append(f"[0:v]format=yuv420p,{scale_fn}={width}:{height}[bg]")
+                current_output = "[bg]"
+            else:
+                current_output = "[0:v]"
         
         # Visualizer overlay
         if viz_input_idx is not None:

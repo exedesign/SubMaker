@@ -20,10 +20,34 @@ function FloatingPreview() {
     settings,
     secondarySubtitle,
     detectedLanguage,
+    mediaFileType,
   } = useAppStore();
 
+  const isSourceBg = background.type === 'source' && mediaFileType === 'video';
+  const sourceMediaUrl = isSourceBg ? useAppStore.getState().getMediaUrl() : null;
+  const sourceVideoRef = useRef(null);
+
+  // Sync source video background with main player via store state
+  useEffect(() => {
+    const el = sourceVideoRef.current;
+    if (!el || !isSourceBg) return;
+    if (Math.abs(el.currentTime - playbackTime) > 0.5) {
+      el.currentTime = playbackTime;
+    }
+  }, [playbackTime, isSourceBg]);
+
+  useEffect(() => {
+    const el = sourceVideoRef.current;
+    if (!el || !isSourceBg) return;
+    if (isPlaying) {
+      el.play().catch(() => {});
+    } else {
+      el.pause();
+    }
+  }, [isPlaying, isSourceBg]);
+
   // RTL language detection
-  const RTL_LANGS = ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'];
+  const RTL_LANGS = ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi', 'ug'];
   const isRtl = RTL_LANGS.includes(detectedLanguage);
 
   const [isMinimized, setIsMinimized] = useState(false);
@@ -421,8 +445,27 @@ function FloatingPreview() {
               backgroundImage: background.type === 'image' && background.imagePath ? `url(file://${background.imagePath})` : undefined,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
+              position: 'relative',
+              overflow: 'hidden',
             }}
           >
+            {/* Source video background */}
+            {isSourceBg && sourceMediaUrl && (
+              <video
+                ref={sourceVideoRef}
+                src={sourceMediaUrl}
+                crossOrigin="anonymous"
+                muted
+                playsInline
+                style={{
+                  position: 'absolute',
+                  top: 0, left: 0,
+                  width: '100%', height: '100%',
+                  objectFit: 'contain',
+                  zIndex: 0,
+                }}
+              />
+            )}
             {/* Format indicator */}
             <div className="frame-format-badge">{formatInfo.aspectRatio}</div>
             

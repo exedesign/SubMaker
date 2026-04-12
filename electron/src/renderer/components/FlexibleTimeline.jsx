@@ -210,7 +210,7 @@ const FlexibleTimeline = () => {
     addSubtitle,
     mediaFile,
     originalFileName,
-    mediaType,
+    mediaFileType,
     playbackTime,
     setPlaybackTime,
     isPlaying: globalIsPlaying,
@@ -1140,7 +1140,7 @@ const FlexibleTimeline = () => {
       setDuration(0)
       setWaveformData([])
     }
-  }, [mediaFile, mediaType, globalAudioRef])
+  }, [mediaFile, mediaFileType, globalAudioRef])
   
   // Helper function to generate simple waveform data
   const generateSimpleWaveform = useCallback((duration) => {

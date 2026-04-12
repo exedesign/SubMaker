@@ -77,7 +77,7 @@ export const useAppStore = create((set, get) => ({
 
   // Background settings
   background: {
-    type: 'color', // 'color', 'image', 'transparent'
+    type: 'color', // 'color', 'image', 'transparent', 'source'
     value: '#000000',
     imagePath: null,
   },
@@ -427,12 +427,17 @@ export const useAppStore = create((set, get) => ({
 
     // Preserve initialMediaPath — the very first media file the user imported
     const prev = get().initialMediaPath;
+    // If switching from video to non-video, reset 'source' background to 'color'
+    const bgUpdate = (type !== 'video' && get().background.type === 'source')
+      ? { background: { ...get().background, type: 'color', value: '#000000' } }
+      : {};
     set({
       mediaFile: file,
       mediaFileType: type,
       originalMediaPath: resolvedOriginal,
       originalFileName: null, // reset; re-set by uploadFile if needed
       initialMediaPath: prev || resolvedOriginal,
+      ...bgUpdate,
       error: null,
       currentStep: 'transcribe',
       subtitles: [],
@@ -556,24 +561,39 @@ export const useAppStore = create((set, get) => ({
         throw new Error(`Unsupported file type: .${extension}`);
       }
 
-      // If an original absolute path is provided via Electron's dialog, use it directly.
-      if (originalPath && isAbsolutePath(originalPath)) {
-        console.log('Using original path directly:', originalPath);
-        get().setMediaFile(originalPath, fileType, originalPath);
-        set({ isLoading: false, loadingMessage: '', originalFileName: file.name || null });
-        console.log('Media file set, step changed to transcribe');
-        return;
+      // ALWAYS upload to backend (even if originalPath provided from Electron dialog)
+      // This ensures consistent handling: all files go to /temp with UUID naming
+      let fileToUpload = file;
+
+      // If original file is too large or FormData empty, read from Electron's absolute path
+      if (originalPath && isAbsolutePath(originalPath) && (!file.size || file.size === 0)) {
+        console.log('Reading file from Electron path:', originalPath);
+        // Use IPC to read file from Electron's file system
+        if (window.electronAPI?.readFile) {
+          try {
+            const buffer = await window.electronAPI.readFile(originalPath);
+            const fileName = file.name || originalPath.split(/[\\/]/).pop();
+            fileToUpload = new File([buffer], fileName, { type: file.type });
+            console.log('File read from Electron:', { size: buffer.length });
+          } catch (readError) {
+            console.warn('Failed to read file via IPC, trying FormData:', readError);
+            // Fallback to empty File (will try FormData)
+          }
+        }
       }
 
-      // For drag-and-drop without a resolved path, upload file content to backend
+      // Upload file content to backend
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', fileToUpload);
 
-      console.log('Uploading to backend via FormData...');
+      console.log('Uploading to backend via FormData...', { 
+        fileName: fileToUpload.name, 
+        fileSize: fileToUpload.size 
+      });
       const data = await fetchFormData(`${API_URL}/upload`, formData);
       console.log('Upload response:', data);
 
-      // The backend returns the path where it saved the file.
+      // Backend returns the path where it saved the file
       get().setMediaFile(data.filePath, fileType, data.originalPath || data.filePath || null);
       // Preserve original filename when file was uploaded to temp
       if (data.original_name) {
@@ -713,6 +733,8 @@ export const useAppStore = create((set, get) => ({
       let lastKnownStep = 'Loading AI model...';
 
       const handleStreamEvent = (data) => {
+        console.log('[Transcribe Stream] Event received:', data?.type, data);
+        
         if (data.type === 'heartbeat') {
           heartbeatCount++;
           set({
@@ -1539,6 +1561,7 @@ export const useAppStore = create((set, get) => ({
         const response = await api.post('/render', {
           audio_path: renderAudioPath,
           original_name: renderOptions.originalName || get().originalFileName,
+          media_type: get().mediaFileType || 'audio',
           subtitles,
           background,
           video_format: format,
@@ -3034,7 +3057,7 @@ export const useAppStore = create((set, get) => ({
     set({
       currentStep: 'upload',
       mediaFile: null,
-      mediaType: null,
+      mediaFileType: null,
       mediaDuration: 0,
       subtitles: [],
       selectedSubtitleId: null,

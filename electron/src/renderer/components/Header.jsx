@@ -25,7 +25,7 @@ function Header() {
   const isElectron = !!window.electronAPI;
   const {
     settings, setSettings, setDualSubtitleEnabled, secondarySubtitle, updateAudioVisualization,
-    mediaFile, originalFileName, mediaType, uploadFile,
+    mediaFile, originalFileName, mediaFileType, uploadFile,
     currentStep, subtitles,
     cacheInfo, fetchCacheInfo, clearCache,
     systemStats, fetchSystemStats, unloadAllModels,
@@ -138,7 +138,7 @@ function Header() {
           }}
         >
           {mediaFile
-            ? <FiFile size={12} style={{ flexShrink: 0, color: mediaType === 'audio' ? '#22c55e' : '#6366f1' }} />
+            ? <FiFile size={12} style={{ flexShrink: 0, color: mediaFileType === 'audio' ? '#22c55e' : '#6366f1' }} />
             : <FiUpload size={12} style={{ flexShrink: 0 }} />
           }
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

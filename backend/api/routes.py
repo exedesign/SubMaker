@@ -16,7 +16,7 @@ import mimetypes
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from config import TEMP_DIR, OUTPUT_DIR, FONTS_DIR, SUPPORTED_LANGUAGES, TENOR_API_KEY, TENOR_CLIENT_KEY, GIPHY_API_KEY, FFMPEG_PATH, ENABLE_GPU_ACCELERATION, PRESETS_DIR, VOCAL_CACHE_DIR
+from config import TEMP_DIR, OUTPUT_DIR, FONTS_DIR, SUPPORTED_LANGUAGES, TENOR_API_KEY, TENOR_CLIENT_KEY, GIPHY_API_KEY, FFMPEG_PATH, ENABLE_GPU_ACCELERATION, PRESETS_DIR, VOCAL_CACHE_DIR, RTL_LANGUAGES
 from services import (
     TranscriptionService,
     ArabicTextProcessor,
@@ -1347,64 +1347,37 @@ def generate_subtitles():
         return jsonify({"error": "subtitles data required"}), 400
 
     try:
-        engine = get_subtitle_engine()
-        
-        # Create SubtitleStyle object
+        engine = SubtitleEngine()
+        engine.set_resolution_from_format(video_format)
+
+        # Create SubtitleStyle object matching actual dataclass fields
         style_obj = SubtitleStyle(
-            font_name=style.get("fontName", "Arial"),
-            font_size=style.get("fontSize", 24),
-            primary_color=style.get("primaryColor", "&H00FFFFFF"),
-            secondary_color=style.get("secondaryColor", "&H000000FF"),
-            outline_color=style.get("outlineColor", "&H00000000"),
-            back_color=style.get("backColor", "&H80000000"),
-            bold=style.get("bold", False),
-            italic=style.get("italic", False),
-            underline=style.get("underline", False),
-            strikeout=style.get("strikeout", False),
-            spacing=style.get("spacing", 0),
-            angle=style.get("angle", 0),
-            border_style=style.get("borderStyle", 1),
-            outline=style.get("outline", 1),
-            shadow=style.get("shadow", 1),
-            alignment=style.get("alignment", 2),
-            margin_l=style.get("marginL", 10),
-            margin_r=style.get("marginR", 10),
-            margin_v=style.get("marginV", 10),
-            encoding=style.get("encoding", 1),
-            karaoke_style=style.get("karaokeStyle", "fill"),
-            karaoke_color=style.get("karaokeColor", "&H0000FF00"),
-            blur=style.get("blur", 0),
-            text_opacity=style.get("textOpacity", 1.0),
-            border_opacity=style.get("borderOpacity", 1.0),
-            background_opacity=style.get("backgroundOpacity", 0.5),
-            shadow_opacity=style.get("shadowOpacity", 0.5),
-            shadow_x=style.get("shadowX", 1),
-            shadow_y=style.get("shadowY", 1),
-            font_family_override=style.get("fontFamilyOverride"),
+            font_name=style.get("fontName", style.get("font_name", "Arial")),
+            font_size=int(style.get("fontSize", style.get("font_size", 48))),
+            primary_color=style.get("color", style.get("primaryColor", "#FFFFFF")),
+            border_color=style.get("borderColor", style.get("border_color", "#000000")),
+            border_width=float(style.get("borderWidth", style.get("border_width", 2))),
+            shadow_depth=float(style.get("shadowDepth", style.get("shadow_depth", 1))),
+            bold=bool(style.get("bold", False)),
+            italic=bool(style.get("italic", False)),
+            alignment=int(style.get("alignment", 2)),
+            margin_vertical=int(style.get("marginVertical", style.get("margin_vertical", 50))),
         )
-        
-        # Create AnimationConfig object
+
+        # Create AnimationConfig object matching actual dataclass fields
         anim_config = AnimationConfig(
-            mode=animation.get("mode", "none"),
-            scope=animation.get("scope", "line"),
-            style=animation.get("style", "fade"),
-            speed=animation.get("speed", 200),
-            delay=animation.get("delay", 50),
-            color_mode=animation.get("colorMode", "custom"),
-            start_color=animation.get("startColor"),
-            end_color=animation.get("endColor"),
-            mid_color=animation.get("midColor"),
-            gradient_angle=animation.get("gradientAngle", 0),
-            use_sub_timing=animation.get("useSubTiming", True),
+            type=animation.get("type", "none"),
+            fade_in=animation.get("fadeIn", animation.get("fade_in", 200)),
+            fade_out=animation.get("fadeOut", animation.get("fade_out", 200)),
+            karaoke_type=animation.get("karaokeType", animation.get("karaoke_type", "sweep")),
+            highlight_color=animation.get("highlightColor", animation.get("highlight_color", "#FFFF00")),
         )
 
         if format.lower() == "ass":
             content = engine.generate_ass(
                 subtitles,
-                style_obj,
-                video_format,
-                anim_config,
-                secondary_subtitle
+                style=style_obj,
+                animation=anim_config,
             )
             mimetype = "text/plain"
             filename = "subtitles.ass"
@@ -1477,8 +1450,7 @@ _render_jobs = {}
 import threading
 import time
 
-# RTL (Right-to-Left) language codes
-RTL_LANGUAGES = {'ar', 'he', 'fa', 'ur', 'yi', 'ps', 'sd', 'ug'}
+# RTL_LANGUAGES imported from config
 
 def detect_rtl_from_subtitles(subtitles):
     """Detect if subtitles contain RTL text"""
@@ -1493,7 +1465,7 @@ def detect_rtl_from_subtitles(subtitles):
     return False
 
 def run_render_job(job_id, audio_path, subtitles, background, video_format,
-                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None, render_resolution=None, output_dir=None, is_karaoke=False):
+                   output_format, quality, style, animation, source_language=None, logo=None, logos=None, secondary_subtitle=None, visualizer=None, audio_mixer=None, original_name=None, render_resolution=None, output_dir=None, is_karaoke=False, media_type="audio"):
     """Background render job"""
     global _render_jobs
 
@@ -1751,6 +1723,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             visualizer_opacity=visualizer.get("opacity", 0.8) if visualizer else 0.8,
             cancel_check=cancel_check,
             resolution=render_resolution,
+            media_type=media_type,
         )
 
         _render_jobs[job_id]["progress"] = 98
@@ -1897,19 +1870,25 @@ def render_video():
         # Output resolution preset (1k/2k/4k)
         render_resolution = data.get("render_resolution")
 
+        # Media type — 'video' means input is a video file (burn subtitles on original video)
+        media_type = data.get("media_type", "audio")
+        # If background type is 'source', force video-input mode
+        if background.get("type") == "source":
+            media_type = "video"
+
         # Custom output directory (e.g. for batch karaoke render to original file location)
         output_dir = data.get("output_dir")
 
         # Karaoke flag — appends -krk suffix to output filename
         is_karaoke = data.get("is_karaoke", False)
 
-        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, resolution={render_resolution}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}, output_dir={output_dir}, karaoke={is_karaoke}")
+        print(f"[Render] Starting job {job_id}: format={video_format}, output={output_format}, quality={quality}, resolution={render_resolution}, lang={source_language}, logos={len(logos) if logos else 0}, dual_sub={secondary_subtitle is not None}, visualizer={visualizer is not None}, mixer={audio_mixer is not None}, output_dir={output_dir}, karaoke={is_karaoke}, media_type={media_type}")
 
         # Start background thread
         thread = threading.Thread(
             target=run_render_job,
             args=(job_id, audio_path, subtitles, background, video_format,
-                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name, render_resolution, output_dir, is_karaoke)
+                  output_format, quality, style, animation, source_language, logo, logos, secondary_subtitle, visualizer, audio_mixer, original_name, render_resolution, output_dir, is_karaoke, media_type)
         )
         thread.daemon = True
         thread.start()

@@ -70,10 +70,17 @@ function PreviewPanel() {
     detectedLanguage,
     rightPanelTab,
     setRightPanelTab,
+    mediaFileType,
   } = useAppStore();
 
+  const isSourceBg = background.type === 'source' && mediaFileType === 'video';
+  const sourceMediaUrl = isSourceBg ? useAppStore.getState().getMediaUrl() : null;
+
+  // Ref for source video background element (synced via playbackTime)
+  const sourceVideoRef = useRef(null);
+
   // RTL language detection
-  const RTL_LANGS = ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'];
+  const RTL_LANGS = ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi', 'ug'];
   const isRtl = RTL_LANGS.includes(detectedLanguage);
 
   // When playlist is active, use playlist's time & subtitles for karaoke display
@@ -104,6 +111,25 @@ function PreviewPanel() {
   // silently (ref mutation), so we use playbackTime/isPlaying as triggers
   // to re-evaluate the ref on each render
   const audioElementForViz = globalAudioRef?.current ?? null;
+
+  // Sync source video background with main player via store state
+  useEffect(() => {
+    const el = sourceVideoRef.current;
+    if (!el || !isSourceBg) return;
+    if (Math.abs(el.currentTime - playbackTime) > 0.5) {
+      el.currentTime = playbackTime;
+    }
+  }, [playbackTime, isSourceBg]);
+
+  useEffect(() => {
+    const el = sourceVideoRef.current;
+    if (!el || !isSourceBg) return;
+    if (isPlaying) {
+      el.play().catch(() => {});
+    } else {
+      el.pause();
+    }
+  }, [isPlaying, isSourceBg]);
 
   // Collapsible section definitions
   const PREVIEW_SECTIONS_DEF = [
@@ -869,7 +895,7 @@ function PreviewPanel() {
         background: s.background,
         animation: { type: s.animation.type, highlightColor: s.animation.highlightColor },
         animationProgress: 0,
-        isRtl: ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'].includes(s.detectedLanguage),
+        isRtl: ['ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi', 'ug'].includes(s.detectedLanguage),
         fmtWidth: fmt.width, fmtHeight: fmt.height,
         secondaryText: secSub?.subtitles?.[0]?.translatedText || null,
         secondaryStyle: secSub?.style ? {
@@ -926,8 +952,7 @@ function PreviewPanel() {
           cursor: isFullscreen ? 'zoom-out' : 'zoom-in',
           width: previewWidth,
           height: previewHeight,
-          backgroundColor: background.type === 'color' ? background.value : 
-                          background.type === 'transparent' ? '#000' : '#000',
+          backgroundColor: background.type === 'color' ? background.value : '#000',
           backgroundImage: background.type === 'image' && background.imagePath 
             ? `url(${getImageUrl(background.imagePath)})`
             : background.type === 'transparent' 
@@ -939,6 +964,23 @@ function PreviewPanel() {
           position: 'relative',
         }}
       >
+        {/* Source video background */}
+        {isSourceBg && sourceMediaUrl && (
+          <video
+            ref={sourceVideoRef}
+            src={sourceMediaUrl}
+            crossOrigin="anonymous"
+            muted
+            playsInline
+            style={{
+              position: 'absolute',
+              top: 0, left: 0,
+              width: '100%', height: '100%',
+              objectFit: 'contain',
+              zIndex: 0,
+            }}
+          />
+        )}
         {/* Butterchurn Visualizer Overlay — stays mounted during render (freezes when GPU freed for export, reinits after) */}
         {visualizer.enabled && (
           <div style={{
@@ -1158,8 +1200,7 @@ function PreviewPanel() {
           style={{
             width: fsWidth,
             height: fsHeight,
-            backgroundColor: background.type === 'color' ? background.value :
-                            background.type === 'transparent' ? '#000' : '#000',
+            backgroundColor: background.type === 'color' ? background.value : '#000',
             backgroundImage: background.type === 'image' && background.imagePath
               ? `url(${getImageUrl(background.imagePath)})`
               : background.type === 'transparent'
@@ -1172,6 +1213,23 @@ function PreviewPanel() {
             cursor: 'default',
           }}
         >
+          {/* Source video background (fullscreen) */}
+          {isSourceBg && sourceMediaUrl && (
+            <video
+              ref={sourceVideoRef}
+              src={sourceMediaUrl}
+              crossOrigin="anonymous"
+              muted
+              playsInline
+              style={{
+                position: 'absolute',
+                top: 0, left: 0,
+                width: '100%', height: '100%',
+                objectFit: 'contain',
+                zIndex: 0,
+              }}
+            />
+          )}
           {/* Visualizer — reuse singleton, CSS scaled — stays mounted during render */}
           {visualizer.enabled && (
             <div style={{

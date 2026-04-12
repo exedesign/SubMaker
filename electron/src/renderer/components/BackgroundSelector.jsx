@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiImage, FiDroplet, FiGrid, FiActivity, FiShuffle, FiRefreshCw } from 'react-icons/fi';
+import { FiImage, FiDroplet, FiGrid, FiActivity, FiShuffle, FiRefreshCw, FiFilm } from 'react-icons/fi';
 
 // Predefined colors
 const PRESET_COLORS = [
@@ -33,7 +33,10 @@ function BackgroundSelector() {
   const {
     background, setBackgroundType, setBackgroundColor, setBackgroundImage,
     visualizer, setVisualizerEnabled, updateVisualizer, setVisualizerPreset, randomizeVisualizerPreset,
+    mediaFileType,
   } = useAppStore();
+
+  const isVideoFile = mediaFileType === 'video';
 
   const [customColor, setCustomColor] = useState(background.value || '#000000');
   const [isUploading, setIsUploading] = useState(false);
@@ -130,8 +133,16 @@ function BackgroundSelector() {
 
   return (
     <div>
-      {/* Tab Selection: Color, Image, Alpha, Visualiser */}
+      {/* Tab Selection: Source, Color, Image, Alpha, Visualiser */}
       <div className="tabs" style={{ marginBottom: 16 }}>
+        {isVideoFile && (
+          <button
+            className={`tab ${activeTab === 'source' ? 'active' : ''}`}
+            onClick={() => handleTabClick('source')}
+          >
+            <FiFilm size={12} style={{ flexShrink: 0 }} /> Source
+          </button>
+        )}
         <button
           className={`tab ${activeTab === 'color' ? 'active' : ''}`}
           onClick={() => handleTabClick('color')}
@@ -157,6 +168,27 @@ function BackgroundSelector() {
           <FiActivity size={12} style={{ flexShrink: 0 }} /> Visualiser
         </button>
       </div>
+
+      {/* Source Video Info */}
+      {activeTab === 'source' && (
+        <div style={{
+          padding: '16px',
+          background: 'var(--bg-tertiary)',
+          borderRadius: 8,
+          border: '1px solid var(--border-color)',
+          textAlign: 'center',
+          color: 'var(--text-muted)',
+          fontSize: 13,
+        }}>
+          <FiFilm size={24} style={{ marginBottom: 8, color: 'var(--accent-primary)' }} />
+          <p style={{ margin: '0 0 4px 0', color: 'var(--text-color)', fontWeight: 500 }}>
+            Original Video as Background
+          </p>
+          <p style={{ margin: 0 }}>
+            The imported video will be used as the background. Subtitles will be burned directly onto the video.
+          </p>
+        </div>
+      )}
 
       {/* Color Picker */}
       {activeTab === 'color' && (
