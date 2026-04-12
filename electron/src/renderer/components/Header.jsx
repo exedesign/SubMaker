@@ -680,7 +680,7 @@ function Header() {
               <div className="about-author">
                 <div className="about-app-name">SubMaker</div>
                 <div className="about-version">v{packageJson.version}</div>
-                <div className="about-desc">Professional subtitle generator with AI-powered transcription, translation, cover art generation and audio visualization.</div>
+                <div className="about-desc">Professional subtitle generator with AI-powered transcription, translation, cover art generation, video input support and audio visualization.</div>
 
                 {/* Features */}
                 <div className="about-features">
@@ -690,7 +690,8 @@ function Header() {
                   <div className="about-feature"><span className="about-feature-icon">🎵</span><span>Real-time audio visualization with Butterchurn (Milkdrop) presets, waveform display and beat-reactive effects synced to your music</span></div>
                   <div className="about-feature"><span className="about-feature-icon">🎤</span><span>AI vocal isolation using BS-Roformer models — separate vocals from instrumentals for cleaner transcription results</span></div>
                   <div className="about-feature"><span className="about-feature-icon">📝</span><span>Advanced lyrics import with LRC/SRT parsing, manual timing editor and real-time synchronized preview</span></div>
-                  <div className="about-feature"><span className="about-feature-icon">🎬</span><span>Video export with embedded subtitles, customizable fonts, colors, positions and background options including transparency</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">🎬</span><span>Video input support — import video files, preview with synchronized subtitles and render with burned-in subtitles using the original video as background source</span></div>
+                  <div className="about-feature"><span className="about-feature-icon">🖼️</span><span>Multiple background modes — Milkdrop visualizer, solid color, custom image, gradient and source video with transparency support</span></div>
                   <div className="about-feature"><span className="about-feature-icon">💾</span><span>Full offline operation — all AI models run locally on your machine with intelligent VRAM management for consumer GPUs</span></div>
                 </div>
 

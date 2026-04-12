@@ -14,7 +14,16 @@
       "Bash(ls -lh \"D:/AI/SubMaker/electron/release/win-unpacked/\"*.exe)",
       "Bash(grep -r \"import.*from\" /d/AI/SubMaker/electron/src/renderer/components/*.jsx)",
       "Bash(find /d/AI/SubMaker/electron/src/renderer/components -name \"*.jsx\" -exec grep -l \"import.*from\" {} \\\\;)",
-      "Bash(grep \"import.*from.*components\" /d/AI/SubMaker/electron/src/renderer/*.jsx /d/AI/SubMaker/electron/src/renderer/components/*.jsx)"
+      "Bash(grep \"import.*from.*components\" /d/AI/SubMaker/electron/src/renderer/*.jsx /d/AI/SubMaker/electron/src/renderer/components/*.jsx)",
+      "Bash(du -sh ./resources/models/*)",
+      "Bash(wc -l /d/AI/SubMaker/backend/services/*.py)",
+      "Bash(du -sh \"d:/AI/SubMaker/resources/models/\"*)",
+      "Bash(PowerShell -ExecutionPolicy Bypass -File installer/prepare_build.ps1 -SkipElectronBuild -SkipFFmpeg -SkipModels)",
+      "Bash(d:/AI/SubMaker/installer/staging/python/python.exe -c 'import torch; print\\('\\\\''PyTorch:'\\\\'', torch.__version__\\); import torch; print\\('\\\\''CUDA available:'\\\\'', torch.cuda.is_available\\(\\)\\)')",
+      "Bash(d:/AI/SubMaker/installer/staging/python/python.exe -m pip install --no-warn-script-location autoawq --no-build-isolation --no-deps)",
+      "Bash(d:/AI/SubMaker/installer/staging/python/python.exe -m pip install --no-warn-script-location -r d:/AI/SubMaker/backend/requirements.txt)",
+      "Bash(d:/AI/SubMaker/installer/staging/python/python.exe -m pip install --no-warn-script-location zstandard)",
+      "Bash(d:/AI/SubMaker/installer/staging/python/python.exe -c ':*)"
     ]
   }
 }

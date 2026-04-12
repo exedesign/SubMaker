@@ -1680,6 +1680,9 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         # -----------------------------------------------------------
         # Determine output filename and directory
         # Priority: original_name > audio filename
+        # Rule: output ALWAYS goes next to the input media file.
+        #       Only fall back to OUTPUT_DIR when the input truly has
+        #       no real origin (e.g. web drag-drop into temp).
         # -----------------------------------------------------------
         # 1) Stem name — always prefer original_name when provided
         if original_name:
@@ -1687,15 +1690,21 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         else:
             source_stem = Path(original_audio_path).stem
 
-        # 2) Output directory
+        # 2) Output directory — save next to the original input file
         if output_dir:
             source_dir = output_dir
-        elif str(TEMP_DIR).lower() in str(Path(original_audio_path).resolve()).lower():
-            source_dir = str(OUTPUT_DIR)
         else:
-            source_dir = os.path.dirname(original_audio_path)
+            # original_audio_path is the *untouched* input path (before mixer).
+            # If it lives inside TEMP_DIR it was a web-upload with no real disk
+            # origin, so fall back to OUTPUT_DIR; otherwise save beside the input.
+            input_is_temp = str(TEMP_DIR).lower() in str(Path(original_audio_path).resolve()).lower()
+            if input_is_temp:
+                source_dir = str(OUTPUT_DIR)
+            else:
+                source_dir = os.path.dirname(original_audio_path)
 
         os.makedirs(source_dir, exist_ok=True)
+        print(f"[Render Job {job_id}] Output dir resolved: {source_dir} (input={original_audio_path})")
 
         # 3) Build filename: {name}-{format}[-krk].{ext}
         krk_suffix = "-krk" if is_karaoke else ""

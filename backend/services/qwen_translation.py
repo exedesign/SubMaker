@@ -31,7 +31,8 @@ LANGUAGE_NAMES = {
     'el': 'Greek', 'he': 'Hebrew', 'th': 'Thai', 'vi': 'Vietnamese',
     'id': 'Indonesian', 'ms': 'Malay', 'uk': 'Ukrainian', 'ro': 'Romanian',
     'hu': 'Hungarian', 'bg': 'Bulgarian', 'hr': 'Croatian', 'sk': 'Slovak',
-    'sl': 'Slovenian',
+    'sl': 'Slovenian', 'fa': 'Persian', 'ur': 'Urdu', 'ps': 'Pashto',
+    'sd': 'Sindhi', 'yi': 'Yiddish', 'ug': 'Uyghur',
 }
 
 SYSTEM_PROMPT = (

@@ -79,10 +79,15 @@ function ModelSelector() {
     return WHISPER_MODELS[langKey] || WHISPER_MODELS.default;
   };
 
+  // Language-specific beam_size defaults (must match backend config.py LANGUAGE_PARAMS)
+  const BEAM_SIZE_DEFAULTS = { tr: 8, ar: 10, en: 5 };
+  const langDefault = BEAM_SIZE_DEFAULTS[sourceLanguage] ?? 5;
+  const isBeamAuto = whisperParams.beam_size === null || whisperParams.beam_size === undefined;
+  const currentBeamSize = isBeamAuto ? langDefault : whisperParams.beam_size;
+
   const availableModels = getAvailableModels();
   const currentModel = getModelForLanguage(selectedLanguage);
   const modelInfo = availableModels.find(m => m.value === currentModel) || availableModels[0];
-  const currentBeamSize = whisperParams.beam_size ?? 5;
 
   return (
     <div>
@@ -126,7 +131,7 @@ function ModelSelector() {
                 fontSize: 13,
                 fontWeight: 700,
                 color: 'rgb(139, 92, 246)',
-              }}>{currentBeamSize}</span>
+              }}>{currentBeamSize}{isBeamAuto ? ' (auto)' : ''}</span>
             </div>
 
             <input
@@ -138,7 +143,7 @@ function ModelSelector() {
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
               <span>1 (fast)</span>
-              <span>5 (default)</span>
+              <span>{langDefault} (default)</span>
               <span>20 (max accuracy)</span>
             </div>
           </div>

@@ -148,10 +148,14 @@ export async function fetchArrayBuffer(url, options = {}) {
 }
 
 export async function streamJsonEvents(url, body, onEvent, signal) {
+  console.log('[streamJsonEvents] Starting:', { url, signal });
+  
   if (window.electronAPI?.streamViaMain) {
+    console.log('[streamJsonEvents] Using Electron IPC');
     return window.electronAPI.streamViaMain({ url, body }, onEvent);
   }
 
+  console.log('[streamJsonEvents] Using fetch SSE');
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -159,22 +163,29 @@ export async function streamJsonEvents(url, body, onEvent, signal) {
     signal,
   });
 
+  console.log('[streamJsonEvents] Response status:', response.status, response.ok);
   if (!response.ok) {
     const payload = await parseFetchPayload(response, 'json');
+    console.error('[streamJsonEvents] Response not ok:', { status: response.status, payload });
     throw parseErrorPayload(response.status, payload);
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let eventCount = 0;
 
   while (true) {
     if (signal?.aborted) {
+      console.log('[streamJsonEvents] Signal aborted');
       reader.cancel();
       break;
     }
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      console.log('[streamJsonEvents] Stream done, total events:', eventCount);
+      break;
+    }
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
@@ -184,9 +195,10 @@ export async function streamJsonEvents(url, body, onEvent, signal) {
       if (!line.startsWith('data: ')) continue;
       try {
         const payload = JSON.parse(line.slice(6));
+        console.log('[streamJsonEvents] Event:', eventCount++, payload?.type);
         onEvent(payload);
-      } catch {
-        // ignore malformed SSE payloads
+      } catch (e) {
+        console.warn('[streamJsonEvents] Parse error:', e, { line: line.slice(0, 100) });
       }
     }
   }
@@ -194,12 +206,14 @@ export async function streamJsonEvents(url, body, onEvent, signal) {
   if (buffer.trim().startsWith('data: ')) {
     try {
       const payload = JSON.parse(buffer.trim().slice(6));
+      console.log('[streamJsonEvents] Final event:', eventCount, payload?.type);
       onEvent(payload);
-    } catch {
-      // ignore malformed trailing payloads
+    } catch (e) {
+      console.warn('[streamJsonEvents] Final parse error:', e);
     }
   }
 
+  console.log('[streamJsonEvents] Complete');
   return { ok: true };
 }
 

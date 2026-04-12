@@ -1030,6 +1030,7 @@ body.dragging-preview * {
 /* Tabs */
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 3px;
   padding: 3px;
   background: var(--bg-secondary);
@@ -1037,8 +1038,8 @@ body.dragging-preview * {
 }
 
 .tab {
-  flex: 1;
-  padding: 6px 4px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -1048,8 +1049,6 @@ body.dragging-preview * {
   cursor: pointer;
   transition: var(--transition-fast);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   display: flex;
   align-items: center;
   justify-content: center;

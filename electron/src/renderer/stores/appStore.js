@@ -585,10 +585,15 @@ export const useAppStore = create((set, get) => ({
       // Upload file content to backend
       const formData = new FormData();
       formData.append('file', fileToUpload);
+      // Pass original disk path so backend can use it directly instead of saving to temp
+      if (originalPath && isAbsolutePath(originalPath)) {
+        formData.append('originalPath', originalPath);
+      }
 
       console.log('Uploading to backend via FormData...', { 
         fileName: fileToUpload.name, 
-        fileSize: fileToUpload.size 
+        fileSize: fileToUpload.size,
+        originalPath: originalPath || null,
       });
       const data = await fetchFormData(`${API_URL}/upload`, formData);
       console.log('Upload response:', data);

@@ -14,7 +14,7 @@ from typing import Dict
 
 import torch
 
-from config import FLUX_KLEIN_MODEL_REPO
+from config import FLUX_KLEIN_MODEL_REPO, FLUX_KLEIN_LOCAL_DIR
 from services.generators.base import BaseGenerator
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,15 @@ class FluxKleinGenerator(BaseGenerator):
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
 
+            # Resolve model source — local bundled directory or HuggingFace Hub
+            local_dir = Path(str(FLUX_KLEIN_LOCAL_DIR))
+            if (local_dir / "model_index.json").exists():
+                model_source = str(local_dir)
+                logger.info(f"[FluxKlein] Using local model: {model_source}")
+            else:
+                model_source = FLUX_KLEIN_MODEL_REPO
+                logger.info(f"[FluxKlein] Local model not found, using HuggingFace: {model_source}")
+
             # Load transformer with NF4 quantization (~7.2 GB → ~1.8 GB)
             _progress(5, "Loading FLUX Klein transformer (NF4 quantized)...")
             logger.info("[FluxKlein] Loading transformer with BitsAndBytes NF4 quantization...")
@@ -62,7 +71,7 @@ class FluxKleinGenerator(BaseGenerator):
             )
 
             transformer = Flux2Transformer2DModel.from_pretrained(
-                FLUX_KLEIN_MODEL_REPO,
+                model_source,
                 subfolder="transformer",
                 quantization_config=bnb_config,
                 torch_dtype=torch.bfloat16,
@@ -80,7 +89,7 @@ class FluxKleinGenerator(BaseGenerator):
             )
 
             text_encoder = AutoModelForCausalLM.from_pretrained(
-                FLUX_KLEIN_MODEL_REPO,
+                model_source,
                 subfolder="text_encoder",
                 quantization_config=text_encoder_bnb,
                 torch_dtype=torch.bfloat16,
@@ -91,7 +100,7 @@ class FluxKleinGenerator(BaseGenerator):
             logger.info("[FluxKlein] Loading Flux2KleinPipeline (GPU-resident, no CPU offload)...")
 
             self.pipe = Flux2KleinPipeline.from_pretrained(
-                FLUX_KLEIN_MODEL_REPO,
+                model_source,
                 transformer=transformer,
                 text_encoder=text_encoder,
                 torch_dtype=torch.bfloat16,

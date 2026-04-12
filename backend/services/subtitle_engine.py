@@ -208,12 +208,18 @@ class SubtitleEngine:
         elif animation.type == "karaoke" and not words:
             # FALLBACK: No word data, split text into words
             print(f"[KARAOKE FALLBACK] Creating karaoke without words data for: '{text[:50]}...', karaoke_type={animation.karaoke_type}")
-            
+
             # \k = instant, \kf = sweep
             k_tag = "k" if animation.karaoke_type == "instant" else "kf"
-            
-            # Split text into words
+
+            # Split text into words — for CJK (Chinese/Japanese/Korean),
+            # whitespace splitting yields the whole line as one chunk, so
+            # fall back to character-level splitting.
+            CJK_RE = re.compile(r'[\u4E00-\u9FFF\u3400-\u4DBF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]')
             words_list = text.strip().split()
+            if len(words_list) <= 1 and CJK_RE.search(text):
+                # Split into individual characters for CJK
+                words_list = list(text.strip())
             if not words_list:
                 return text
             
@@ -296,10 +302,9 @@ class SubtitleEngine:
         if animation is None:
             animation = AnimationConfig()
 
-        # Resolve style from collection first (before any modifications)
-        style = self.styles.get(style.name, style) if style else self.default_style
-
-        # Cache the ORIGINAL (un-swapped) style in collection
+        # Always use the passed-in style — it carries the user's current settings
+        # (alignment, margins, colors, etc.).  Cache it so the [V4+ Styles] section
+        # emits the correct style line.
         self.styles[style.name] = style
         self.default_style = style
 

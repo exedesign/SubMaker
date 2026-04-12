@@ -8,7 +8,9 @@ faster-whisper>=1.0.0
 transformers>=4.40.0
 accelerate>=0.30.0
 datasets  # Required by autoawq model loading
-autoawq  # AWQ quantization backend (Windows: pip install autoawq --no-build-isolation --no-deps)
+# autoawq  # AWQ quantization backend — Windows'ta requirements.txt'ten KURULAMAZ
+# Installer: prepare_build.ps1 adim 2f-bis tarafindan ozel olarak kurulur
+# Manuel kurulum: pip install autoawq --no-build-isolation --no-deps
 
 # Image Generation (FLUX.2 Klein NF4 via diffusers)
 # diffusers installed from git main for Flux2KleinPipeline support

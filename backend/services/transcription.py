@@ -22,7 +22,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from config import (
     MODELS_DIR, WHISPER_MODEL_SIZE, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE,
     LANGUAGE_MODELS, LANGUAGE_PARAMS, CONTENT_TYPE_CONFIGS, MUSIC_GENRE_CONFIGS,
-    LANGUAGE_PROMPTS
+    LANGUAGE_PROMPTS, RTL_LANGUAGES
 )
 
 from services.engines import get_engine
@@ -47,8 +47,8 @@ class TranscriptionService:
         self.engine = get_engine()
         self.performance_metrics = {}
 
-        # RTL (Right-to-Left) languages that need special handling
-        self.RTL_LANGUAGES = {'ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'}
+        # RTL (Right-to-Left) languages — canonical list from config
+        self.RTL_LANGUAGES = set(RTL_LANGUAGES)
 
         # Register with VRAM manager
         from services.vram_manager import get_vram_manager
@@ -83,34 +83,40 @@ class TranscriptionService:
         }
     
     def preprocess_audio(self, audio_path: str, target_path: Optional[str] = None) -> str:
-        """Preprocess audio for better transcription quality"""
+        """Preprocess audio for better transcription quality.
+
+        Applies only safe, Whisper-compatible preprocessing: 16kHz resampling
+        and peak normalization.  Preemphasis is intentionally omitted — it was
+        a legacy HMM-era step and distorts spectral balance for transformer
+        models, especially for vowel-rich languages (Turkish, Arabic, etc.).
+        Vocal-isolated inputs are already clean 16kHz mono from the isolator.
+        """
         if not AUDIO_PROCESSING_AVAILABLE:
             logger.warning("Audio preprocessing unavailable (librosa not installed)")
             return audio_path
-        
+
         try:
             logger.info(f"Preprocessing audio: {audio_path}")
-            
-            # Load audio
-            y, sr = librosa.load(audio_path, sr=16000)  # Whisper expects 16kHz
-            
-            # Normalize audio
-            y = librosa.util.normalize(y)
-            
-            # Reduce noise (simple)
-            y = librosa.effects.preemphasis(y)
-            
+
+            # Load audio at 16kHz (Whisper's native sample rate)
+            y, sr = librosa.load(audio_path, sr=16000)
+
+            # Peak-normalize to 95% to avoid clipping without distorting spectrum
+            max_val = float(np.abs(y).max())
+            if max_val > 0:
+                y = y / max_val * 0.95
+
             # Save preprocessed audio
             if target_path is None:
                 base_path = Path(audio_path)
                 target_path = str(base_path.parent / f"{base_path.stem}_preprocessed{base_path.suffix}")
-            
+
             import soundfile as sf
             sf.write(target_path, y, sr)
-            
+
             logger.info(f"Audio preprocessed and saved to: {target_path}")
             return target_path
-            
+
         except Exception as e:
             logger.warning(f"Audio preprocessing failed: {e}")
             return audio_path
@@ -215,17 +221,12 @@ class TranscriptionService:
         return y
     
     def _apply_speech_preprocessing(self, y: "np.ndarray", sr: int, config: Dict) -> "np.ndarray":
-        """Apply speech-specific audio processing (standard)"""
-        try:
-            # Standard noise reduction
-            if config.get('noise_reduction') == 'standard':
-                y = librosa.effects.preemphasis(y)
-            elif config.get('noise_reduction') == 'enhanced':
-                y = librosa.effects.preemphasis(y, coef=0.97)
-                
-        except Exception as e:
-            logger.warning(f"Speech preprocessing failed: {e}")
-            
+        """Apply speech-specific audio processing.
+
+        Preemphasis is intentionally skipped — it is a legacy step that
+        distorts spectral balance for transformer-based ASR (Whisper).
+        Audio arriving here has already been normalized by the caller.
+        """
         return y
         
     def _get_device_and_compute(self) -> tuple:
@@ -268,9 +269,8 @@ class TranscriptionService:
         self.engine.load_model(model_id, device, compute_type)
 
         logger.info("Model loaded successfully!")
-    
-    # RTL (Right-to-Left) languages that need special handling
-    RTL_LANGUAGES = {'ar', 'fa', 'he', 'ur', 'ps', 'sd', 'yi'}
+
+    # Class-level RTL_LANGUAGES removed — uses self.RTL_LANGUAGES set in __init__ from config
 
     def _process_rtl_text(self, text: str, language: str) -> str:
         """Process RTL text for proper display using ArabicTextProcessor."""
@@ -301,9 +301,10 @@ class TranscriptionService:
         ]
 
         if language and language.lower() == 'tr':
-            # Turkish common hallucinations: subscribe, like, subtitles, thank you for watching
+            # Turkish common hallucinations: subscribe, like, thank you for watching
+            # Note: Removed "altyazı" (subtitles) - this is core to our application
             HALLUCINATION_PATTERNS.extend([
-                "abone ol", "beğen", "altyazı",
+                "abone ol", "beğen",
                 "izlediğiniz için teşekkürler",
             ])
 
@@ -326,7 +327,8 @@ class TranscriptionService:
                 continue
 
             # Skip near-duplicate of previous segment (stuttering/looping)
-            if prev_text and self._text_similarity(normalized, prev_text) > 0.85:
+            # Higher threshold for Turkish: character overlap is higher due to language structure
+            if prev_text and self._text_similarity(normalized, prev_text) > 0.95:
                 logger.info(f"Filtered near-duplicate: '{text[:40]}...'")
                 continue
 
@@ -341,9 +343,10 @@ class TranscriptionService:
                 continue
 
             # Skip segments where all words have very low probability
+            # Turkish Whisper models may produce lower confidence scores; threshold set conservatively
             if seg.get('words') and seg['words']:
                 avg_prob = sum(w.get('probability', 0) for w in seg['words']) / len(seg['words'])
-                if avg_prob < 0.25:
+                if avg_prob < 0.10:  # Lowered from 0.25 to allow more Turkish speech through
                     logger.info(f"Filtered low-confidence (avg_prob={avg_prob:.2f}): '{text[:40]}...'")
                     continue
 

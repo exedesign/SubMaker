@@ -288,6 +288,16 @@ function startPythonBackend() {
     : path.join(backendCwd, 'backend', 'venv', 'bin', 'python');
 
   const pythonCandidates = [];
+
+  // In production, check for bundled Python first (installed by Inno Setup)
+  if (!isDev) {
+    const bundledPython = path.join(process.resourcesPath, '..', 'python', 'python.exe');
+    if (fs.existsSync(bundledPython)) {
+      pythonCandidates.push(bundledPython);
+      console.log(`🐍 [MAIN] Found bundled Python: ${bundledPython}`);
+    }
+  }
+
   if (isDev && fs.existsSync(venvPython)) {
     pythonCandidates.push(venvPython);
     console.log(`🐍 [MAIN] Found venv Python: ${venvPython}`);
@@ -857,6 +867,12 @@ ipcMain.handle('fs:saveWithDialog', async (event, options) => {
   if (result.canceled || !result.filePath) return { canceled: true };
   fs.writeFileSync(result.filePath, options.content || '', 'utf-8');
   return { filePath: result.filePath };
+});
+
+// Read binary file
+ipcMain.handle('fs:readFile', (event, filePath) => {
+  const resolved = path.resolve(filePath);
+  return fs.readFileSync(resolved);
 });
 
 // =============================================================================

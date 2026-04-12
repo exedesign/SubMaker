@@ -1,8 +1,8 @@
-"""
-Vocal Isolation Service — dual specialized BS-Roformer models
+﻿"""
+Vocal Isolation Service â€” dual specialized BS-Roformer models
 
 Engine:
-  audio-separator (BS-Roformer — via PyTorch) — high quality 2-stem
+  audio-separator (BS-Roformer â€” via PyTorch) â€” high quality 2-stem
 
 Models:
   HyperACE v2 (Vocal):        Best vocal extraction, minimal instrumental leakage
@@ -78,7 +78,7 @@ def _verify_gpu_setup():
                 f"cuDNN {info['cudnn_version']} (enabled={info['cudnn']})"
             )
         else:
-            logger.warning("CUDA not available — vocal separation will use CPU (slower)")
+            logger.warning("CUDA not available â€” vocal separation will use CPU (slower)")
     except Exception as e:
         logger.warning(f"GPU check failed: {e}")
     try:
@@ -115,7 +115,7 @@ AVAILABLE_MODELS = {
         "engine": "mdx",
         "model_file": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
         "label": "BS-Roformer EP317 (Vocals)",
-        "description": "High quality vocal separation — SDR 12.97, BS-Roformer. Compatible with 8GB VRAM.",
+        "description": "High quality vocal separation â€” SDR 12.97, BS-Roformer. Compatible with 8GB VRAM.",
         "stems": ["vocals", "instrumental"],
         "speed": "medium",
     },
@@ -123,7 +123,7 @@ AVAILABLE_MODELS = {
         "engine": "mdx",
         "model_file": "bs_roformer_instrumental_resurrection_unwa.ckpt",
         "label": "Resurrection UNWA (Music)",
-        "description": "Cleanest instrumental output — minimal vocal leakage. BS-Roformer dim=256, compatible with 8GB VRAM.",
+        "description": "Cleanest instrumental output â€” minimal vocal leakage. BS-Roformer dim=256, compatible with 8GB VRAM.",
         "stems": ["vocals", "instrumental"],
         "speed": "medium",
     },
@@ -160,7 +160,7 @@ class VocalIsolator:
         self.models_dir = MODELS_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Model cache — keep loaded models in memory to avoid reloading
+        # Model cache â€” keep loaded models in memory to avoid reloading
         self._separator = None           # audio-separator Separator instance
         self._separator_model = None     # currently loaded model filename
         self._demucs_model = None        # cached Demucs PyTorch model
@@ -398,7 +398,7 @@ class VocalIsolator:
         # Pre-convert input to 44100Hz stereo WAV with padding.
         # BS-Roformer models expect 44100Hz stereo PCM; feeding MP3/other
         # formats directly causes tensor size mismatches in STFT.
-        # Short audio (< 20s) is padded with silence — UNWA's chunk_size
+        # Short audio (< 20s) is padded with silence â€” UNWA's chunk_size
         # is ~17s at 44100Hz, and audio shorter than one chunk causes
         # "size of tensor a (0) must match size of tensor b (N)" errors.
         # The unique preconv filename ensures output filenames from
@@ -421,20 +421,26 @@ class VocalIsolator:
             if src_duration > 0 and src_duration < min_duration_sec:
                 # Pad with silence to minimum duration
                 pad_secs = min_duration_sec - src_duration
+                # Suppress FFmpeg metadata warnings (e.g., "Incorrect BOM value" from broken MP3 ID3 tags)
                 subprocess.run(
-                    ["ffmpeg", "-y", "-i", audio_path,
+                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "quiet",
+                     "-i", audio_path,
                      "-af", f"apad=pad_dur={pad_secs}",
                      "-ar", "44100", "-ac", "2", "-acodec", "pcm_s16le",
-                     "-loglevel", "error", temp_wav],
-                    check=True, timeout=120
+                     "-vn", temp_wav],
+                    check=True, timeout=120,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
                 logger.info(f"Pre-converted to 44100Hz stereo WAV with {pad_secs:.1f}s padding (src={src_duration:.1f}s)")
             else:
+                # Suppress FFmpeg metadata warnings (e.g., "Incorrect BOM value" from broken MP3 ID3 tags)
                 subprocess.run(
-                    ["ffmpeg", "-y", "-i", audio_path,
+                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "quiet",
+                     "-i", audio_path,
                      "-ar", "44100", "-ac", "2", "-acodec", "pcm_s16le",
-                     "-loglevel", "error", temp_wav],
-                    check=True, timeout=120
+                     "-vn", temp_wav],
+                    check=True, timeout=120,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
                 logger.info(f"Pre-converted to 44100Hz stereo WAV: {temp_wav}")
             actual_input = temp_wav
@@ -625,7 +631,7 @@ class VocalIsolator:
 
         start = time.time()
 
-        # Resolve device — prefer CUDA (NVIDIA GPU), fallback to CPU
+        # Resolve device â€” prefer CUDA (NVIDIA GPU), fallback to CPU
         if self.demucs_device == "auto":
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -695,7 +701,7 @@ class VocalIsolator:
         apply_thread = threading.Thread(target=_run_apply, daemon=True)
         apply_thread.start()
 
-        # Send intermediate progress while apply_model runs (25% → 75%)
+        # Send intermediate progress while apply_model runs (25% â†’ 75%)
         fake_pct = 25
         while not apply_done.wait(timeout=3.0):
             if fake_pct < 75:
@@ -756,7 +762,7 @@ class VocalIsolator:
                 sf.write(hq_path, stem_data.T if stem_data.ndim == 2 else stem_data,
                          sr, subtype="PCM_16")
                 result["stems"][stem_name] = hq_path
-                logger.info(f"Stem saved: {stem_name} → {hq_path}")
+                logger.info(f"Stem saved: {stem_name} â†’ {hq_path}")
 
             # Also create combined instrumental (drums + bass + other)
             non_vocal_stems = [stems_np[s] for s in ["drums", "bass", "other"] if s in stems_np]
@@ -921,9 +927,9 @@ class VocalIsolator:
         Dual-model separation: each model runs only for its specialized output.
 
         EP317  (model_bs_roformer_ep_317_sdr_12.9755.ckpt)
-               → best vocal extraction + whisper_path (mono 16kHz)
+               â†’ best vocal extraction + whisper_path (mono 16kHz)
         UNWA   (bs_roformer_instrumental_resurrection_unwa.ckpt)
-               → cleanest instrumental output for karaoke
+               â†’ cleanest instrumental output for karaoke
 
         Args:
             selected_stems: list of stems to extract, e.g. ['vocals', 'instrumental'].
@@ -950,7 +956,7 @@ class VocalIsolator:
         EP317_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
         UNWA_MODEL  = "bs_roformer_instrumental_resurrection_unwa.ckpt"
 
-        # ── cache check ──────────────────────────────────────────────────
+        # â”€â”€ cache check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Cache keys must match what _separate_mdx writes ("mdx_<model_filename>")
         ep317_cache_id = f"mdx_{EP317_MODEL}"
         unwa_cache_id  = f"mdx_{UNWA_MODEL}"
@@ -982,7 +988,7 @@ class VocalIsolator:
                 "cached": True,
             }
 
-        # ── determine progress slices ─────────────────────────────────────
+        # â”€â”€ determine progress slices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # vocals_cached_whisper / vocals_hq_cached may be partially cached
         run_ep317 = need_vocals and not (vocals_cached_whisper and vocals_hq_cached)
         run_unwa  = need_instrumental and not instr_hq_cached
@@ -992,7 +998,7 @@ class VocalIsolator:
         result_stems: Dict = {}
         whisper_path = vocals_cached_whisper  # may already be cached
 
-        # ── EP317: vocals ─────────────────────────────────────────────────
+        # â”€â”€ EP317: vocals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if run_ep317:
             def ep317_progress(pct, msg=""):
                 if progress_callback:
@@ -1010,7 +1016,7 @@ class VocalIsolator:
         elif need_vocals and vocals_hq_cached:
             result_stems["vocals"] = vocals_hq_cached
 
-        # ── UNWA: instrumental ────────────────────────────────────────────
+        # â”€â”€ UNWA: instrumental â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if run_unwa:
             def unwa_progress(pct, msg=""):
                 if progress_callback:
@@ -1057,7 +1063,7 @@ class VocalIsolator:
             subprocess.run([
                 "ffmpeg", "-y", "-i", input_path,
                 "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
-                "-loglevel", "error",
+                "-hide_banner", "-loglevel", "quiet",
                 output_path
             ], capture_output=True, check=True, timeout=120)
             logger.info(f"Converted to Whisper format: {output_path}")
@@ -1117,3 +1123,6 @@ class VocalIsolator:
             shutil.rmtree(self.cache_dir)
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             logger.info("Vocal cache cleared")
+
+
+

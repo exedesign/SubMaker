@@ -794,7 +794,8 @@ class VideoGenerator:
         # Background: ensure correct format and size
         if is_video_input:
             # Video-input mode: scale the source video to target resolution
-            filter_parts.append(f"[0:v]{scale_fn}={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[bg]")
+            # setsar=1:1 normalizes sample aspect ratio so libass computes positions correctly
+            filter_parts.append(f"[0:v]{scale_fn}={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1:1,format=yuv420p[bg]")
             current_output = "[bg]"
             print(f"[VideoGen] Video-input: scaling source video to {width}x{height}")
         else:
@@ -857,7 +858,9 @@ class VideoGenerator:
         # Subtitle filter — always last in the chain
         subtitle_path_escaped = subtitle_path.replace("\\", "/").replace(":", r"\:")
         if subtitle_path.endswith(".ass"):
-            subtitle_filter = f"ass='{subtitle_path_escaped}'"
+            # original_size explicitly tells libass the frame dimensions for subtitle layout,
+            # ensuring consistent positioning regardless of input type (video vs generated bg)
+            subtitle_filter = f"ass='{subtitle_path_escaped}':original_size={width}x{height}"
             if ASS_PERFORMANCE_MODE:
                 if ASS_SHAPER_SIMPLE:
                     subtitle_filter += ":shaping=simple"

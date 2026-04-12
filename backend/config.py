@@ -36,6 +36,7 @@ QWEN_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct-AWQ"
 
 # FLUX.2 Klein 4B settings (loaded with BitsAndBytes NF4 quantization)
 FLUX_KLEIN_MODEL_REPO = "black-forest-labs/FLUX.2-klein-4B"
+FLUX_KLEIN_LOCAL_DIR = MODELS_DIR / "flux-klein-4b"
 
 # Cover Art Model Registry — all available image generation models
 COVER_ART_MODELS = {
@@ -126,9 +127,9 @@ LANGUAGE_PARAMS = {
 # toward the correct character set and vocabulary for each language.
 LANGUAGE_PROMPTS = {
     'tr': {
-        'music': "This is a Turkish song. Lyrics:",
-        'speech': "This is a Turkish speech transcription.",
-        'podcast': "This is a Turkish podcast transcription.",
+        'music': "Bu bir Türkçe şarkıdır. Sözler:",
+        'speech': "Bu bir Türkçe konuşmadır.",
+        'podcast': "Bu bir Türkçe podcast yayınıdır.",
     },
     'en': {
         'music': "These are English song lyrics.",
@@ -274,8 +275,12 @@ MUSIC_GENRE_CONFIGS = {
     }
 }
 
-# FFmpeg settings
-FFMPEG_PATH = "ffmpeg"  # Use system ffmpeg or specify full path
+# FFmpeg settings — check for bundled ffmpeg first (Inno Setup installer)
+_bundled_ffmpeg = BASE_DIR.parent / "ffmpeg" / ("ffmpeg.exe" if os.name == 'nt' else "ffmpeg")
+if _bundled_ffmpeg.exists():
+    FFMPEG_PATH = str(_bundled_ffmpeg)
+else:
+    FFMPEG_PATH = "ffmpeg"  # Fallback to system PATH
 
 # Video settings - 4K Resolution Standard (used as ASS design resolution)
 VIDEO_FORMATS = {
@@ -319,7 +324,7 @@ BACKGROUND_QUALITY = 95  # JPEG quality for preprocessed images (90-100)
 # ASS Subtitle Performance Settings for 4K Karaoke
 ASS_PERFORMANCE_MODE = True  # Enable optimized ASS rendering
 ASS_FONT_CACHE = True        # Enable font caching
-ASS_SHAPER_SIMPLE = True     # Use simple text shaping (faster)
+ASS_SHAPER_SIMPLE = False    # Use complex (HarfBuzz) text shaping — required for Arabic, Devanagari, Thai etc.
 
 HARDWARE_CODECS = {
     "nvidia": {
@@ -367,7 +372,7 @@ SUPPORTED_LANGUAGES = [
 ]
 
 # RTL Languages
-RTL_LANGUAGES = ["ar", "he", "fa", "ur"]
+RTL_LANGUAGES = ["ar", "he", "fa", "ur", "yi", "ps", "sd", "ug"]
 
 # Output formats
 OUTPUT_FORMATS = {

@@ -23,6 +23,90 @@
       height: 100vh;
     }
   </style>
+  <script>
+    (function applyInitialTheme() {
+      var STORAGE_KEY = 'submaker-ui-preferences';
+      var THEME_VARS = {
+        'default': {
+          '--bg-primary': '#1a1a2e',
+          '--bg-secondary': '#16213e',
+          '--bg-tertiary': '#0f3460',
+          '--bg-card': '#1f2544',
+          '--bg-hover': '#2a3158',
+          '--text-primary': '#ffffff',
+          '--text-secondary': '#a0aec0',
+          '--text-muted': '#718096',
+          '--accent-primary': '#e94560',
+          '--accent-secondary': '#0f4c75',
+          '--border-color': '#2d3748',
+          '--border-light': '#4a5568'
+        },
+        'black-green': {
+          '--bg-primary': '#0d0d0d',
+          '--bg-secondary': '#141414',
+          '--bg-tertiary': '#1a1a1a',
+          '--bg-card': '#171717',
+          '--bg-hover': '#222222',
+          '--text-primary': '#e0e0e0',
+          '--text-secondary': '#8a8a8a',
+          '--text-muted': '#5c5c5c',
+          '--accent-primary': '#00e676',
+          '--accent-secondary': '#004d40',
+          '--border-color': '#2a2a2a',
+          '--border-light': '#3a3a3a'
+        },
+        'black-red': {
+          '--bg-primary': '#0d0d0d',
+          '--bg-secondary': '#141414',
+          '--bg-tertiary': '#1a1a1a',
+          '--bg-card': '#171717',
+          '--bg-hover': '#222222',
+          '--text-primary': '#e0e0e0',
+          '--text-secondary': '#8a8a8a',
+          '--text-muted': '#5c5c5c',
+          '--accent-primary': '#ff1744',
+          '--accent-secondary': '#4a0012',
+          '--border-color': '#2a2a2a',
+          '--border-light': '#3a3a3a'
+        },
+        'anthracite-blue': {
+          '--bg-primary': '#1c1f26',
+          '--bg-secondary': '#22252e',
+          '--bg-tertiary': '#2a2e38',
+          '--bg-card': '#252830',
+          '--bg-hover': '#2e323c',
+          '--text-primary': '#e8eaed',
+          '--text-secondary': '#9aa0a6',
+          '--text-muted': '#6b7280',
+          '--accent-primary': '#2196f3',
+          '--accent-secondary': '#0d47a1',
+          '--border-color': '#363a44',
+          '--border-light': '#464b56'
+        }
+      };
+
+      try {
+        var raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+
+        var saved = JSON.parse(raw);
+        var colorTheme = saved && saved.settings && saved.settings.colorTheme;
+        var vars = THEME_VARS[colorTheme] || THEME_VARS['default'];
+        var root = document.documentElement;
+
+        for (var key in vars) {
+          if (Object.prototype.hasOwnProperty.call(vars, key)) {
+            root.style.setProperty(key, vars[key]);
+          }
+        }
+
+        document.body.style.background = vars['--bg-primary'];
+        document.body.style.color = vars['--text-primary'];
+      } catch (e) {
+        // Ignore parse/storage errors and keep defaults.
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

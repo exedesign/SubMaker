@@ -419,22 +419,6 @@ function VideoPreview() {
           </div>
         )}
         
-        {/* DEBUG: Always visible test */}
-        <div 
-          style={{
-            position: 'absolute',
-            top: '5px',
-            left: '5px',
-            backgroundColor: 'red',
-            color: 'white',
-            padding: '5px',
-            fontSize: '12px',
-            zIndex: 9999,
-          }}
-        >
-          VideoPreview Active
-        </div>
-        
         {/* Subtitle Overlay - Secondary (Translated) */}
         {settings?.dualSubtitleEnabled && (
           <div 
