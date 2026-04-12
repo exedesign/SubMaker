@@ -207,7 +207,7 @@ CONTENT_TYPE_CONFIGS = {
         }
     },
     'music': {
-        'default_model': 'large-v3',
+        'default_model': 'turbo',
         'preprocessing': {
             'vocal_isolation': True,
             'noise_reduction': 'enhanced',

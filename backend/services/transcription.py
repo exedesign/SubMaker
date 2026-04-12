@@ -280,7 +280,7 @@ class TranscriptionService:
     def _detect_vocal_segments(
         y: "np.ndarray",
         sr: int,
-        threshold_db: float = -35.0,
+        threshold_db: float = -40.0,
         min_silence_sec: float = 2.0,
         min_vocal_sec: float = 1.0,
         pad_sec: float = 0.3,
@@ -574,10 +574,11 @@ class TranscriptionService:
                 continue
 
             # Skip segments where all words have very low probability
-            # Turkish Whisper models may produce lower confidence scores; threshold set conservatively
-            if seg.get('words') and seg['words']:
+            # Disabled for music — singing naturally produces lower confidence
+            # scores and the user wants ALL vocal text even if uncertain.
+            if not is_music and seg.get('words') and seg['words']:
                 avg_prob = sum(w.get('probability', 0) for w in seg['words']) / len(seg['words'])
-                if avg_prob < 0.10:  # Lowered from 0.25 to allow more Turkish speech through
+                if avg_prob < 0.10:
                     logger.info(f"Filtered low-confidence (avg_prob={avg_prob:.2f}): '{text[:40]}...'")
                     continue
 
@@ -615,15 +616,11 @@ class TranscriptionService:
         Whisper processes audio in 30-second windows.  When a vocal-
         isolated track has long silent stretches (instrumental breaks),
         the decoder enters a hallucination loop at the silence→vocal
-        transition and produces garbage text ("Altyazı M.K.", etc.)
-        instead of the actual lyrics.
+        transition and produces garbage text instead of lyrics.
 
-        This method solves the problem by:
-        1. Detecting vocal regions via RMS energy thresholding.
-        2. Extracting each vocal region into a separate audio buffer.
-        3. Applying DRC + normalization per chunk.
-        4. Transcribing each chunk independently (Whisper starts fresh).
-        5. Shifting timestamps back to the original timeline.
+        This method detects vocal regions by RMS energy, then transcribes
+        each region independently.  Each region is DRC-compressed and
+        peak-normalised before transcription.
 
         Returns the same dict structure as ``engine.transcribe()``.
         """
@@ -651,38 +648,36 @@ class TranscriptionService:
             )
 
         all_segments = []
-        seg_id = 0
         detected_language = language or "en"
         language_probability = 0.0
+        total_regions = len(vocal_segments)
 
-        for chunk_idx, (chunk_start, chunk_end) in enumerate(vocal_segments):
-            start_sample = int(chunk_start * sr)
-            end_sample = min(int(chunk_end * sr), len(y))
+        for ri, (region_start, region_end) in enumerate(vocal_segments):
+            start_sample = int(region_start * sr)
+            end_sample = min(int(region_end * sr), len(y))
             chunk_audio = y[start_sample:end_sample]
             chunk_duration = len(chunk_audio) / sr
 
             if chunk_duration < 0.5:
                 continue
 
-            logger.info(f"Transcribing chunk {chunk_idx + 1}/{len(vocal_segments)}: "
-                        f"{chunk_start:.1f}-{chunk_end:.1f}s ({chunk_duration:.1f}s)")
+            logger.info(f"Transcribing region {ri + 1}/{total_regions}: "
+                        f"{region_start:.1f}-{region_end:.1f}s ({chunk_duration:.1f}s)")
 
-            # Apply DRC + normalize per chunk
+            # Apply DRC + normalize per region
             chunk_audio = self._apply_dynamic_range_compression(chunk_audio, sr)
             max_val = float(np.abs(chunk_audio).max())
             if max_val > 0:
                 chunk_audio = chunk_audio / max_val * 0.95
 
             # Write to temp file
-            chunk_path = str(Path(vocal_audio_path).parent / f"_chunk_{chunk_idx}.wav")
+            chunk_path = str(Path(vocal_audio_path).parent / f"_chunk_{ri}.wav")
             sf.write(chunk_path, chunk_audio, sr)
 
             # Progress
             if progress_callback:
-                base_pct = 55
-                chunk_pct = int((chunk_idx / len(vocal_segments)) * 35)
-                progress_callback(base_pct + chunk_pct,
-                                  f"Transcribing chunk {chunk_idx + 1}/{len(vocal_segments)}...")
+                pct = 55 + int((ri / total_regions) * 35)
+                progress_callback(pct, f"Transcribing region {ri + 1}/{total_regions}...")
 
             try:
                 chunk_result = self.engine.transcribe(
@@ -693,33 +688,35 @@ class TranscriptionService:
                     **engine_params,
                 )
 
-                # Update detected language from first chunk
-                if chunk_idx == 0:
+                # Update detected language from first region
+                if ri == 0:
                     detected_language = chunk_result.get("language", detected_language)
                     language_probability = chunk_result.get("language_probability", 0)
 
                 # Offset timestamps to original timeline
                 for seg in chunk_result["segments"]:
-                    seg_id += 1
-                    seg["id"] = seg_id
-                    seg["start"] = round(seg["start"] + chunk_start, 3)
-                    seg["end"] = round(seg["end"] + chunk_start, 3)
+                    seg["start"] = round(seg["start"] + region_start, 3)
+                    seg["end"] = round(seg["end"] + region_start, 3)
                     if "words" in seg:
                         for w in seg["words"]:
-                            w["start"] = round(w["start"] + chunk_start, 3)
-                            w["end"] = round(w["end"] + chunk_start, 3)
+                            w["start"] = round(w["start"] + region_start, 3)
+                            w["end"] = round(w["end"] + region_start, 3)
                     all_segments.append(seg)
 
             except Exception as e:
-                logger.warning(f"Chunk {chunk_idx + 1} transcription failed: {e}")
+                logger.warning(f"Region {ri + 1} transcription failed: {e}")
             finally:
                 try:
                     os.remove(chunk_path)
                 except OSError:
                     pass
 
-        logger.info(f"Chunk-based transcription: {len(all_segments)} total segments "
-                    f"from {len(vocal_segments)} chunks")
+        # Re-number IDs
+        for i, seg in enumerate(all_segments):
+            seg["id"] = i + 1
+
+        logger.info(f"Chunk-based transcription: {len(all_segments)} segments "
+                    f"from {total_regions} regions")
 
         return {
             "segments": all_segments,
@@ -811,9 +808,9 @@ class TranscriptionService:
             # Check if language has specific requirements
             lang_model = self.get_optimal_model_size(language)
             # Use the larger of content-type requirement or language requirement
-            model_priority = ['tiny', 'base', 'small', 'medium', 'large-v3']
-            content_idx = model_priority.index(optimal_model) if optimal_model in model_priority else 2
-            lang_idx = model_priority.index(lang_model) if lang_model in model_priority else 2
+            model_priority = ['tiny', 'base', 'small', 'medium', 'distil-large-v3', 'turbo', 'large-v3']
+            content_idx = model_priority.index(optimal_model) if optimal_model in model_priority else 5
+            lang_idx = model_priority.index(lang_model) if lang_model in model_priority else 5
             optimal_model = model_priority[max(content_idx, lang_idx)]
 
         logger.info(f"Using optimal model: {optimal_model} for {content_type}")
