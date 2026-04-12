@@ -465,6 +465,10 @@ class VocalIsolator:
                     progress_callback(scaled, f"Separating... {self.n}/{self.total}")
 
         _tqdm_mod.tqdm.update = _tqdm_progress_hook
+
+        # Snapshot existing files in cache_dir before separation so we can detect new ones
+        pre_existing = set(str(f) for f in self.cache_dir.iterdir() if f.is_file())
+
         try:
             output_files = sep.separate(actual_input)
         except SystemExit as e:
@@ -525,6 +529,28 @@ class VocalIsolator:
             pass
 
         logger.info(f"Separation complete, output files: {output_files}")
+
+        # Fallback: if audio-separator returned empty list but wrote files to disk,
+        # scan cache_dir for files matching the pre-converted input stem.
+        if not output_files:
+            logger.warning(f"sep.separate() returned empty list, scanning output directory for results...")
+            input_stem = Path(actual_input).stem  # e.g. "_preconv_abc12345"
+            found = sorted(self.cache_dir.glob(f"{input_stem}*.*"))
+            # Exclude the pre-converted input itself
+            found = [str(f) for f in found if str(f) != actual_input and f.suffix.lower() in (".wav", ".flac", ".mp3")]
+            if found:
+                logger.info(f"Found output files via stem match: {found}")
+                output_files = found
+            else:
+                # Detect newly created files by comparing with pre-separation snapshot
+                new_files = []
+                for f in self.cache_dir.iterdir():
+                    if f.is_file() and str(f) not in pre_existing and not f.name.startswith("_preconv_"):
+                        if f.suffix.lower() in (".wav", ".flac", ".mp3"):
+                            new_files.append(str(f))
+                if new_files:
+                    logger.info(f"Found new output files via snapshot diff: {new_files}")
+                    output_files = sorted(new_files)
 
         if not output_files:
             raise RuntimeError(f"MDX separation produced no output files for: {audio_path}")
