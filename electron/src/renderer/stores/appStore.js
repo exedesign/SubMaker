@@ -685,7 +685,29 @@ export const useAppStore = create((set, get) => ({
     set({ renderAbortController: abortController });
 
     // If vocal isolation is enabled but stems don't exist yet, run separation first
-    const hasVocalsTrack = audioMixer.enabled && audioMixer.tracks.vocals;
+    let hasVocalsTrack = audioMixer.enabled && audioMixer.tracks.vocals;
+
+    // Verify cached vocal file still exists on disk (user may have deleted temp/)
+    if (hasVocalsTrack) {
+      const cachedPath = audioMixer.tracks.vocals.filePath;
+      let fileExists = false;
+      try {
+        if (window.electronAPI?.fileExists) {
+          fileExists = await window.electronAPI.fileExists(cachedPath);
+        } else {
+          // Browser fallback: ask backend
+          const resp = await fetch(`http://localhost:5000/api/media/local?path=${encodeURIComponent(cachedPath)}`, { method: 'HEAD' });
+          fileExists = resp.ok;
+        }
+      } catch { fileExists = false; }
+
+      if (!fileExists) {
+        console.log('[Transcribe] Cached vocal file missing, re-running separation:', cachedPath);
+        set({ audioMixer: { enabled: false, tracks: {}, masterVolume: 1.0, masterMuted: false, showTimelineTracks: false } });
+        hasVocalsTrack = false;
+      }
+    }
+
     if (vocalIsolation && !hasVocalsTrack) {
       console.log('[Transcribe] Vocal isolation enabled — running separation first...');
       set({

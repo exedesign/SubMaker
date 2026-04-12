@@ -173,6 +173,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readTextFile: (filePath) => ipcRenderer.invoke('fs:readTextFile', filePath),
   writeTextFile: (filePath, content) => ipcRenderer.invoke('fs:writeTextFile', filePath, content),
   readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
+  fileExists: (filePath) => ipcRenderer.invoke('fs:fileExists', filePath),
   saveWithDialog: (options) => ipcRenderer.invoke('fs:saveWithDialog', options),
 
   // Drag-and-drop path capture (preload has privileged access to File.path)

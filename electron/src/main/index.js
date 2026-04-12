@@ -869,6 +869,16 @@ ipcMain.handle('fs:saveWithDialog', async (event, options) => {
   return { filePath: result.filePath };
 });
 
+// Check if a file exists on disk
+ipcMain.handle('fs:fileExists', (event, filePath) => {
+  try {
+    const resolved = path.resolve(filePath);
+    return fs.existsSync(resolved);
+  } catch {
+    return false;
+  }
+});
+
 // Read binary file
 ipcMain.handle('fs:readFile', (event, filePath) => {
   const resolved = path.resolve(filePath);
