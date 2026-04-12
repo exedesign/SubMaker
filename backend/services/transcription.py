@@ -275,7 +275,80 @@ class TranscriptionService:
             logger.info("Dynamic range compression: no significant boost needed")
 
         return y_compressed
-    
+
+    @staticmethod
+    def _detect_vocal_segments(
+        y: "np.ndarray",
+        sr: int,
+        threshold_db: float = -35.0,
+        min_silence_sec: float = 2.0,
+        min_vocal_sec: float = 1.0,
+        pad_sec: float = 0.3,
+    ) -> List[tuple]:
+        """Detect contiguous vocal regions by RMS energy.
+
+        Returns a list of ``(start_sec, end_sec)`` tuples, each
+        representing a segment where the vocal energy is above
+        *threshold_db*.  Short gaps (< *min_silence_sec*) are merged
+        into the surrounding vocal region and each segment is padded by
+        *pad_sec* for a natural onset / decay.
+
+        This is NOT the same as Silero VAD (which detects *speech*
+        patterns and fails on singing).  Simple energy thresholding
+        works perfectly on vocal-isolated tracks because the separator
+        already removed instrumental energy — anything above the noise
+        floor is vocals.
+        """
+        frame_length = int(0.05 * sr)   # 50 ms
+        hop_length = int(0.025 * sr)    # 25 ms
+
+        # Per-frame RMS
+        frames = librosa.util.frame(y, frame_length=frame_length, hop_length=hop_length)
+        rms = np.sqrt(np.mean(frames ** 2, axis=0))
+        rms_db = 20 * np.log10(rms + 1e-10)
+
+        # Boolean mask: True where energy exceeds threshold
+        is_vocal = rms_db > threshold_db
+
+        # Convert frame mask → sample-level time boundaries
+        segments = []
+        in_vocal = False
+        seg_start = 0.0
+        for i, v in enumerate(is_vocal):
+            t = i * hop_length / sr
+            if v and not in_vocal:
+                seg_start = t
+                in_vocal = True
+            elif not v and in_vocal:
+                seg_end = t
+                if seg_end - seg_start >= min_vocal_sec:
+                    segments.append((seg_start, seg_end))
+                in_vocal = False
+        if in_vocal:
+            seg_end = len(y) / sr
+            if seg_end - seg_start >= min_vocal_sec:
+                segments.append((seg_start, seg_end))
+
+        # Merge segments separated by short silence
+        if len(segments) > 1:
+            merged = [segments[0]]
+            for start, end in segments[1:]:
+                prev_start, prev_end = merged[-1]
+                if start - prev_end < min_silence_sec:
+                    merged[-1] = (prev_start, end)
+                else:
+                    merged.append((start, end))
+            segments = merged
+
+        # Add padding
+        duration = len(y) / sr
+        segments = [
+            (max(0.0, s - pad_sec), min(duration, e + pad_sec))
+            for s, e in segments
+        ]
+
+        return segments
+
     def preprocess_music_audio(
         self, 
         audio_path: str, 
@@ -528,6 +601,133 @@ class TranscriptionService:
         union = len(set_a | set_b)
         return intersection / union if union > 0 else 0.0
 
+    def _transcribe_vocal_chunks(
+        self,
+        vocal_audio_path: str,
+        language: Optional[str],
+        task: str,
+        word_timestamps: bool,
+        progress_callback: Optional[callable],
+        engine_params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Chunk-based transcription for vocal-isolated tracks.
+
+        Whisper processes audio in 30-second windows.  When a vocal-
+        isolated track has long silent stretches (instrumental breaks),
+        the decoder enters a hallucination loop at the silence→vocal
+        transition and produces garbage text ("Altyazı M.K.", etc.)
+        instead of the actual lyrics.
+
+        This method solves the problem by:
+        1. Detecting vocal regions via RMS energy thresholding.
+        2. Extracting each vocal region into a separate audio buffer.
+        3. Applying DRC + normalization per chunk.
+        4. Transcribing each chunk independently (Whisper starts fresh).
+        5. Shifting timestamps back to the original timeline.
+
+        Returns the same dict structure as ``engine.transcribe()``.
+        """
+        import soundfile as sf
+
+        y, sr = librosa.load(vocal_audio_path, sr=16000)
+        total_duration = len(y) / sr
+
+        # Detect vocal regions
+        vocal_segments = self._detect_vocal_segments(y, sr)
+        logger.info(
+            f"Vocal chunk detection: {len(vocal_segments)} regions in "
+            f"{total_duration:.1f}s track: "
+            + ", ".join(f"{s:.0f}-{e:.0f}s" for s, e in vocal_segments)
+        )
+
+        if not vocal_segments:
+            logger.warning("No vocal regions detected — falling back to full-file transcription")
+            processed = self.preprocess_audio(vocal_audio_path)
+            return self.engine.transcribe(
+                processed, language=language, task=task,
+                word_timestamps=word_timestamps,
+                progress_callback=progress_callback,
+                **engine_params,
+            )
+
+        all_segments = []
+        seg_id = 0
+        detected_language = language or "en"
+        language_probability = 0.0
+
+        for chunk_idx, (chunk_start, chunk_end) in enumerate(vocal_segments):
+            start_sample = int(chunk_start * sr)
+            end_sample = min(int(chunk_end * sr), len(y))
+            chunk_audio = y[start_sample:end_sample]
+            chunk_duration = len(chunk_audio) / sr
+
+            if chunk_duration < 0.5:
+                continue
+
+            logger.info(f"Transcribing chunk {chunk_idx + 1}/{len(vocal_segments)}: "
+                        f"{chunk_start:.1f}-{chunk_end:.1f}s ({chunk_duration:.1f}s)")
+
+            # Apply DRC + normalize per chunk
+            chunk_audio = self._apply_dynamic_range_compression(chunk_audio, sr)
+            max_val = float(np.abs(chunk_audio).max())
+            if max_val > 0:
+                chunk_audio = chunk_audio / max_val * 0.95
+
+            # Write to temp file
+            chunk_path = str(Path(vocal_audio_path).parent / f"_chunk_{chunk_idx}.wav")
+            sf.write(chunk_path, chunk_audio, sr)
+
+            # Progress
+            if progress_callback:
+                base_pct = 55
+                chunk_pct = int((chunk_idx / len(vocal_segments)) * 35)
+                progress_callback(base_pct + chunk_pct,
+                                  f"Transcribing chunk {chunk_idx + 1}/{len(vocal_segments)}...")
+
+            try:
+                chunk_result = self.engine.transcribe(
+                    chunk_path,
+                    language=language,
+                    task=task,
+                    word_timestamps=word_timestamps,
+                    **engine_params,
+                )
+
+                # Update detected language from first chunk
+                if chunk_idx == 0:
+                    detected_language = chunk_result.get("language", detected_language)
+                    language_probability = chunk_result.get("language_probability", 0)
+
+                # Offset timestamps to original timeline
+                for seg in chunk_result["segments"]:
+                    seg_id += 1
+                    seg["id"] = seg_id
+                    seg["start"] = round(seg["start"] + chunk_start, 3)
+                    seg["end"] = round(seg["end"] + chunk_start, 3)
+                    if "words" in seg:
+                        for w in seg["words"]:
+                            w["start"] = round(w["start"] + chunk_start, 3)
+                            w["end"] = round(w["end"] + chunk_start, 3)
+                    all_segments.append(seg)
+
+            except Exception as e:
+                logger.warning(f"Chunk {chunk_idx + 1} transcription failed: {e}")
+            finally:
+                try:
+                    os.remove(chunk_path)
+                except OSError:
+                    pass
+
+        logger.info(f"Chunk-based transcription: {len(all_segments)} total segments "
+                    f"from {len(vocal_segments)} chunks")
+
+        return {
+            "segments": all_segments,
+            "language": detected_language,
+            "language_probability": language_probability,
+            "duration": total_duration,
+        }
+
     def transcribe_with_content_type(
         self,
         audio_path: str,
@@ -596,16 +796,14 @@ class TranscriptionService:
         # Audio preprocessing (applied to isolated vocals or original)
         if progress_callback:
             progress_callback(42, "Pre-processing audio...")
-        if vocal_isolation_applied:
-            # Vocal-isolated tracks need silence trimming (instrumental intro/outro
-            # becomes dead silence) + DRC + normalize — preprocess_audio() handles all.
-            processed_audio_path = self.preprocess_audio(vocal_audio_path)
-        else:
+        if not vocal_isolation_applied:
             processed_audio_path = self.preprocess_music_audio(
                 vocal_audio_path,
                 content_type=content_type,
                 genre=content_genre
             )
+        else:
+            processed_audio_path = vocal_audio_path  # chunks handle their own preprocessing
 
         # Determine optimal model size based on content type
         optimal_model = config['default_model']
@@ -663,9 +861,7 @@ class TranscriptionService:
         if is_rtl:
             logger.info(f"RTL language detected: {language} - using optimized settings")
         
-        # Transcribe via ASR engine with optimized parameters
-        if progress_callback:
-            progress_callback(50, "Transcription started...")
+        # Build initial_prompt and user overrides
         if is_rtl:
             params['initial_prompt'] = ""  # RTL: empty prompt prevents garbled output
         elif language and language.lower() in LANGUAGE_PROMPTS:
@@ -682,31 +878,30 @@ class TranscriptionService:
                     params[key] = value
                     logger.info(f"User override: {key} = {value}")
 
-        result = self.engine.transcribe(
-            processed_audio_path,
-            language=language,
-            task=task,
-            word_timestamps=word_timestamps,
-            progress_callback=progress_callback,
-            **params
-        )
+        # --- Transcription ---
+        if progress_callback:
+            progress_callback(50, "Transcription started...")
+
+        if vocal_isolation_applied and AUDIO_PROCESSING_AVAILABLE:
+            # Chunk-based transcription: detect vocal regions by energy,
+            # transcribe each independently.  This prevents Whisper from
+            # hallucinating at silence→vocal transitions.
+            result = self._transcribe_vocal_chunks(
+                vocal_audio_path, language, task, word_timestamps,
+                progress_callback, params,
+            )
+        else:
+            result = self.engine.transcribe(
+                processed_audio_path,
+                language=language,
+                task=task,
+                word_timestamps=word_timestamps,
+                progress_callback=progress_callback,
+                **params
+            )
 
         total_duration = result.get("duration", 0)
         result_segments = result["segments"]
-
-        # If leading silence was trimmed during preprocessing, shift all timestamps
-        # back to align with the original audio/video timeline
-        preprocess_offset = getattr(self, '_preprocess_offset', 0.0)
-        if preprocess_offset > 0:
-            logger.info(f"Applying timestamp offset +{preprocess_offset:.2f}s for trimmed silence")
-            total_duration += preprocess_offset
-            for seg in result_segments:
-                seg["start"] = round(seg["start"] + preprocess_offset, 3)
-                seg["end"] = round(seg["end"] + preprocess_offset, 3)
-                if "words" in seg:
-                    for w in seg["words"]:
-                        w["start"] = round(w["start"] + preprocess_offset, 3)
-                        w["end"] = round(w["end"] + preprocess_offset, 3)
 
         logger.info(f"Detected language: {result['language']} (probability: {result.get('language_probability', 0):.2f})")
         logger.info(f"Duration: {total_duration:.2f}s")
