@@ -433,11 +433,14 @@ class TranscriptionService:
             logger.warning("Arabic support libraries not available for RTL processing")
         return text
 
-    def _filter_hallucinations(self, segments: List[Dict], language: Optional[str] = None) -> List[Dict]:
+    def _filter_hallucinations(self, segments: List[Dict], language: Optional[str] = None, content_type: str = 'speech') -> List[Dict]:
         """Filter out common Whisper hallucination patterns from segments.
 
         Handles: exact duplicates, near-duplicate consecutive segments,
         known hallucination phrases, and low-confidence segments.
+
+        For music content, duplicate/near-duplicate filters are skipped
+        because choruses and refrains naturally repeat identical lyrics.
         """
         if not segments:
             return segments
@@ -465,6 +468,7 @@ class TranscriptionService:
         filtered = []
         seen_texts = set()
         prev_text = ""
+        is_music = content_type == 'music'
 
         for seg in segments:
             text = seg.get('text', '').strip()
@@ -475,14 +479,14 @@ class TranscriptionService:
                 logger.debug(f"Filtered too-short segment: '{text}'")
                 continue
 
-            # Skip exact duplicates
-            if normalized in seen_texts:
+            # Skip exact duplicates (disabled for music — choruses repeat)
+            if not is_music and normalized in seen_texts:
                 logger.info(f"Filtered duplicate: '{text[:40]}...'")
                 continue
 
             # Skip near-duplicate of previous segment (stuttering/looping)
-            # Higher threshold for Turkish: character overlap is higher due to language structure
-            if prev_text and self._text_similarity(normalized, prev_text) > 0.95:
+            # Disabled for music — consecutive repeated lines are normal in songs
+            if not is_music and prev_text and self._text_similarity(normalized, prev_text) > 0.95:
                 logger.info(f"Filtered near-duplicate: '{text[:40]}...'")
                 continue
 
@@ -589,14 +593,19 @@ class TranscriptionService:
                 logger.warning(f"Vocal isolation failed, using original audio: {e}")
                 vocal_audio_path = audio_path
 
-        # Enhanced audio preprocessing based on content type (applied to isolated vocals)
+        # Audio preprocessing (applied to isolated vocals or original)
         if progress_callback:
             progress_callback(42, "Pre-processing audio...")
-        processed_audio_path = self.preprocess_music_audio(
-            vocal_audio_path,
-            content_type=content_type,
-            genre=content_genre
-        )
+        if vocal_isolation_applied:
+            # Vocal-isolated tracks need silence trimming (instrumental intro/outro
+            # becomes dead silence) + DRC + normalize — preprocess_audio() handles all.
+            processed_audio_path = self.preprocess_audio(vocal_audio_path)
+        else:
+            processed_audio_path = self.preprocess_music_audio(
+                vocal_audio_path,
+                content_type=content_type,
+                genre=content_genre
+            )
 
         # Determine optimal model size based on content type
         optimal_model = config['default_model']
@@ -624,8 +633,7 @@ class TranscriptionService:
             lang_params = self.get_language_params(language)
             if content_type in ('music', 'podcast'):
                 # Music/podcast: pick the MORE PERMISSIVE/STRONGER value for each param
-                HIGHER_IS_BETTER = {'beam_size', 'best_of', 'patience', 'compression_ratio_threshold'}
-                LOWER_IS_BETTER = {'no_speech_threshold'}
+                HIGHER_IS_BETTER = {'beam_size', 'best_of', 'patience', 'compression_ratio_threshold', 'no_speech_threshold'}
                 MORE_NEGATIVE_IS_BETTER = {'log_prob_threshold'}
                 for key, value in lang_params.items():
                     if key not in params:
@@ -640,8 +648,6 @@ class TranscriptionService:
                             params[key] = value
                     elif key in HIGHER_IS_BETTER:
                         params[key] = max(params[key], value)
-                    elif key in LOWER_IS_BETTER:
-                        params[key] = min(params[key], value)
                     elif key in MORE_NEGATIVE_IS_BETTER:
                         params[key] = min(params[key], value)
                     else:
@@ -688,6 +694,20 @@ class TranscriptionService:
         total_duration = result.get("duration", 0)
         result_segments = result["segments"]
 
+        # If leading silence was trimmed during preprocessing, shift all timestamps
+        # back to align with the original audio/video timeline
+        preprocess_offset = getattr(self, '_preprocess_offset', 0.0)
+        if preprocess_offset > 0:
+            logger.info(f"Applying timestamp offset +{preprocess_offset:.2f}s for trimmed silence")
+            total_duration += preprocess_offset
+            for seg in result_segments:
+                seg["start"] = round(seg["start"] + preprocess_offset, 3)
+                seg["end"] = round(seg["end"] + preprocess_offset, 3)
+                if "words" in seg:
+                    for w in seg["words"]:
+                        w["start"] = round(w["start"] + preprocess_offset, 3)
+                        w["end"] = round(w["end"] + preprocess_offset, 3)
+
         logger.info(f"Detected language: {result['language']} (probability: {result.get('language_probability', 0):.2f})")
         logger.info(f"Duration: {total_duration:.2f}s")
         logger.info(f"Content type: {content_type} with {optimal_model} model")
@@ -701,7 +721,7 @@ class TranscriptionService:
                         w["word"] = self._process_rtl_text(w["word"], language)
 
         # Filter hallucinations and repetitions
-        result_segments = self._filter_hallucinations(result_segments, language)
+        result_segments = self._filter_hallucinations(result_segments, language, content_type=content_type)
         logger.info(f"After hallucination filtering: {len(result_segments)} segments")
 
         # Performance metrics

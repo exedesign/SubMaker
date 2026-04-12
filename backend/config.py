@@ -216,8 +216,8 @@ CONTENT_TYPE_CONFIGS = {
             'dynamic_range_compression': True
         },
         'whisper_params': {
-            'no_speech_threshold': 0.2,  # Lower threshold for music
-            'log_prob_threshold': -1.2,  # More permissive
+            'no_speech_threshold': 0.8,  # High: singing triggers Whisper's no-speech detector
+            'log_prob_threshold': -1.5,  # Very permissive: singing has lower confidence than speech
             'compression_ratio_threshold': 3.0,  # Higher for music lyrics
             'beam_size': 10,  # Enhanced beam search
             'best_of': 5,
