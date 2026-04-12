@@ -113,14 +113,15 @@ LANGUAGE_PARAMS = {
         'hallucination_silence_threshold': 2.0,  # Skip hallucinated segments during >2s silence
     },
     'en': {  # English: Standard settings
-        'no_speech_threshold': 0.5,
+        'no_speech_threshold': 0.6,
         'log_prob_threshold': -0.5,
         'compression_ratio_threshold': 2.0,
         'beam_size': 5,
         'best_of': 3,
         'patience': 1.0,
         'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
-        'condition_on_previous_text': True  # Context helps speech accuracy
+        'condition_on_previous_text': False,  # Prevents cascading no-speech at end of audio
+        'hallucination_silence_threshold': 2.0,
     }
 }
 
@@ -200,12 +201,13 @@ CONTENT_TYPE_CONFIGS = {
             'enhancement_level': 'medium'
         },
         'whisper_params': {
-            'no_speech_threshold': 0.5,
+            'no_speech_threshold': 0.6,
             'log_prob_threshold': -0.5,
             'compression_ratio_threshold': 2.0,
             'beam_size': 5,
             'best_of': 3,
-            'condition_on_previous_text': True  # Context helps speech coherence
+            'condition_on_previous_text': False,  # Prevents cascading no-speech at end of audio
+            'hallucination_silence_threshold': 2.0,
         }
     },
     'music': {
@@ -238,13 +240,14 @@ CONTENT_TYPE_CONFIGS = {
             'enhancement_level': 'high'
         },
         'whisper_params': {
-            'no_speech_threshold': 0.4,
+            'no_speech_threshold': 0.6,
             'log_prob_threshold': -0.7,
             'compression_ratio_threshold': 2.2,
             'beam_size': 8,
             'best_of': 4,
             'patience': 1.5,
-            'condition_on_previous_text': True  # Context helps podcast coherence
+            'condition_on_previous_text': False,  # Prevents cascading no-speech at end of audio
+            'hallucination_silence_threshold': 2.0,
         }
     }
 }

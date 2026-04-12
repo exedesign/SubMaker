@@ -70,16 +70,17 @@ class TranscriptionService:
         if language and language.lower() in LANGUAGE_PARAMS:
             return LANGUAGE_PARAMS[language.lower()].copy()
         
-        # Default parameters
+        # Default parameters — applied for any language not in LANGUAGE_PARAMS
         return {
-            'no_speech_threshold': 0.5,
+            'no_speech_threshold': 0.6,
             'log_prob_threshold': -0.5,
             'compression_ratio_threshold': 2.0,
             'beam_size': 5,
             'best_of': 3,
             'patience': 1.0,
             'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-            'condition_on_previous_text': False
+            'condition_on_previous_text': False,
+            'hallucination_silence_threshold': 2.0,
         }
     
     def preprocess_audio(self, audio_path: str, target_path: Optional[str] = None) -> str:
