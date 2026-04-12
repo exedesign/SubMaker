@@ -1706,6 +1706,10 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
         if visualizer_video_path:
             print(f"[Render Job {job_id}] Visualizer: {visualizer_video_path} (exists={os.path.exists(str(visualizer_video_path))})")
 
+        # For video-input mode: pass original video path for video stream
+        # (audio_path may have been replaced by mixer WAV)
+        video_source = original_audio_path if media_type == "video" else None
+
         result = generator.generate_video_with_subtitles(
             audio_path=audio_path,
             subtitle_path=subtitle_path,
@@ -1724,6 +1728,7 @@ def run_render_job(job_id, audio_path, subtitles, background, video_format,
             cancel_check=cancel_check,
             resolution=render_resolution,
             media_type=media_type,
+            video_source_path=video_source,
         )
 
         _render_jobs[job_id]["progress"] = 98

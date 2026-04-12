@@ -616,6 +616,7 @@ class VideoGenerator:
         cancel_check: Optional[callable] = None,
         resolution: str = None,
         media_type: str = "audio",
+        video_source_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate video with burned-in subtitles in a single FFmpeg pass.
@@ -629,10 +630,14 @@ class VideoGenerator:
         
         # Video-input mode: the input file IS a video — use its video + audio streams
         is_video_input = media_type == "video"
+        # Resolve actual video file path (may differ from audio_path after mixer)
+        video_file = video_source_path or audio_path
         
         # Validate inputs
         if not os.path.exists(audio_path):
-            raise FileNotFoundError(f"{'Video' if is_video_input else 'Audio'} file not found: {audio_path}")
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+        if is_video_input and not os.path.exists(video_file):
+            raise FileNotFoundError(f"Video file not found: {video_file}")
         
         # Handle blob URLs gracefully
         if not is_video_input and background_type == "image":
@@ -678,11 +683,19 @@ class VideoGenerator:
         
         # ── Input 0: Background OR Video source ─────────────────────
         if is_video_input:
-            # Video-input mode: use the video file as both video and audio source
-            cmd.extend(["-i", audio_path])
-            audio_idx = 0  # audio stream is in the same input
+            # Video-input mode: video stream from original file, audio from (possibly mixed) audio_path
+            cmd.extend(["-i", video_file])  # Input 0: video source
             input_count = 1
-            print(f"[VideoGen] Video-input mode: {audio_path} (video + audio from same file)")
+            if video_file == audio_path:
+                # No mixer — video and audio from same file
+                audio_idx = 0
+                print(f"[VideoGen] Video-input mode: {video_file} (video + audio from same file)")
+            else:
+                # Mixer active — audio from separate file
+                cmd.extend(["-i", audio_path])  # Input 1: mixed audio
+                audio_idx = input_count
+                input_count += 1
+                print(f"[VideoGen] Video-input mode: video={video_file}, audio={audio_path} (separate)")
         else:
             bg_input = self._build_background_input(
                 background_type, actual_bg_value, width, height, fps, duration,
