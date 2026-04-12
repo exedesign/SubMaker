@@ -86,17 +86,26 @@ class TranscriptionService:
     def preprocess_audio(self, audio_path: str, target_path: Optional[str] = None) -> str:
         """Preprocess audio for better transcription quality.
 
-        Applies only safe, Whisper-compatible preprocessing: 16kHz resampling,
-        peak normalization, and leading silence trimming.
-        
-        Leading silence trimming is critical for vocal-isolated tracks where
-        the original song has a long instrumental intro — the vocal track
-        will have silence at the start which confuses Whisper's language
-        detection (first 30s) and causes hallucinations.
-        
-        Returns the path to the preprocessed file. The trimmed offset (in
-        seconds) is stored as self._preprocess_offset so that subtitle
-        timestamps can be shifted back to match the original audio.
+        Applies Whisper-compatible preprocessing:
+        1. 16 kHz resampling
+        2. Leading + trailing silence trimming
+        3. Dynamic range compression (boosts quiet vocal sections)
+        4. Peak normalization
+
+        Silence trimming is critical for vocal-isolated tracks: the
+        instrumental intro/outro becomes dead silence, which confuses
+        Whisper's language detection and causes hallucinations or
+        premature transcription cutoff.
+
+        Dynamic range compression is equally important: vocal isolation
+        produces extreme dynamic range (loud chorus vs. quiet verse
+        endings/fade-outs).  Without compression the quiet sections stay
+        below Whisper's internal speech-detection threshold and are
+        silently dropped, causing "missing subtitles at end of track".
+
+        Returns the path to the preprocessed file.  The trimmed offset
+        (in seconds) is stored as ``self._preprocess_offset`` so that
+        subtitle timestamps can be shifted back to the original timeline.
         """
         self._preprocess_offset = 0.0  # Reset offset
 
@@ -107,31 +116,57 @@ class TranscriptionService:
         try:
             logger.info(f"Preprocessing audio: {audio_path}")
 
-            # Load audio at 16kHz (Whisper's native sample rate)
+            # Load audio at 16 kHz (Whisper's native sample rate)
             y, sr = librosa.load(audio_path, sr=16000)
+            original_len = len(y)
 
-            # Trim leading silence — find where audio energy first exceeds threshold
-            # Use a conservative threshold to preserve quiet vocal onsets
-            # top_db=30 means anything quieter than -30dB from peak is considered silence
-            y_trimmed, trim_indices = librosa.effects.trim(y, top_db=30, frame_length=2048, hop_length=512)
+            # --- 1) Trim leading + trailing silence ---
+            # top_db=30 → anything quieter than −30 dB from peak is "silence"
+            _y_trimmed, trim_indices = librosa.effects.trim(
+                y, top_db=30, frame_length=2048, hop_length=512
+            )
             leading_samples = trim_indices[0]
-            leading_silence_sec = leading_samples / sr
+            trailing_samples = original_len - trim_indices[1]
+            leading_sec = leading_samples / sr
+            trailing_sec = trailing_samples / sr
 
-            if leading_silence_sec > 2.0:
-                # Only trim if there's meaningful leading silence (>2s)
-                # Keep 0.5s of lead-in for natural onset
+            # Trim leading silence (keep 0.5 s lead-in for natural onset)
+            if leading_sec > 2.0:
                 keep_samples = int(0.5 * sr)
                 start_sample = max(0, leading_samples - keep_samples)
                 y = y[start_sample:]
                 self._preprocess_offset = start_sample / sr
                 logger.info(
-                    f"Trimmed {leading_silence_sec:.1f}s leading silence "
+                    f"Trimmed {leading_sec:.1f}s leading silence "
                     f"(kept 0.5s lead-in, offset={self._preprocess_offset:.2f}s)"
                 )
             else:
-                logger.info(f"Leading silence {leading_silence_sec:.1f}s — no trim needed")
+                logger.info(f"Leading silence {leading_sec:.1f}s — no trim needed")
 
-            # Peak-normalize to 95% to avoid clipping without distorting spectrum
+            # Trim trailing silence (keep 0.3 s tail for natural decay)
+            if trailing_sec > 2.0:
+                keep_tail = int(0.3 * sr)
+                # trim_indices[1] is relative to the ORIGINAL array; adjust
+                # for the leading trim we may have already applied.
+                end_abs = trim_indices[1] + keep_tail
+                start_abs = max(0, leading_samples - int(0.5 * sr)) if leading_sec > 2.0 else 0
+                new_end = end_abs - start_abs
+                if new_end < len(y):
+                    y = y[:new_end]
+                    logger.info(
+                        f"Trimmed {trailing_sec:.1f}s trailing silence "
+                        f"(kept 0.3s tail)"
+                    )
+            else:
+                logger.info(f"Trailing silence {trailing_sec:.1f}s — no trim needed")
+
+            # --- 2) Dynamic range compression ---
+            # Boost quiet vocal sections so Whisper doesn't drop them.
+            # Uses per-frame RMS envelope with a moderate 4:1 ratio and
+            # a threshold tuned to typical vocal-isolated track levels.
+            y = self._apply_dynamic_range_compression(y, sr)
+
+            # --- 3) Peak-normalize to 95 % ---
             max_val = float(np.abs(y).max())
             if max_val > 0:
                 y = y / max_val * 0.95
@@ -150,6 +185,97 @@ class TranscriptionService:
         except Exception as e:
             logger.warning(f"Audio preprocessing failed: {e}")
             return audio_path
+
+    @staticmethod
+    def _apply_dynamic_range_compression(
+        y: "np.ndarray",
+        sr: int,
+        threshold_db: float = -15.0,
+        ratio: float = 3.0,
+        attack_sec: float = 0.01,
+        release_sec: float = 0.1,
+    ) -> "np.ndarray":
+        """Soft-knee upward compressor operating on per-frame RMS.
+
+        Boosts sections that are quieter than *threshold_db* (relative to
+        the peak RMS) by reducing the gap between loud and quiet parts.
+        This makes quiet vocal phrases (verse endings, fade-outs) audible
+        enough for Whisper's internal speech detector.
+
+        A noise floor at −40 dB from peak prevents boosting silence
+        (instrumental breaks in vocal-isolated tracks).
+
+        Parameters
+        ----------
+        y : ndarray  – mono audio signal
+        sr : int     – sample rate
+        threshold_db : float – compressor knee in dB below peak RMS
+                               (default −15 dB catches ~35% of voiced frames)
+        ratio : float        – compression ratio (3:1)
+        attack_sec : float   – attack time constant
+        release_sec : float  – release time constant
+        """
+        if len(y) == 0:
+            return y
+
+        frame_length = int(0.025 * sr)   # 25 ms frames
+        hop_length = int(0.010 * sr)     # 10 ms hop
+
+        # Per-frame RMS envelope
+        frames = librosa.util.frame(y, frame_length=frame_length, hop_length=hop_length)
+        rms = np.sqrt(np.mean(frames ** 2, axis=0))
+
+        # Reference: peak RMS across the track
+        peak_rms = rms.max()
+        if peak_rms < 1e-8:
+            return y  # silence — nothing to compress
+
+        # Convert thresholds from dB-below-peak to linear
+        threshold_linear = peak_rms * (10 ** (threshold_db / 20.0))
+        # Noise floor: don't boost anything below −40 dB from peak
+        # (instrumental breaks / residual BS-Roformer bleed)
+        noise_floor = peak_rms * (10 ** (-40.0 / 20.0))
+
+        # Compute per-frame gain
+        gain_db = np.zeros_like(rms)
+        # Only boost frames that are below threshold but above noise floor
+        boost_mask = (rms < threshold_linear) & (rms > noise_floor)
+        if boost_mask.any():
+            rms_db = 20 * np.log10(rms[boost_mask] / peak_rms + 1e-10)
+            target_db = threshold_db + (rms_db - threshold_db) / ratio
+            gain_db[boost_mask] = target_db - rms_db
+
+        # Smooth gain envelope (attack/release) to avoid clicks
+        alpha_attack = 1.0 - np.exp(-1.0 / (attack_sec * sr / hop_length))
+        alpha_release = 1.0 - np.exp(-1.0 / (release_sec * sr / hop_length))
+        smoothed = np.zeros_like(gain_db)
+        for i in range(1, len(gain_db)):
+            if gain_db[i] > smoothed[i - 1]:
+                smoothed[i] = alpha_attack * gain_db[i] + (1 - alpha_attack) * smoothed[i - 1]
+            else:
+                smoothed[i] = alpha_release * gain_db[i] + (1 - alpha_release) * smoothed[i - 1]
+
+        # Convert gain to linear and interpolate to sample level
+        gain_linear = 10 ** (smoothed / 20.0)
+        gain_samples = np.interp(
+            np.arange(len(y)),
+            np.arange(len(gain_linear)) * hop_length + frame_length // 2,
+            gain_linear,
+        )
+        gain_samples = np.clip(gain_samples, 0.1, 8.0)  # safety: max 8× boost
+
+        y_compressed = y * gain_samples
+
+        boost_applied = float(gain_linear.max())
+        if boost_applied > 1.05:
+            logger.info(
+                f"Dynamic range compression: max boost {boost_applied:.1f}x, "
+                f"threshold {threshold_db:.0f}dB, ratio {ratio:.0f}:1"
+            )
+        else:
+            logger.info("Dynamic range compression: no significant boost needed")
+
+        return y_compressed
     
     def preprocess_music_audio(
         self, 
@@ -207,15 +333,11 @@ class TranscriptionService:
         would DEGRADE quality, so we apply minimal processing.
         """
         try:
-            # Dynamic range compression for consistent vocal levels
+            # Dynamic range compression — use the proper RMS-envelope
+            # compressor to boost quiet vocal sections (verse endings,
+            # fade-outs) to audible levels for Whisper.
             if config.get('dynamic_range_compression', False):
-                threshold = 0.3
-                ratio = 4.0
-                y = np.where(
-                    np.abs(y) > threshold,
-                    np.sign(y) * (threshold + (np.abs(y) - threshold) / ratio),
-                    y
-                )
+                y = self._apply_dynamic_range_compression(y, sr)
 
             # Single gentle preemphasis for vocal clarity only
             # NOTE: Do NOT apply multiple passes — cascaded preemphasis
