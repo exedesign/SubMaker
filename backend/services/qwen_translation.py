@@ -162,6 +162,9 @@ class QwenTranslationService:
             generated = outputs[0][inputs["input_ids"].shape[1]:]
             translated = self.tokenizer.decode(generated, skip_special_tokens=True).strip()
 
+            # Strip common hallucinated meta-text from translation output
+            translated = self._clean_translation(translated)
+
             if not translated:
                 return {'success': False, 'error': 'Empty translation', 'translated': text}
 
@@ -184,6 +187,55 @@ class QwenTranslationService:
         self._unload_timer.daemon = True
         self._unload_timer.start()
         print(f"[Qwen] Model will unload in {delay}s if idle")
+
+    @staticmethod
+    def _clean_translation(text: str) -> str:
+        """Remove hallucinated meta-text that Qwen sometimes adds to translations.
+        
+        Common patterns: "Altyazı M.K.", "Çeviri: ...", "Subtitle by ...",
+        prefixed annotations like "Translation:", numbered lines, etc.
+        """
+        import re
+        if not text:
+            return text
+
+        original = text
+
+        # Remove lines that are entirely hallucinated credit/meta patterns
+        HALLUCINATION_LINE_PATTERNS = [
+            r'^[\s]*altyaz[ıi]\s*[:\-]?\s*m\s*\.?\s*k\s*\.?\s*$',
+            r'^[\s]*alt\s*yaz[ıi]\s*[:\-]?\s*m\s*\.?\s*k\s*\.?\s*$',
+            r'^[\s]*altyaz[ıi]lar\s*[:\-]?\s*m\s*\.?\s*k\s*\.?\s*$',
+            r'^[\s]*[çc]eviri\s*[:\-]?\s*m\s*\.?\s*k\s*\.?\s*$',
+            r'^[\s]*subtitle[sd]?\s*(?:by)?\s*m\s*\.?\s*k\s*\.?\s*$',
+            r'^[\s]*translated?\s*(?:by|:).*$',
+            r'^[\s]*transcribed?\s*(?:by|:).*$',
+            r'^[\s]*subtitle[sd]?\s*(?:by|:).*$',
+            r'^[\s]*caption[sd]?\s*(?:by|:).*$',
+            r'^[\s]*altyaz[ıi]\s*(?:çeviri|tercüme).*$',
+        ]
+
+        lines = text.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            is_hallucination = False
+            for pattern in HALLUCINATION_LINE_PATTERNS:
+                if re.match(pattern, line, re.IGNORECASE):
+                    is_hallucination = True
+                    break
+            if not is_hallucination:
+                cleaned_lines.append(line)
+
+        text = '\n'.join(cleaned_lines).strip()
+
+        # Remove "Translation:" or "Çeviri:" prefix from first line
+        text = re.sub(r'^(?:translation|çeviri|tercüme)\s*:\s*', '', text, flags=re.IGNORECASE).strip()
+
+        if not text and original:
+            # If cleaning removed everything, return original (don't lose data)
+            return original
+
+        return text
 
     def translate_subtitles(self, subtitles: List[Dict], target_lang: str, source_lang: str = 'auto') -> List[Dict]:
         """Translate subtitle entries, then schedule model unload to free VRAM"""

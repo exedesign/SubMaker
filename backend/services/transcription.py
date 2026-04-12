@@ -85,12 +85,20 @@ class TranscriptionService:
     def preprocess_audio(self, audio_path: str, target_path: Optional[str] = None) -> str:
         """Preprocess audio for better transcription quality.
 
-        Applies only safe, Whisper-compatible preprocessing: 16kHz resampling
-        and peak normalization.  Preemphasis is intentionally omitted — it was
-        a legacy HMM-era step and distorts spectral balance for transformer
-        models, especially for vowel-rich languages (Turkish, Arabic, etc.).
-        Vocal-isolated inputs are already clean 16kHz mono from the isolator.
+        Applies only safe, Whisper-compatible preprocessing: 16kHz resampling,
+        peak normalization, and leading silence trimming.
+        
+        Leading silence trimming is critical for vocal-isolated tracks where
+        the original song has a long instrumental intro — the vocal track
+        will have silence at the start which confuses Whisper's language
+        detection (first 30s) and causes hallucinations.
+        
+        Returns the path to the preprocessed file. The trimmed offset (in
+        seconds) is stored as self._preprocess_offset so that subtitle
+        timestamps can be shifted back to match the original audio.
         """
+        self._preprocess_offset = 0.0  # Reset offset
+
         if not AUDIO_PROCESSING_AVAILABLE:
             logger.warning("Audio preprocessing unavailable (librosa not installed)")
             return audio_path
@@ -100,6 +108,27 @@ class TranscriptionService:
 
             # Load audio at 16kHz (Whisper's native sample rate)
             y, sr = librosa.load(audio_path, sr=16000)
+
+            # Trim leading silence — find where audio energy first exceeds threshold
+            # Use a conservative threshold to preserve quiet vocal onsets
+            # top_db=30 means anything quieter than -30dB from peak is considered silence
+            y_trimmed, trim_indices = librosa.effects.trim(y, top_db=30, frame_length=2048, hop_length=512)
+            leading_samples = trim_indices[0]
+            leading_silence_sec = leading_samples / sr
+
+            if leading_silence_sec > 2.0:
+                # Only trim if there's meaningful leading silence (>2s)
+                # Keep 0.5s of lead-in for natural onset
+                keep_samples = int(0.5 * sr)
+                start_sample = max(0, leading_samples - keep_samples)
+                y = y[start_sample:]
+                self._preprocess_offset = start_sample / sr
+                logger.info(
+                    f"Trimmed {leading_silence_sec:.1f}s leading silence "
+                    f"(kept 0.5s lead-in, offset={self._preprocess_offset:.2f}s)"
+                )
+            else:
+                logger.info(f"Leading silence {leading_silence_sec:.1f}s — no trim needed")
 
             # Peak-normalize to 95% to avoid clipping without distorting spectrum
             max_val = float(np.abs(y).max())
@@ -295,17 +324,20 @@ class TranscriptionService:
             "thanks for watching", "thank you for watching",
             "please subscribe", "like and subscribe",
             "subtitle by", "subtitles by", "captions by",
+            "subtitles m.k", "subtitles mk", "subtitle m.k",
             "translated by", "transcribed by",
             "amara.org", "www.", "http",
             "music playing", "♪",
         ]
 
         if language and language.lower() == 'tr':
-            # Turkish common hallucinations: subscribe, like, thank you for watching
-            # Note: Removed "altyazı" (subtitles) - this is core to our application
+            # Turkish common hallucinations: subscribe, like, thank you for watching, subtitle credits
             HALLUCINATION_PATTERNS.extend([
                 "abone ol", "beğen",
                 "izlediğiniz için teşekkürler",
+                "altyazı m.k", "altyazı m .k", "altyazı mk",
+                "altyazılar m.k", "alt yazı m.k",
+                "çeviri m.k", "çeviri mk",
             ])
 
         filtered = []
@@ -668,6 +700,20 @@ class TranscriptionService:
 
         result_segments = result["segments"]
         total_duration = result.get("duration", 0)
+
+        # If leading silence was trimmed during preprocessing, shift all timestamps
+        # back to align with the original audio/video timeline
+        preprocess_offset = getattr(self, '_preprocess_offset', 0.0)
+        if preprocess_offset > 0:
+            logger.info(f"Applying timestamp offset +{preprocess_offset:.2f}s for trimmed silence")
+            total_duration += preprocess_offset
+            for seg in result_segments:
+                seg["start"] = round(seg["start"] + preprocess_offset, 3)
+                seg["end"] = round(seg["end"] + preprocess_offset, 3)
+                if "words" in seg:
+                    for w in seg["words"]:
+                        w["start"] = round(w["start"] + preprocess_offset, 3)
+                        w["end"] = round(w["end"] + preprocess_offset, 3)
 
         logger.info(f"Detected language: {result['language']} (probability: {result.get('language_probability', 0):.2f})")
         logger.info(f"Duration: {total_duration:.2f}s")
