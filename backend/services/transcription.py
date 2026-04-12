@@ -506,31 +506,35 @@ class TranscriptionService:
                 LOWER_IS_BETTER = {'no_speech_threshold'}
                 MORE_NEGATIVE_IS_BETTER = {'log_prob_threshold'}
                 for key, value in lang_params.items():
-                    if key in params:
-                        if key == 'temperature':
-                            continue  # Keep content-type config's fallback list
-                        elif key == 'condition_on_previous_text':
-                            if content_type == 'music':
-                                continue  # Music: keep False to prevent hallucination loops
-                            else:
-                                params[key] = value
-                        elif key in HIGHER_IS_BETTER:
-                            params[key] = max(params[key], value)
-                        elif key in LOWER_IS_BETTER:
-                            params[key] = min(params[key], value)
-                        elif key in MORE_NEGATIVE_IS_BETTER:
-                            params[key] = min(params[key], value)
+                    if key not in params:
+                        # New param from lang config — add it
+                        params[key] = value
+                    elif key == 'temperature':
+                        continue  # Keep content-type config's fallback list
+                    elif key == 'condition_on_previous_text':
+                        if content_type == 'music':
+                            continue  # Music: keep False to prevent hallucination loops
                         else:
                             params[key] = value
+                    elif key in HIGHER_IS_BETTER:
+                        params[key] = max(params[key], value)
+                    elif key in LOWER_IS_BETTER:
+                        params[key] = min(params[key], value)
+                    elif key in MORE_NEGATIVE_IS_BETTER:
+                        params[key] = min(params[key], value)
+                    else:
+                        params[key] = value
                 logger.info(f"Merged params (music-priority) for {language}/{content_type}: {params}")
             else:
-                # Speech: language params take priority
+                # Speech: language params take priority — merge all keys
                 for key, value in lang_params.items():
-                    if key in params:
-                        params[key] = value
+                    params[key] = value
         
         is_rtl = language and language.lower() in self.RTL_LANGUAGES
-        
+
+        # Ensure hallucination_silence_threshold is always set
+        params.setdefault('hallucination_silence_threshold', 2.0)
+
         if is_rtl:
             logger.info(f"RTL language detected: {language} - using optimized settings")
         
@@ -666,6 +670,11 @@ class TranscriptionService:
         # Get language-specific parameters
         params = self.get_language_params(language)
         is_rtl = language and language.lower() in self.RTL_LANGUAGES
+
+        # Ensure hallucination_silence_threshold is always set — prevents
+        # Whisper from generating phantom text during long silent sections
+        # (instrumental breaks, fade-outs) which cause cascading segment loss.
+        params.setdefault('hallucination_silence_threshold', 2.0)
 
         if is_rtl:
             logger.info(f"RTL language detected: {language} - using optimized settings")
