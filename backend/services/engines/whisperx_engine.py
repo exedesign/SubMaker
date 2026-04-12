@@ -184,10 +184,8 @@ class FasterWhisperEngine:
             'no_speech_threshold', 'log_prob_threshold',
             'compression_ratio_threshold', 'condition_on_previous_text',
             'suppress_blank', 'initial_prompt',
-            'hallucination_silence_threshold',
             'repetition_penalty', 'no_repeat_ngram_size',
             'prompt_reset_on_temperature',
-            'vad_filter', 'vad_parameters',
         }
         for k, v in engine_params.items():
             if k in known_params and v is not None:

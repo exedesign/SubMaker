@@ -91,26 +91,24 @@ LANGUAGE_MODELS = {
 # Language-specific transcription parameters
 LANGUAGE_PARAMS = {
     'ar': {  # Arabic: Conservative settings for accuracy
-        'no_speech_threshold': 0.6,  # Default — lower values cause cascading segment loss
+        'no_speech_threshold': 0.6,
         'log_prob_threshold': -1.0,
         'compression_ratio_threshold': 2.8,
         'beam_size': 10,
         'best_of': 5,
         'patience': 2.0,
-        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
+        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
         'condition_on_previous_text': False,
-        'hallucination_silence_threshold': 2.0,
     },
     'tr': {  # Turkish: Optimized for music/lyrics
-        'no_speech_threshold': 0.6,  # Default — lower values cause cascading segment loss at end of audio
+        'no_speech_threshold': 0.6,
         'log_prob_threshold': -1.0,
         'compression_ratio_threshold': 2.8,
         'beam_size': 8,
         'best_of': 5,
         'patience': 2.0,
-        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
-        'condition_on_previous_text': False,  # Prevents cascading no-speech failures in music
-        'hallucination_silence_threshold': 2.0,  # Skip hallucinated segments during >2s silence
+        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        'condition_on_previous_text': False,
     },
     'en': {  # English: Standard settings
         'no_speech_threshold': 0.6,
@@ -119,9 +117,8 @@ LANGUAGE_PARAMS = {
         'beam_size': 5,
         'best_of': 3,
         'patience': 1.0,
-        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
-        'condition_on_previous_text': False,  # Prevents cascading no-speech at end of audio
-        'hallucination_silence_threshold': 2.0,
+        'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        'condition_on_previous_text': False,
     }
 }
 
@@ -206,8 +203,7 @@ CONTENT_TYPE_CONFIGS = {
             'compression_ratio_threshold': 2.0,
             'beam_size': 5,
             'best_of': 3,
-            'condition_on_previous_text': False,  # Prevents cascading no-speech at end of audio
-            'hallucination_silence_threshold': 2.0,
+            'condition_on_previous_text': False,
         }
     },
     'music': {
@@ -227,9 +223,8 @@ CONTENT_TYPE_CONFIGS = {
             'best_of': 5,
             'patience': 2.0,
             'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # Fallback on failed segments
-            'condition_on_previous_text': False,  # Prevents hallucination loops in music
-            'suppress_blank': False,  # Don't suppress silence in music
-            'hallucination_silence_threshold': 2.0,  # Skip hallucinations during >2s silence
+            'condition_on_previous_text': False,
+            'suppress_blank': False,
         }
     },
     'podcast': {
@@ -246,8 +241,7 @@ CONTENT_TYPE_CONFIGS = {
             'beam_size': 8,
             'best_of': 4,
             'patience': 1.5,
-            'condition_on_previous_text': False,  # Prevents cascading no-speech at end of audio
-            'hallucination_silence_threshold': 2.0,
+            'condition_on_previous_text': False,
         }
     }
 }

@@ -80,7 +80,6 @@ class TranscriptionService:
             'patience': 1.0,
             'temperature': [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
             'condition_on_previous_text': False,
-            'hallucination_silence_threshold': 2.0,
         }
     
     def preprocess_audio(self, audio_path: str, target_path: Optional[str] = None) -> str:
@@ -655,9 +654,6 @@ class TranscriptionService:
         
         is_rtl = language and language.lower() in self.RTL_LANGUAGES
 
-        # Ensure hallucination_silence_threshold is always set
-        params.setdefault('hallucination_silence_threshold', 2.0)
-
         if is_rtl:
             logger.info(f"RTL language detected: {language} - using optimized settings")
         
@@ -793,11 +789,6 @@ class TranscriptionService:
         # Get language-specific parameters
         params = self.get_language_params(language)
         is_rtl = language and language.lower() in self.RTL_LANGUAGES
-
-        # Ensure hallucination_silence_threshold is always set — prevents
-        # Whisper from generating phantom text during long silent sections
-        # (instrumental breaks, fade-outs) which cause cascading segment loss.
-        params.setdefault('hallucination_silence_threshold', 2.0)
 
         if is_rtl:
             logger.info(f"RTL language detected: {language} - using optimized settings")
