@@ -7,7 +7,6 @@ import { useAppStore } from '../stores/appStore';
 import {
   FiSliders,
   FiVolume2, FiMusic,
-  FiChevronDown, FiChevronRight,
 } from 'react-icons/fi';
 
 const Toggle = ({ enabled, onClick }) => (
@@ -42,277 +41,172 @@ const STEM_LABELS = {
   other: { label: 'Other', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
 };
 
-// Content-type presets (match backend CONTENT_TYPE_CONFIGS)
+// Scenario-based Whisper presets — each sets optimal params behind the scenes
 const WHISPER_PRESETS = {
-  music: {
-    label: '🎤 Music',
-    description: 'Vocal music — aggressive detection, low confidence OK',
+  auto: {
+    label: '⚡ Auto',
+    description: 'Default — backend picks optimal settings',
+    icon: '⚡',
+    params: {},  // all null → backend defaults
+  },
+  music_vocal: {
+    label: '🎤 Music (Vocal)',
+    description: 'Vocal songs — aggressive detection, catch all lyrics',
+    icon: '🎤',
     params: {
-      no_speech_threshold: 0.8,
-      temperature: 0.0,
-      best_of: 5,
-      patience: 2.0,
-      condition_on_previous_text: false,
-      suppress_blank: false,
+      beam_size: 10, no_speech_threshold: 0.8, temperature: 0.0,
+      best_of: 5, patience: 2.0,
+      condition_on_previous_text: false, suppress_blank: false,
+    },
+  },
+  music_long: {
+    label: '🎶 Long Track',
+    description: 'Tracks >5 min — maximum patience, wider search',
+    icon: '🎶',
+    params: {
+      beam_size: 12, no_speech_threshold: 0.9, temperature: 0.0,
+      best_of: 7, patience: 3.0,
+      condition_on_previous_text: false, suppress_blank: false,
+    },
+  },
+  music_quiet: {
+    label: '🎧 Quiet Vocals',
+    description: 'Soft/whispered singing — lowest thresholds',
+    icon: '🎧',
+    params: {
+      beam_size: 12, no_speech_threshold: 0.95, temperature: 0.0,
+      best_of: 8, patience: 2.5,
+      condition_on_previous_text: false, suppress_blank: false,
+    },
+  },
+  music_fast: {
+    label: '🔥 Fast Rap/Flow',
+    description: 'Rap, fast lyrics — high precision, smaller beam',
+    icon: '🔥',
+    params: {
+      beam_size: 8, no_speech_threshold: 0.7, temperature: 0.0,
+      best_of: 5, patience: 1.5,
+      condition_on_previous_text: true, suppress_blank: false,
     },
   },
   speech: {
     label: '🗣️ Speech',
     description: 'Clear speech — balanced accuracy and speed',
+    icon: '🗣️',
     params: {
-      no_speech_threshold: 0.6,
-      temperature: 0.0,
-      best_of: 3,
-      patience: 1.0,
-      condition_on_previous_text: false,
-      suppress_blank: true,
+      beam_size: 5, no_speech_threshold: 0.6, temperature: 0.0,
+      best_of: 3, patience: 1.0,
+      condition_on_previous_text: false, suppress_blank: true,
     },
   },
   podcast: {
     label: '🎙️ Podcast',
-    description: 'Long-form dialogue — enhanced noise handling',
+    description: 'Long dialogue — good noise handling',
+    icon: '🎙️',
     params: {
-      no_speech_threshold: 0.6,
-      temperature: 0.0,
-      best_of: 4,
-      patience: 1.5,
-      condition_on_previous_text: false,
-      suppress_blank: true,
+      beam_size: 8, no_speech_threshold: 0.6, temperature: 0.0,
+      best_of: 4, patience: 1.5,
+      condition_on_previous_text: true, suppress_blank: true,
     },
   },
-  long_music: {
-    label: '🎶 Long Music',
-    description: 'Long tracks (>5 min) — max patience, wider beam',
+  noisy: {
+    label: '📢 Noisy Audio',
+    description: 'Low quality / background noise — max tolerance',
+    icon: '📢',
     params: {
-      no_speech_threshold: 0.9,
-      temperature: 0.0,
-      best_of: 7,
-      patience: 3.0,
-      condition_on_previous_text: false,
-      suppress_blank: false,
+      beam_size: 12, no_speech_threshold: 0.9, temperature: 0.2,
+      best_of: 6, patience: 2.0,
+      condition_on_previous_text: false, suppress_blank: false,
     },
   },
 };
 
-// Slider/toggle parameter definitions for Advanced Whisper Settings
-const WHISPER_PARAM_DEFS = [
-  {
-    key: 'no_speech_threshold',
-    label: 'No Speech Threshold',
-    description: 'Higher = skip less silence (music: 0.8, speech: 0.6)',
-    min: 0.0, max: 1.0, step: 0.05,
-    musicDefault: 0.8,
-  },
-  {
-    key: 'temperature',
-    label: 'Temperature',
-    description: 'Lower = more deterministic. 0 is best for music.',
-    min: 0.0, max: 1.0, step: 0.1,
-    musicDefault: 0.0,
-  },
-  {
-    key: 'best_of',
-    label: 'Best Of',
-    description: 'Candidate sequences per beam. Higher = slower but better.',
-    min: 1, max: 10, step: 1,
-    musicDefault: 5,
-  },
-  {
-    key: 'patience',
-    label: 'Patience',
-    description: 'Beam search patience. Higher may find better results.',
-    min: 0.5, max: 3.0, step: 0.1,
-    musicDefault: 2.0,
-  },
-];
+// All param keys that presets can set
+const ALL_PRESET_KEYS = ['beam_size', 'no_speech_threshold', 'temperature', 'best_of', 'patience', 'condition_on_previous_text', 'suppress_blank'];
 
-function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
-  const [expanded, setExpanded] = React.useState(false);
-  const [activePreset, setActivePreset] = React.useState(null);
+function WhisperPresetSelector({ whisperParams, setWhisperParam }) {
+  // Detect which preset matches current params
+  const detectPreset = () => {
+    const hasAny = ALL_PRESET_KEYS.some(k => whisperParams[k] != null);
+    if (!hasAny) return 'auto';
+    for (const [key, preset] of Object.entries(WHISPER_PRESETS)) {
+      if (key === 'auto') continue;
+      const allMatch = Object.entries(preset.params).every(([pk, pv]) => whisperParams[pk] === pv);
+      if (allMatch) return key;
+    }
+    return null; // custom / unknown
+  };
+  const currentPreset = detectPreset();
 
   const applyPreset = (presetKey) => {
     const preset = WHISPER_PRESETS[presetKey];
     if (!preset) return;
-    Object.entries(preset.params).forEach(([key, value]) => {
-      setWhisperParam(key, value);
-    });
-    setActivePreset(presetKey);
-  };
-
-  const clearAll = () => {
-    WHISPER_PARAM_DEFS.forEach(({ key }) => setWhisperParam(key, null));
-    setWhisperParam('condition_on_previous_text', null);
-    setWhisperParam('suppress_blank', null);
-    setActivePreset(null);
-  };
-
-  // Detect which preset matches current params (if any)
-  const detectActivePreset = () => {
-    for (const [key, preset] of Object.entries(WHISPER_PRESETS)) {
-      const allMatch = Object.entries(preset.params).every(([pk, pv]) => {
-        const current = whisperParams[pk];
-        if (current == null) return false;
-        return current === pv;
+    if (presetKey === 'auto') {
+      // Clear all overrides
+      ALL_PRESET_KEYS.forEach(k => setWhisperParam(k, null));
+    } else {
+      ALL_PRESET_KEYS.forEach(k => {
+        setWhisperParam(k, preset.params[k] ?? null);
       });
-      if (allMatch) return key;
     }
-    return null;
   };
-  const currentPreset = activePreset || detectActivePreset();
-
-  const hasOverrides = WHISPER_PARAM_DEFS.some(({ key }) => whisperParams[key] != null)
-    || whisperParams.condition_on_previous_text != null
-    || whisperParams.suppress_blank != null;
 
   return (
     <div style={{
       marginTop: 12,
       border: '1px solid var(--border-color)',
       borderRadius: 6,
-      background: 'rgba(251, 191, 36, 0.04)',
+      padding: 10,
+      background: 'rgba(139, 92, 246, 0.03)',
     }}>
-      {/* Header — click to expand/collapse */}
-      <div
-        onClick={() => setExpanded(!expanded)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '8px 12px', cursor: 'pointer', userSelect: 'none',
-        }}
-      >
-        {expanded
-          ? <FiChevronDown size={13} style={{ color: 'rgb(251, 191, 36)' }} />
-          : <FiChevronRight size={13} style={{ color: 'rgb(251, 191, 36)' }} />}
-        <FiSliders size={12} style={{ color: 'rgb(251, 191, 36)' }} />
-        <span style={{ fontWeight: 600, fontSize: 12 }}>Advanced Whisper Settings</span>
-        {hasOverrides && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <FiSliders size={13} style={{ color: 'rgb(139, 92, 246)' }} />
+        <span style={{ fontWeight: 600, fontSize: 12 }}>Transcription Preset</span>
+        {currentPreset && WHISPER_PRESETS[currentPreset] && (
           <span style={{
-            marginLeft: 'auto', fontSize: 9, padding: '1px 6px',
-            borderRadius: 6, background: 'rgba(251, 191, 36, 0.2)',
-            color: 'rgb(251, 191, 36)', fontWeight: 600,
-          }}>{currentPreset ? WHISPER_PRESETS[currentPreset].label : 'Custom'}</span>
+            marginLeft: 'auto', fontSize: 9, padding: '1px 8px',
+            borderRadius: 10, fontWeight: 600,
+            background: currentPreset === 'auto' ? 'rgba(139, 92, 246, 0.15)' : 'rgba(251, 191, 36, 0.2)',
+            color: currentPreset === 'auto' ? 'rgb(139, 92, 246)' : 'rgb(251, 191, 36)',
+          }}>{WHISPER_PRESETS[currentPreset].label}</span>
         )}
       </div>
 
-      {expanded && (
-        <div style={{ padding: '0 12px 12px' }}>
-          {/* Preset buttons — 2x2 grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 8 }}>
-            {Object.entries(WHISPER_PRESETS).map(([key, preset]) => {
-              const isActive = currentPreset === key;
-              return (
-                <button
-                  key={key}
-                  className="btn btn-ghost"
-                  onClick={() => applyPreset(key)}
-                  title={preset.description}
-                  style={{
-                    fontSize: 10, padding: '5px 6px',
-                    background: isActive ? 'rgba(251, 191, 36, 0.15)' : undefined,
-                    border: isActive ? '1px solid rgba(251, 191, 36, 0.5)' : '1px solid var(--border-color)',
-                    color: isActive ? 'rgb(251, 191, 36)' : undefined,
-                    fontWeight: isActive ? 700 : 400,
-                  }}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-          </div>
-          {/* Active preset description */}
-          {currentPreset && WHISPER_PRESETS[currentPreset] && (
-            <p style={{ fontSize: 9, color: 'rgb(251, 191, 36)', margin: '0 0 8px', fontStyle: 'italic' }}>
-              {WHISPER_PRESETS[currentPreset].description}
-            </p>
-          )}
-          {/* Reset button */}
-          <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+        {Object.entries(WHISPER_PRESETS).map(([key, preset]) => {
+          const isActive = currentPreset === key;
+          return (
             <button
+              key={key}
               className="btn btn-ghost"
-              onClick={clearAll}
-              disabled={!hasOverrides}
-              style={{ width: '100%', fontSize: 10, padding: '4px 8px', opacity: hasOverrides ? 1 : 0.4 }}
+              onClick={() => applyPreset(key)}
+              title={preset.description}
+              style={{
+                fontSize: 10, padding: '6px 6px',
+                textAlign: 'left',
+                display: 'flex', alignItems: 'center', gap: 4,
+                background: isActive ? 'rgba(139, 92, 246, 0.12)' : undefined,
+                border: isActive ? '1px solid rgba(139, 92, 246, 0.5)' : '1px solid var(--border-color)',
+                color: isActive ? 'rgb(167, 139, 250)' : undefined,
+                fontWeight: isActive ? 700 : 400,
+                borderRadius: 5,
+              }}
             >
-              Reset to Auto
+              <span style={{ fontSize: 13 }}>{preset.icon}</span>
+              <span>{preset.label.replace(/^[^\s]+\s/, '')}</span>
             </button>
-          </div>
+          );
+        })}
+      </div>
 
-          {/* Slider parameters */}
-          {WHISPER_PARAM_DEFS.map(({ key, label, description, min, max, step, musicDefault }) => {
-            const isAuto = whisperParams[key] == null;
-            // Show preset default when auto, otherwise actual value
-            const presetRef = currentPreset && WHISPER_PRESETS[currentPreset]
-              ? (WHISPER_PRESETS[currentPreset].params[key] ?? musicDefault)
-              : musicDefault;
-            const displayValue = isAuto ? presetRef : whisperParams[key];
-            const isInt = step >= 1;
-            return (
-              <div key={key} style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-                  <span style={{ fontSize: 11, fontWeight: 500 }}>{label}</span>
-                  <span style={{
-                    fontSize: 11, fontWeight: 700,
-                    color: isAuto ? 'var(--text-muted)' : 'rgb(251, 191, 36)',
-                  }}>
-                    {isInt ? displayValue : displayValue.toFixed(2)}{isAuto ? ' (auto)' : ''}
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={min} max={max} step={step}
-                  value={displayValue}
-                  onChange={(e) => {
-                    const v = isInt ? parseInt(e.target.value) : parseFloat(e.target.value);
-                    setWhisperParam(key, v);
-                    setActivePreset(null);
-                  }}
-                  style={{ width: '100%', height: 4 }}
-                />
-                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
-                  {description}
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Toggle parameters */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-            {/* condition_on_previous_text */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <span style={{ fontSize: 11, fontWeight: 500 }}>Condition on Previous</span>
-                <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '1px 0 0' }}>
-                  Off for music (prevents hallucination loops)
-                </p>
-              </div>
-              <Toggle
-                enabled={whisperParams.condition_on_previous_text === true}
-                onClick={() => {
-                  const current = whisperParams.condition_on_previous_text;
-                  setWhisperParam('condition_on_previous_text', current === true ? false : true);
-                  setActivePreset(null);
-                }}
-              />
-            </div>
-
-            {/* suppress_blank */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <span style={{ fontSize: 11, fontWeight: 500 }}>Suppress Blank</span>
-                <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '1px 0 0' }}>
-                  Off for music (don't skip quiet vocal sections)
-                </p>
-              </div>
-              <Toggle
-                enabled={whisperParams.suppress_blank !== false}
-                onClick={() => {
-                  const current = whisperParams.suppress_blank;
-                  setWhisperParam('suppress_blank', current === false ? true : false);
-                  setActivePreset(null);
-                }}
-              />
-            </div>
-          </div>
-        </div>
+      {/* Description of active preset */}
+      {currentPreset && WHISPER_PRESETS[currentPreset] && (
+        <p style={{
+          fontSize: 9, color: 'var(--text-muted)', margin: '6px 0 0',
+          fontStyle: 'italic', lineHeight: 1.5,
+        }}>
+          {WHISPER_PRESETS[currentPreset].description}
+        </p>
       )}
     </div>
   );
@@ -425,8 +319,8 @@ function ModelSelector() {
             </div>
           </div>
 
-          {/* ========== Advanced Whisper Settings ========== */}
-          <AdvancedWhisperSettings whisperParams={whisperParams} setWhisperParam={setWhisperParam} />
+          {/* ========== Transcription Preset ========== */}
+          <WhisperPresetSelector whisperParams={whisperParams} setWhisperParam={setWhisperParam} />
 
           {/* ========== Vocal Isolation Section ========== */}
           <div style={{
