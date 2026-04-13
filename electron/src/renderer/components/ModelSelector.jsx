@@ -42,14 +42,56 @@ const STEM_LABELS = {
   other: { label: 'Other', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
 };
 
-// Music-vocal recommended defaults (matches backend CONTENT_TYPE_CONFIGS['music'])
-const MUSIC_PRESETS = {
-  no_speech_threshold: 0.8,
-  temperature: 0.0,
-  condition_on_previous_text: false,
-  suppress_blank: false,
-  best_of: 5,
-  patience: 2.0,
+// Content-type presets (match backend CONTENT_TYPE_CONFIGS)
+const WHISPER_PRESETS = {
+  music: {
+    label: '🎤 Music',
+    description: 'Vocal music — aggressive detection, low confidence OK',
+    params: {
+      no_speech_threshold: 0.8,
+      temperature: 0.0,
+      best_of: 5,
+      patience: 2.0,
+      condition_on_previous_text: false,
+      suppress_blank: false,
+    },
+  },
+  speech: {
+    label: '🗣️ Speech',
+    description: 'Clear speech — balanced accuracy and speed',
+    params: {
+      no_speech_threshold: 0.6,
+      temperature: 0.0,
+      best_of: 3,
+      patience: 1.0,
+      condition_on_previous_text: false,
+      suppress_blank: true,
+    },
+  },
+  podcast: {
+    label: '🎙️ Podcast',
+    description: 'Long-form dialogue — enhanced noise handling',
+    params: {
+      no_speech_threshold: 0.6,
+      temperature: 0.0,
+      best_of: 4,
+      patience: 1.5,
+      condition_on_previous_text: false,
+      suppress_blank: true,
+    },
+  },
+  long_music: {
+    label: '🎶 Long Music',
+    description: 'Long tracks (>5 min) — max patience, wider beam',
+    params: {
+      no_speech_threshold: 0.9,
+      temperature: 0.0,
+      best_of: 7,
+      patience: 3.0,
+      condition_on_previous_text: false,
+      suppress_blank: false,
+    },
+  },
 };
 
 // Slider/toggle parameter definitions for Advanced Whisper Settings
@@ -86,18 +128,37 @@ const WHISPER_PARAM_DEFS = [
 
 function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
   const [expanded, setExpanded] = React.useState(false);
+  const [activePreset, setActivePreset] = React.useState(null);
 
-  const applyMusicPreset = () => {
-    Object.entries(MUSIC_PRESETS).forEach(([key, value]) => {
+  const applyPreset = (presetKey) => {
+    const preset = WHISPER_PRESETS[presetKey];
+    if (!preset) return;
+    Object.entries(preset.params).forEach(([key, value]) => {
       setWhisperParam(key, value);
     });
+    setActivePreset(presetKey);
   };
 
   const clearAll = () => {
     WHISPER_PARAM_DEFS.forEach(({ key }) => setWhisperParam(key, null));
     setWhisperParam('condition_on_previous_text', null);
     setWhisperParam('suppress_blank', null);
+    setActivePreset(null);
   };
+
+  // Detect which preset matches current params (if any)
+  const detectActivePreset = () => {
+    for (const [key, preset] of Object.entries(WHISPER_PRESETS)) {
+      const allMatch = Object.entries(preset.params).every(([pk, pv]) => {
+        const current = whisperParams[pk];
+        if (current == null) return false;
+        return current === pv;
+      });
+      if (allMatch) return key;
+    }
+    return null;
+  };
+  const currentPreset = activePreset || detectActivePreset();
 
   const hasOverrides = WHISPER_PARAM_DEFS.some(({ key }) => whisperParams[key] != null)
     || whisperParams.condition_on_previous_text != null
@@ -128,26 +189,48 @@ function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
             marginLeft: 'auto', fontSize: 9, padding: '1px 6px',
             borderRadius: 6, background: 'rgba(251, 191, 36, 0.2)',
             color: 'rgb(251, 191, 36)', fontWeight: 600,
-          }}>Custom</span>
+          }}>{currentPreset ? WHISPER_PRESETS[currentPreset].label : 'Custom'}</span>
         )}
       </div>
 
       {expanded && (
         <div style={{ padding: '0 12px 12px' }}>
-          {/* Preset buttons */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-            <button
-              className="btn btn-ghost"
-              onClick={applyMusicPreset}
-              style={{ flex: 1, fontSize: 10, padding: '4px 8px' }}
-            >
-              🎤 Music Vocal Preset
-            </button>
+          {/* Preset buttons — 2x2 grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 8 }}>
+            {Object.entries(WHISPER_PRESETS).map(([key, preset]) => {
+              const isActive = currentPreset === key;
+              return (
+                <button
+                  key={key}
+                  className="btn btn-ghost"
+                  onClick={() => applyPreset(key)}
+                  title={preset.description}
+                  style={{
+                    fontSize: 10, padding: '5px 6px',
+                    background: isActive ? 'rgba(251, 191, 36, 0.15)' : undefined,
+                    border: isActive ? '1px solid rgba(251, 191, 36, 0.5)' : '1px solid var(--border-color)',
+                    color: isActive ? 'rgb(251, 191, 36)' : undefined,
+                    fontWeight: isActive ? 700 : 400,
+                  }}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+          {/* Active preset description */}
+          {currentPreset && WHISPER_PRESETS[currentPreset] && (
+            <p style={{ fontSize: 9, color: 'rgb(251, 191, 36)', margin: '0 0 8px', fontStyle: 'italic' }}>
+              {WHISPER_PRESETS[currentPreset].description}
+            </p>
+          )}
+          {/* Reset button */}
+          <div style={{ marginBottom: 10 }}>
             <button
               className="btn btn-ghost"
               onClick={clearAll}
               disabled={!hasOverrides}
-              style={{ flex: 1, fontSize: 10, padding: '4px 8px', opacity: hasOverrides ? 1 : 0.4 }}
+              style={{ width: '100%', fontSize: 10, padding: '4px 8px', opacity: hasOverrides ? 1 : 0.4 }}
             >
               Reset to Auto
             </button>
@@ -156,7 +239,11 @@ function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
           {/* Slider parameters */}
           {WHISPER_PARAM_DEFS.map(({ key, label, description, min, max, step, musicDefault }) => {
             const isAuto = whisperParams[key] == null;
-            const displayValue = isAuto ? musicDefault : whisperParams[key];
+            // Show preset default when auto, otherwise actual value
+            const presetRef = currentPreset && WHISPER_PRESETS[currentPreset]
+              ? (WHISPER_PRESETS[currentPreset].params[key] ?? musicDefault)
+              : musicDefault;
+            const displayValue = isAuto ? presetRef : whisperParams[key];
             const isInt = step >= 1;
             return (
               <div key={key} style={{ marginBottom: 10 }}>
@@ -176,7 +263,8 @@ function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
                   onChange={(e) => {
                     const v = isInt ? parseInt(e.target.value) : parseFloat(e.target.value);
                     setWhisperParam(key, v);
-                  }}
+                    setActivePreset(null);
+                  }}}
                   style={{ width: '100%', height: 4 }}
                 />
                 <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
@@ -201,6 +289,7 @@ function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
                 onClick={() => {
                   const current = whisperParams.condition_on_previous_text;
                   setWhisperParam('condition_on_previous_text', current === true ? false : true);
+                  setActivePreset(null);
                 }}
               />
             </div>
@@ -218,6 +307,7 @@ function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
                 onClick={() => {
                   const current = whisperParams.suppress_blank;
                   setWhisperParam('suppress_blank', current === false ? true : false);
+                  setActivePreset(null);
                 }}
               />
             </div>
