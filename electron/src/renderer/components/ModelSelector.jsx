@@ -264,7 +264,7 @@ function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
                     const v = isInt ? parseInt(e.target.value) : parseFloat(e.target.value);
                     setWhisperParam(key, v);
                     setActivePreset(null);
-                  }}}
+                  }}
                   style={{ width: '100%', height: 4 }}
                 />
                 <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
