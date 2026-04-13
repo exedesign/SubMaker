@@ -7,6 +7,7 @@ import { useAppStore } from '../stores/appStore';
 import {
   FiSliders,
   FiVolume2, FiMusic,
+  FiChevronDown, FiChevronRight,
 } from 'react-icons/fi';
 
 const Toggle = ({ enabled, onClick }) => (
@@ -40,6 +41,192 @@ const STEM_LABELS = {
   bass: { label: 'Bass', icon: '🎸', color: 'rgba(34, 197, 94, 0.8)' },
   other: { label: 'Other', icon: '🎹', color: 'rgba(251, 191, 36, 0.8)' },
 };
+
+// Music-vocal recommended defaults (matches backend CONTENT_TYPE_CONFIGS['music'])
+const MUSIC_PRESETS = {
+  no_speech_threshold: 0.8,
+  temperature: 0.0,
+  condition_on_previous_text: false,
+  suppress_blank: false,
+  best_of: 5,
+  patience: 2.0,
+};
+
+// Slider/toggle parameter definitions for Advanced Whisper Settings
+const WHISPER_PARAM_DEFS = [
+  {
+    key: 'no_speech_threshold',
+    label: 'No Speech Threshold',
+    description: 'Higher = skip less silence (music: 0.8, speech: 0.6)',
+    min: 0.0, max: 1.0, step: 0.05,
+    musicDefault: 0.8,
+  },
+  {
+    key: 'temperature',
+    label: 'Temperature',
+    description: 'Lower = more deterministic. 0 is best for music.',
+    min: 0.0, max: 1.0, step: 0.1,
+    musicDefault: 0.0,
+  },
+  {
+    key: 'best_of',
+    label: 'Best Of',
+    description: 'Candidate sequences per beam. Higher = slower but better.',
+    min: 1, max: 10, step: 1,
+    musicDefault: 5,
+  },
+  {
+    key: 'patience',
+    label: 'Patience',
+    description: 'Beam search patience. Higher may find better results.',
+    min: 0.5, max: 3.0, step: 0.1,
+    musicDefault: 2.0,
+  },
+];
+
+function AdvancedWhisperSettings({ whisperParams, setWhisperParam }) {
+  const [expanded, setExpanded] = React.useState(false);
+
+  const applyMusicPreset = () => {
+    Object.entries(MUSIC_PRESETS).forEach(([key, value]) => {
+      setWhisperParam(key, value);
+    });
+  };
+
+  const clearAll = () => {
+    WHISPER_PARAM_DEFS.forEach(({ key }) => setWhisperParam(key, null));
+    setWhisperParam('condition_on_previous_text', null);
+    setWhisperParam('suppress_blank', null);
+  };
+
+  const hasOverrides = WHISPER_PARAM_DEFS.some(({ key }) => whisperParams[key] != null)
+    || whisperParams.condition_on_previous_text != null
+    || whisperParams.suppress_blank != null;
+
+  return (
+    <div style={{
+      marginTop: 12,
+      border: '1px solid var(--border-color)',
+      borderRadius: 6,
+      background: 'rgba(251, 191, 36, 0.04)',
+    }}>
+      {/* Header — click to expand/collapse */}
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '8px 12px', cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        {expanded
+          ? <FiChevronDown size={13} style={{ color: 'rgb(251, 191, 36)' }} />
+          : <FiChevronRight size={13} style={{ color: 'rgb(251, 191, 36)' }} />}
+        <FiSliders size={12} style={{ color: 'rgb(251, 191, 36)' }} />
+        <span style={{ fontWeight: 600, fontSize: 12 }}>Advanced Whisper Settings</span>
+        {hasOverrides && (
+          <span style={{
+            marginLeft: 'auto', fontSize: 9, padding: '1px 6px',
+            borderRadius: 6, background: 'rgba(251, 191, 36, 0.2)',
+            color: 'rgb(251, 191, 36)', fontWeight: 600,
+          }}>Custom</span>
+        )}
+      </div>
+
+      {expanded && (
+        <div style={{ padding: '0 12px 12px' }}>
+          {/* Preset buttons */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            <button
+              className="btn btn-ghost"
+              onClick={applyMusicPreset}
+              style={{ flex: 1, fontSize: 10, padding: '4px 8px' }}
+            >
+              🎤 Music Vocal Preset
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={clearAll}
+              disabled={!hasOverrides}
+              style={{ flex: 1, fontSize: 10, padding: '4px 8px', opacity: hasOverrides ? 1 : 0.4 }}
+            >
+              Reset to Auto
+            </button>
+          </div>
+
+          {/* Slider parameters */}
+          {WHISPER_PARAM_DEFS.map(({ key, label, description, min, max, step, musicDefault }) => {
+            const isAuto = whisperParams[key] == null;
+            const displayValue = isAuto ? musicDefault : whisperParams[key];
+            const isInt = step >= 1;
+            return (
+              <div key={key} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                  <span style={{ fontSize: 11, fontWeight: 500 }}>{label}</span>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700,
+                    color: isAuto ? 'var(--text-muted)' : 'rgb(251, 191, 36)',
+                  }}>
+                    {isInt ? displayValue : displayValue.toFixed(2)}{isAuto ? ' (auto)' : ''}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={min} max={max} step={step}
+                  value={displayValue}
+                  onChange={(e) => {
+                    const v = isInt ? parseInt(e.target.value) : parseFloat(e.target.value);
+                    setWhisperParam(key, v);
+                  }}
+                  style={{ width: '100%', height: 4 }}
+                />
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
+                  {description}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Toggle parameters */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+            {/* condition_on_previous_text */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <span style={{ fontSize: 11, fontWeight: 500 }}>Condition on Previous</span>
+                <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '1px 0 0' }}>
+                  Off for music (prevents hallucination loops)
+                </p>
+              </div>
+              <Toggle
+                enabled={whisperParams.condition_on_previous_text === true}
+                onClick={() => {
+                  const current = whisperParams.condition_on_previous_text;
+                  setWhisperParam('condition_on_previous_text', current === true ? false : true);
+                }}
+              />
+            </div>
+
+            {/* suppress_blank */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <span style={{ fontSize: 11, fontWeight: 500 }}>Suppress Blank</span>
+                <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: '1px 0 0' }}>
+                  Off for music (don't skip quiet vocal sections)
+                </p>
+              </div>
+              <Toggle
+                enabled={whisperParams.suppress_blank !== false}
+                onClick={() => {
+                  const current = whisperParams.suppress_blank;
+                  setWhisperParam('suppress_blank', current === false ? true : false);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ModelSelector() {
   const {
@@ -147,6 +334,9 @@ function ModelSelector() {
               <span>20 (max accuracy)</span>
             </div>
           </div>
+
+          {/* ========== Advanced Whisper Settings ========== */}
+          <AdvancedWhisperSettings whisperParams={whisperParams} setWhisperParam={setWhisperParam} />
 
           {/* ========== Vocal Isolation Section ========== */}
           <div style={{

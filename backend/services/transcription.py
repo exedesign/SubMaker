@@ -280,7 +280,7 @@ class TranscriptionService:
     def _detect_vocal_segments(
         y: "np.ndarray",
         sr: int,
-        threshold_db: float = -40.0,
+        threshold_db: float = -35.0,
         min_silence_sec: float = 2.0,
         min_vocal_sec: float = 1.0,
         pad_sec: float = 0.3,
@@ -574,12 +574,12 @@ class TranscriptionService:
                 continue
 
             # Skip segments where all words have very low probability
-            # Disabled for music — singing naturally produces lower confidence
-            # scores and the user wants ALL vocal text even if uncertain.
-            if not is_music and seg.get('words') and seg['words']:
+            # Music uses a lower threshold since singing produces lower confidence
+            if seg.get('words') and seg['words']:
                 avg_prob = sum(w.get('probability', 0) for w in seg['words']) / len(seg['words'])
-                if avg_prob < 0.10:
-                    logger.info(f"Filtered low-confidence (avg_prob={avg_prob:.2f}): '{text[:40]}...'")
+                confidence_threshold = 0.05 if is_music else 0.10
+                if avg_prob < confidence_threshold:
+                    logger.info(f"Filtered low-confidence (avg_prob={avg_prob:.2f}, thr={confidence_threshold}): '{text[:40]}...'")
                     continue
 
             seen_texts.add(normalized)
