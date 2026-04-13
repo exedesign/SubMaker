@@ -45,3 +45,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Installer build artifacts (large binaries)
+installer/

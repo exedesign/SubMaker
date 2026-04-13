@@ -88,9 +88,9 @@ def create_app():
     """Create and configure the Flask application"""
     app = Flask(__name__)
     
-    # Enable CORS for all origins (development mode)
+    # Enable CORS for Electron renderer (localhost only)
     CORS(app,
-         resources={r"/api/*": {"origins": "*"}},
+         resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173", "file://"]}},
          allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
          methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     
@@ -107,7 +107,7 @@ def create_socketio(app):
     """Create SocketIO for real-time updates"""
     socketio = SocketIO(
         app,
-        cors_allowed_origins="*",
+        cors_allowed_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         async_mode="threading",
         max_http_buffer_size=50 * 1024 * 1024,  # 50 MB — supports 4K RGBA frames
     )
