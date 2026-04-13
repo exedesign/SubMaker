@@ -24,7 +24,6 @@ const Toggle = ({ enabled, onClick }) => (
 const WHISPER_MODELS = {
   default: [
     { value: 'turbo', label: 'Turbo (809M)', description: 'Fast, high accuracy (recommended)' },
-    { value: 'distil-large-v3', label: 'Distil Large V3 (756M)', description: 'Large-v3 distil — fast, high accuracy' },
     { value: 'small', label: 'Small (244M)', description: 'Balanced speed/accuracy' },
     { value: 'tiny', label: 'Tiny (39M)', description: 'Fastest, low accuracy' },
   ],

@@ -808,9 +808,9 @@ class TranscriptionService:
             # Check if language has specific requirements
             lang_model = self.get_optimal_model_size(language)
             # Use the larger of content-type requirement or language requirement
-            model_priority = ['tiny', 'base', 'small', 'medium', 'distil-large-v3', 'turbo', 'large-v3']
-            content_idx = model_priority.index(optimal_model) if optimal_model in model_priority else 5
-            lang_idx = model_priority.index(lang_model) if lang_model in model_priority else 5
+            model_priority = ['tiny', 'base', 'small', 'medium', 'turbo', 'large-v3']
+            content_idx = model_priority.index(optimal_model) if optimal_model in model_priority else 4
+            lang_idx = model_priority.index(lang_model) if lang_model in model_priority else 4
             optimal_model = model_priority[max(content_idx, lang_idx)]
 
         logger.info(f"Using optimal model: {optimal_model} for {content_type}")
