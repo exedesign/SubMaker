@@ -165,7 +165,20 @@ class FluxKleinGenerator(BaseGenerator):
             if progress_callback:
                 progress_callback(pct, msg, preview)
 
+        # Cancel pending unload timer before starting
+        if self._unload_timer:
+            self._unload_timer.cancel()
+            self._unload_timer = None
+
+        # Clamp dimensions to valid range and round to nearest multiple of 16
+        width = max(256, min(2048, round(width / 16) * 16))
+        height = max(256, min(2048, round(height / 16) * 16))
+
         self._ensure_loaded(progress_callback)
+
+        if self.pipe is None:
+            raise RuntimeError("FLUX Klein pipeline failed to load")
+
         _progress(28, "Processing prompt...")
 
         generator, actual_seed = self._make_seed(seed)

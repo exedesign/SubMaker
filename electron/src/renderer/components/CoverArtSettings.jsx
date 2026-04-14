@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/appStore';
 
 /**
@@ -15,11 +15,15 @@ function CoverArtSettings() {
     }
   }, []);
 
+  const [isCustomSize, setIsCustomSize] = useState(false);
+
   const SIZE_OPTIONS = [
     { label: '512×512', w: 512, h: 512 },
     { label: '768×768', w: 768, h: 768 },
     { label: '1024×1024', w: 1024, h: 1024 },
   ];
+
+  const isPresetMatch = SIZE_OPTIONS.some(o => o.w === coverArt.width && o.h === coverArt.height);
 
   const handleResetAll = () => {
     setCoverArt({
@@ -73,13 +77,40 @@ function CoverArtSettings() {
           {SIZE_OPTIONS.map((opt) => (
             <button
               key={opt.label}
-              className={`cover-art-size-btn ${coverArt.width === opt.w && coverArt.height === opt.h ? 'active' : ''}`}
-              onClick={() => setCoverArt({ width: opt.w, height: opt.h })}
+              className={`cover-art-size-btn ${!isCustomSize && coverArt.width === opt.w && coverArt.height === opt.h ? 'active' : ''}`}
+              onClick={() => { setIsCustomSize(false); setCoverArt({ width: opt.w, height: opt.h }); }}
             >
               {opt.label}
             </button>
           ))}
+          <button
+            className={`cover-art-size-btn ${isCustomSize || !isPresetMatch ? 'active' : ''}`}
+            onClick={() => setIsCustomSize(true)}
+          >
+            Custom
+          </button>
         </div>
+        {(isCustomSize || !isPresetMatch) && (
+          <div className="cover-art-custom-size">
+            <input
+              type="number"
+              min={256}
+              max={2048}
+              step={16}
+              value={coverArt.width}
+              onChange={(e) => setCoverArt({ width: Math.max(256, Math.min(2048, parseInt(e.target.value) || 512)) })}
+            />
+            <span>×</span>
+            <input
+              type="number"
+              min={256}
+              max={2048}
+              step={16}
+              value={coverArt.height}
+              onChange={(e) => setCoverArt({ height: Math.max(256, Math.min(2048, parseInt(e.target.value) || 512)) })}
+            />
+          </div>
+        )}
       </div>
 
       {/* Seed */}

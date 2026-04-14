@@ -65,6 +65,11 @@ class BaseGenerator(ABC):
                  seed: int = -1, negative_prompt: str = "",
                  progress_callback=None) -> Dict:
         """Generate a cover art image. Handles text[] macros and delegates to model-specific _do_generate."""
+        # Cancel any pending unload — we're about to use the pipeline
+        if self._unload_timer:
+            self._unload_timer.cancel()
+            self._unload_timer = None
+
         # Extract text macros before sending prompt to the model
         clean_prompt, text_macros = self.extract_text_macros(prompt)
 

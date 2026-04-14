@@ -36,14 +36,17 @@ function TagEditor() {
   const [activeTagId, setActiveTagId] = useState(null);
   const [editingTagId, setEditingTagId] = useState(null);
   const [editValue, setEditValue] = useState('');
+  const [loadingTagId, setLoadingTagId] = useState(null);
 
-  const handleChipClick = (tag) => {
+  const handleChipClick = async (tag) => {
     if (activeTagId === tag.id) {
       setActiveTagId(null);
     } else {
       setActiveTagId(tag.id);
       if (!tag.alternatives || tag.alternatives.length === 0) {
-        fetchCoverArtAlternatives(tag.id);
+        setLoadingTagId(tag.id);
+        await fetchCoverArtAlternatives(tag.id);
+        setLoadingTagId(null);
       }
     }
   };
@@ -119,7 +122,14 @@ function TagEditor() {
               )}
 
               {/* Alternatives dropdown */}
-              {isActive && tag.alternatives && tag.alternatives.length > 0 && (
+              {isActive && loadingTagId === tag.id && (
+                <div className="tag-alternatives-dropdown">
+                  <div className="tag-alternative-loading" style={{ borderLeftColor: colors.border }}>
+                    Loading alternatives...
+                  </div>
+                </div>
+              )}
+              {isActive && loadingTagId !== tag.id && tag.alternatives && tag.alternatives.length > 0 && (
                 <div className="tag-alternatives-dropdown">
                   {tag.alternatives.map((alt, i) => (
                     <button

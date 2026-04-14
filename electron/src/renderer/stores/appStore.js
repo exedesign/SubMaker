@@ -1427,7 +1427,7 @@ export const useAppStore = create((set, get) => ({
   updateCoverArtTag: (tagId, newValue) => {
     set(s => {
       const tags = s.coverArt.tags.map(t =>
-        t.id === tagId ? { ...t, value: newValue } : t
+        t.id === tagId ? { ...t, value: newValue, alternatives: [] } : t
       );
       // Preserve text overlay macros from current prompt
       const textMacros = (s.coverArt.editedPrompt || '').match(/,?\s*text\[[^\]]+\](?:@[\w-]+)?(?::\w+)?/gi) || [];

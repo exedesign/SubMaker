@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiTrash2, FiPlus, FiPlay, FiMic, FiRefreshCw, FiAlertCircle, FiGlobe, FiDownload, FiMusic, FiDisc, FiHeadphones } from 'react-icons/fi';
+import { FiTrash2, FiPlus, FiPlay, FiMic, FiGlobe } from 'react-icons/fi';
 import SimpleSunoImporter from './SimpleSunoImporter';
 
 function SubtitleEditor() {
@@ -20,27 +20,15 @@ function SubtitleEditor() {
     updateSecondarySubtitle,
     translateToSecondary,
     playbackTime,
-    exportLyrics,
     mediaFile,
     detectedLanguage,
     sourceLanguage,
     mediaDuration,
     setPlaybackTime,
     audioMixer,
-    createKaraokeMp3,
-    createVocalMp3,
   } = useAppStore();
 
-  const [showRetranscribeConfirm, setShowRetranscribeConfirm] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [exportStatus, setExportStatus] = useState(null);
-  const [syltStatus, setSyltStatus] = useState(null); // null | 'loading' | 'success' | 'error'
-  const [syltMessage, setSyltMessage] = useState(''); // Detailed message for SYLT embedding
-  const [karaokeStatus, setKaraokeStatus] = useState(null); // null | 'loading' | 'success' | 'error'
-  const [karaokeMessage, setKaraokeMessage] = useState('');
-  const [vocalStatus, setVocalStatus] = useState(null); // null | 'loading' | 'success' | 'error'
-  const [vocalMessage, setVocalMessage] = useState('');
-  const [mixerNotification, setMixerNotification] = useState(null); // Show when mixer is activated
+  const [mixerNotification, setMixerNotification] = useState(null);
   
   // Show notification when audio mixer is enabled
   useEffect(() => {
@@ -58,136 +46,18 @@ function SubtitleEditor() {
   };
   
   const handleAddSubtitle = () => {
-    // Use current playback time if available, otherwise use end of last subtitle
     const currentTime = playbackTime || 0;
     const lastSub = subtitles[subtitles.length - 1];
-    
-    // If we have a current playback time, use it
     let start = currentTime;
-    
-    // If no playback time, default to after last subtitle
     if (currentTime === 0 && lastSub) {
       start = lastSub.end + 0.5;
     }
-    
-    addSubtitle({
-      start,
-      end: start + 3,
-      text: 'New subtitle',
-    });
-  };
-  
-  const handleRetranscribe = () => {
-    clearSubtitles();
-    transcribe();
-    setShowRetranscribeConfirm(false);
+    addSubtitle({ start, end: start + 3, text: 'New subtitle' });
   };
 
   const handleTranslateToSecondary = async () => {
     await translateToSecondary();
   };
-
-  const handleExport = async (format) => {
-    setShowExportMenu(false);
-    setExportStatus({ loading: true, format });
-    const result = await exportLyrics(format);
-    if (result?.success) {
-      const savedTo = result.source_copy_path || result.output_path || result.download_filename;
-      const msg = result.message || `${result.download_filename || format} saved`;
-      setExportStatus({
-        success: true,
-        format,
-        path: savedTo,
-        message: msg,
-        sourceCopy: result.source_copy_path || null,
-      });
-      setTimeout(() => setExportStatus(null), 5000);
-    } else {
-      setExportStatus({ error: result?.error || 'Export failed', format });
-      setTimeout(() => setExportStatus(null), 6000);
-    }
-  };
-
-  const isMp3 = mediaFile && mediaFile.toLowerCase().endsWith('.mp3');
-
-  const handleEmbedSYLT = async () => {
-    if (!isMp3 || subtitles.length === 0) return;
-    setSyltStatus('loading');
-    setSyltMessage("Writing SYLT to MP3...");
-    try {
-      const result = await exportLyrics('id3', {});
-      if (result?.success && result?.sylt_written) {
-        setSyltStatus('success');
-        const count = result?.verification?.sylt_entries;
-        const location = result?.source_location || 'unknown location';
-        const message = `✓ ${count} SYLT entry embedded → ${location}`;
-        setSyltMessage(message);
-        console.log(`SYLT embedded: ${count} entries into ${result.source_file}`);
-        if (result.verification?.sylt_sample) {
-          console.log('SYLT sample:', result.verification.sylt_sample);
-        }
-      } else {
-        setSyltStatus('error');
-        setSyltMessage(`Error: ${result?.error || 'SYLT embedding failed'}`);
-        console.error('SYLT embed failed:', result?.error || 'unknown');
-      }
-    } catch (err) {
-      setSyltStatus('error');
-      setSyltMessage(`Error: ${err.message || 'SYLT embedding failed'}`);
-      console.error('SYLT embed error:', err);
-    }
-    setTimeout(() => {
-      setSyltStatus(null);
-      setSyltMessage('');
-    }, 4000);
-  };
-
-  const handleCreateKaraokeMp3 = async () => {
-    setKaraokeStatus('loading');
-    setKaraokeMessage('Creating karaoke MP3...');
-    try {
-      const result = await createKaraokeMp3();
-      if (result?.success) {
-        setKaraokeStatus('success');
-        setKaraokeMessage(`✓ Saved: ${result.filename}`);
-      } else {
-        setKaraokeStatus('error');
-        setKaraokeMessage(`Error: ${result?.error || 'Failed'}`);
-      }
-    } catch (err) {
-      setKaraokeStatus('error');
-      setKaraokeMessage(`Error: ${err.message || 'Failed'}`);
-    }
-    setTimeout(() => {
-      setKaraokeStatus(null);
-      setKaraokeMessage('');
-    }, 5000);
-  };
-
-  const handleCreateVocalMp3 = async () => {
-    setVocalStatus('loading');
-    setVocalMessage('Creating vocal MP3...');
-    try {
-      const result = await createVocalMp3();
-      if (result?.success) {
-        setVocalStatus('success');
-        setVocalMessage(`✓ Saved: ${result.filename}`);
-      } else {
-        setVocalStatus('error');
-        setVocalMessage(`Error: ${result?.error || 'Failed'}`);
-      }
-    } catch (err) {
-      setVocalStatus('error');
-      setVocalMessage(`Error: ${err.message || 'Failed'}`);
-    }
-    setTimeout(() => {
-      setVocalStatus(null);
-      setVocalMessage('');
-    }, 5000);
-  };
-
-  const hasInstrumental = !!audioMixer?.tracks?.instrumental?.filePath;
-  const hasVocals = !!audioMixer?.tracks?.vocals?.filePath;
 
   if (subtitles.length === 0) {
     return (
@@ -245,253 +115,9 @@ function SubtitleEditor() {
               {secondarySubtitle.isTranslating ? 'Translating...' : `To ${secondarySubtitle.targetLanguage.toUpperCase()}`}
             </button>
           )}
-          
-          {/* SYLT Embed Button — only for MP3 files */}
-          {isMp3 && (
-            <button
-              className="btn btn-sm"
-              onClick={handleEmbedSYLT}
-              disabled={isProcessing || syltStatus === 'loading'}
-              title="Embed synchronized lyrics (SYLT) into MP3 file"
-              style={{
-                background: syltStatus === 'success' ? 'var(--accent-success)' :
-                           syltStatus === 'error' ? 'var(--accent-error)' :
-                           'rgba(168, 85, 247, 0.9)',
-                color: '#fff',
-                fontSize: 11,
-                padding: '4px 10px',
-                gap: 4,
-                transition: 'background 0.2s',
-              }}
-            >
-              <FiDisc size={13} />
-              {syltStatus === 'loading' ? 'Embedding...' :
-               syltStatus === 'success' ? 'Embedded!' :
-               syltStatus === 'error' ? 'Error!' :
-               'Embed to MP3'}
-            </button>
-          )}
-
-          {/* Karaoke MP3 Button — only when instrumental stem is available */}
-          {hasInstrumental && (
-            <button
-              className="btn btn-sm"
-              onClick={handleCreateKaraokeMp3}
-              disabled={isProcessing || karaokeStatus === 'loading'}
-              title="Create a new MP3 from the instrumental stem with embedded lyrics (-krk.mp3)"
-              style={{
-                background: karaokeStatus === 'success' ? 'var(--accent-success)' :
-                            karaokeStatus === 'error' ? 'var(--accent-error)' :
-                            'rgba(20, 184, 166, 0.9)',
-                color: '#fff',
-                fontSize: 11,
-                padding: '4px 10px',
-                gap: 4,
-                transition: 'background 0.2s',
-              }}
-            >
-              <FiHeadphones size={13} />
-              {karaokeStatus === 'loading' ? 'Creating...' :
-               karaokeStatus === 'success' ? 'Created!' :
-               karaokeStatus === 'error' ? 'Error!' :
-               'Karaoke MP3'}
-            </button>
-          )}
-
-          {/* Vocal MP3 Button — only when vocal stem is available */}
-          {hasVocals && (
-            <button
-              className="btn btn-sm"
-              onClick={handleCreateVocalMp3}
-              disabled={isProcessing || vocalStatus === 'loading'}
-              title="Create a new MP3 from the vocal stem with embedded lyrics (-vocal.mp3)"
-              style={{
-                background: vocalStatus === 'success' ? 'var(--accent-success)' :
-                            vocalStatus === 'error' ? 'var(--accent-error)' :
-                            'rgba(244, 114, 182, 0.9)',
-                color: '#fff',
-                fontSize: 11,
-                padding: '4px 10px',
-                gap: 4,
-                transition: 'background 0.2s',
-              }}
-            >
-              <FiMic size={13} />
-              {vocalStatus === 'loading' ? 'Creating...' :
-               vocalStatus === 'success' ? 'Created!' :
-               vocalStatus === 'error' ? 'Error!' :
-               'Vocal MP3'}
-            </button>
-          )}
-
-          {/* Export Lyrics Dropdown */}
-          <div style={{ position: 'relative' }}>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => setShowExportMenu(!showExportMenu)}
-              disabled={isProcessing}
-              title="Export Lyrics"
-              style={{ color: 'var(--accent-primary)' }}
-            >
-              <FiDownload size={14} />
-            </button>
-            {showExportMenu && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                right: 0,
-                background: 'var(--bg-primary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 8,
-                padding: 4,
-                minWidth: 180,
-                zIndex: 100,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              }}>
-                <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
-                  onClick={() => handleExport('enhanced_lrc')}>
-                  <FiMusic size={12} /> Enhanced LRC (Word-level)
-                </button>
-                <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
-                  onClick={() => handleExport('lrc')}>
-                  <FiMusic size={12} /> Standard LRC
-                </button>
-                <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
-                  onClick={() => handleExport('word_json')}>
-                  <FiDownload size={12} /> Word-Level JSON
-                </button>
-                {isMp3 && (
-                  <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12, color: 'var(--accent-success)' }}
-                    onClick={() => handleExport('id3')}>
-                    <FiMusic size={12} /> Write ID3 Synced Lyrics
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => setShowRetranscribeConfirm(true)}
-            disabled={isProcessing}
-            title="Re-transcribe"
-            style={{ color: 'var(--accent-warning)' }}
-          >
-            <FiRefreshCw size={14} />
-          </button>
-
-          <button className="btn btn-secondary btn-sm" onClick={handleAddSubtitle}>
-            <FiPlus size={14} /> Add
-          </button>
         </div>
       </div>
-
-      {showRetranscribeConfirm && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: 'white',
-            padding: '24px',
-            borderRadius: '12px',
-            maxWidth: '400px',
-            width: '90%'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <FiAlertCircle color="orange" />
-              <h3>Confirm Re-transcription</h3>
-            </div>
-            <p>This will delete all current subtitles and create new ones from the audio.</p>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button 
-                className="btn btn-ghost" 
-                onClick={() => setShowRetranscribeConfirm(false)}
-              >
-                Cancel
-              </button>
-              <button 
-                className="btn btn-warning" 
-                onClick={handleRetranscribe}
-              >
-                <FiRefreshCw size={14} /> Re-transcribe
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       
-      {/* Export Status Toast */}
-      {exportStatus && (
-        <div style={{
-          padding: '8px 12px',
-          marginBottom: 8,
-          borderRadius: 6,
-          fontSize: 12,
-          background: exportStatus.loading ? 'rgba(99,102,241,0.1)' :
-                     exportStatus.success ? 'rgba(16,185,129,0.1)' :
-                     'rgba(239,68,68,0.1)',
-          color: exportStatus.loading ? 'var(--accent-primary)' :
-                 exportStatus.success ? 'var(--accent-success)' :
-                 'var(--accent-error)',
-          border: `1px solid ${exportStatus.loading ? 'rgba(99,102,241,0.3)' :
-                               exportStatus.success ? 'rgba(16,185,129,0.3)' :
-                               'rgba(239,68,68,0.3)'}`,
-        }}>
-          {exportStatus.loading && `Exporting ${exportStatus.format}...`}
-          {exportStatus.success && (
-            <span>
-              {exportStatus.message || `${exportStatus.format} saved successfully`}
-              {exportStatus.sourceCopy && (
-                <span style={{ display: 'block', fontSize: 10, marginTop: 2, opacity: 0.8, wordBreak: 'break-all' }}>
-                  {exportStatus.sourceCopy}
-                </span>
-              )}
-            </span>
-          )}
-          {exportStatus.error && `Error: ${exportStatus.error}`}
-        </div>
-      )}
-
-      {/* SYLT Embed Status Toast */}
-      {syltStatus && (
-        <div style={{
-          padding: '10px 12px',
-          marginBottom: 8,
-          borderRadius: 6,
-          fontSize: 12,
-          fontWeight: 500,
-          background: syltStatus === 'loading' ? 'rgba(99,102,241,0.1)' :
-                     syltStatus === 'success' ? 'rgba(16,185,129,0.1)' :
-                     'rgba(239,68,68,0.1)',
-          color: syltStatus === 'loading' ? 'var(--accent-primary)' :
-                 syltStatus === 'success' ? 'var(--accent-success)' :
-                 'var(--accent-error)',
-          border: `1px solid ${syltStatus === 'loading' ? 'rgba(99,102,241,0.3)' :
-                               syltStatus === 'success' ? 'rgba(16,185,129,0.3)' :
-                               'rgba(239,68,68,0.3)'}`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}>
-          {syltStatus === 'loading' && <span>⏳ Writing SYLT to MP3...</span>}
-          {syltStatus === 'success' && (
-            <span>
-              {syltMessage}
-              <span style={{ display: 'block', fontSize: 10, marginTop: 2, opacity: 0.8 }}>
-                ID3 tags written successfully
-              </span>
-            </span>
-          )}
-          {syltStatus === 'error' && <span>❌ {syltMessage || 'SYLT embedding failed'}</span>}
-        </div>
-      )}
-
       {/* Mixer Notification */}
       {mixerNotification && (
         <div style={{

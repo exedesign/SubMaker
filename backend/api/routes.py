@@ -2738,10 +2738,10 @@ def cover_art_generate():
     if model_id not in COVER_ART_MODELS:
         return jsonify({"error": f"Unknown model: {model_id}"}), 400
 
-    # Clamp values per model defaults
+    # Clamp dimensions to valid range and round to nearest multiple of 16
     model_defaults = COVER_ART_MODELS[model_id]["defaults"]
-    width = max(512, min(1024, width))
-    height = max(512, min(1024, height))
+    width = max(256, min(2048, round(width / 16) * 16))
+    height = max(256, min(2048, round(height / 16) * 16))
     steps = max(model_defaults.get("minSteps", 1), min(model_defaults.get("maxSteps", 50), steps))
     cfg_scale = max(model_defaults.get("minCfg", 0.0), min(model_defaults.get("maxCfg", 20.0), cfg_scale))
 
@@ -2937,7 +2937,7 @@ def cover_art_embed():
         else:
             return jsonify({"error": f"Unsupported audio format: {ext}"}), 400
 
-        # 2) Save PNG next to audio file with _cover suffix
+        # Save PNG next to audio file with _cover suffix (using media file's original name)
         png_path = audio.parent / f"{audio.stem}_cover.png"
         png_path.write_bytes(img_bytes)
 

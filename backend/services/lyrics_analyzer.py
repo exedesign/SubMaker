@@ -15,12 +15,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = (
     "Analyze song lyrics and return a JSON for album cover art.\n"
-    'Return ONLY valid JSON: {"tags":[{"type":"color","value":"...","alternatives":["a","b","c"]},'
-    '{"type":"subject","value":"...","alternatives":["a","b","c"]},'
-    '{"type":"environment","value":"...","alternatives":["a","b","c"]},'
-    '{"type":"action","value":"...","alternatives":["a","b","c"]},'
-    '{"type":"style","value":"...","alternatives":["a","b","c"]}],'
+    'Return ONLY valid JSON: {"tags":[{"type":"color","value":"...","alternatives":["a","b","c"]},' 
+    '{"type":"subject","value":"...","alternatives":["a","b","c"]},' 
+    '{"type":"environment","value":"...","alternatives":["a","b","c"]},' 
+    '{"type":"action","value":"...","alternatives":["a","b","c"]},' 
+    '{"type":"style","value":"...","alternatives":["a","b","c"]}],' 
     '"raw_prompt":"detailed album cover prompt in English"}\n'
+    "IMPORTANT: Every tag MUST have exactly 3 creative alternatives. "
+    "No tag should have an empty alternatives array. "
     "Rules: 5 tag types exactly once. Iconic visual metaphors, not literal. "
     "raw_prompt=square composition, high detail. JSON only, no extra text."
 )
@@ -99,6 +101,17 @@ class LyricsAnalyzerService:
             for t in valid_types - existing_types:
                 validated_tags.append({"type": t, "value": "", "alternatives": []})
 
+            # Auto-fill missing alternatives for tags that have a value but < 3 alternatives
+            truncated_ctx = truncated  # reuse the lyrics context
+            for tag in validated_tags:
+                if tag["value"] and len(tag["alternatives"]) < 3:
+                    try:
+                        alts = self._get_alternatives_internal(tag["type"], tag["value"], truncated_ctx)
+                        if alts:
+                            tag["alternatives"] = alts
+                    except Exception as e:
+                        logger.warning(f"[LyricsAnalyzer] Auto-fill alternatives failed for {tag['type']}: {e}")
+
             self._qwen._schedule_unload()
             return {"tags": validated_tags, "raw_prompt": str(result.get("raw_prompt", ""))}
 
@@ -115,26 +128,29 @@ class LyricsAnalyzerService:
             self._qwen._schedule_unload()
             raise
 
+    def _get_alternatives_internal(self, tag_type: str, tag_value: str, context: str) -> List[str]:
+        """Internal: get 3 alternatives without scheduling unload (for use in analyze_lyrics)."""
+        prompt = (
+            f"Given the song context below, suggest exactly 3 creative alternatives "
+            f"for the {tag_type} element '{tag_value}' in an album cover art.\n"
+            f"Song context: {context[:500]}\n\n"
+            f"Return ONLY a JSON array of 3 strings, nothing else. Example: [\"alt1\", \"alt2\", \"alt3\"]"
+        )
+        raw = self._generate(
+            "You are a creative visual art director. Output only valid JSON arrays.",
+            prompt,
+            max_tokens=128
+        )
+        json_match = re.search(r'\[.*?\]', raw, re.DOTALL)
+        if json_match:
+            alts = json.loads(json_match.group(0))
+            return [str(a) for a in alts[:3]]
+        return []
+
     def get_alternatives(self, tag_type: str, tag_value: str, context: str) -> List[str]:
         """Get 3 alternative suggestions for a specific tag."""
         try:
-            prompt = (
-                f"Given the song context below, suggest exactly 3 creative alternatives "
-                f"for the {tag_type} element '{tag_value}' in an album cover art.\n"
-                f"Song context: {context[:500]}\n\n"
-                f"Return ONLY a JSON array of 3 strings, nothing else. Example: [\"alt1\", \"alt2\", \"alt3\"]"
-            )
-            raw = self._generate(
-                "You are a creative visual art director. Output only valid JSON arrays.",
-                prompt,
-                max_tokens=128
-            )
-
-            json_match = re.search(r'\[.*?\]', raw, re.DOTALL)
-            if json_match:
-                alts = json.loads(json_match.group(0))
-                return [str(a) for a in alts[:3]]
-            return []
+            return self._get_alternatives_internal(tag_type, tag_value, context)
         except Exception as e:
             logger.warning(f"[LyricsAnalyzer] Alternatives error: {e}")
             return []

@@ -2,23 +2,24 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { fetchJson } from '../services/electronTransport';
 import { FiPlay, FiPause, FiSkipBack, FiSkipForward } from 'react-icons/fi';
+import TransportActionButtons from './TransportActionButtons';
 
 // Stem track constants
 const STEM_ORDER = ['original', 'vocals', 'instrumental', 'drums', 'bass', 'other'];
 const STEM_TRACK_HEIGHT = 48;
-const STEM_HEADER_WIDTH = 110;
 
 const isAbsolutePath = (value) => {
   if (!value || typeof value !== 'string') return false;
   return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
 };
 
-// Memoized stem track row component
+// Memoized stem track row component — full-width waveform with hover overlay controls
 const StemTrackRow = React.memo(({
   trackId, label, icon, color, waveformData, isMuted, volume,
   onVolumeChange, onMuteToggle, currentTime, duration,
 }) => {
   const canvasRef = useRef(null);
+  const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -78,55 +79,74 @@ const StemTrackRow = React.memo(({
   }, [waveformData, color, isMuted, volume, currentTime, duration]);
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', height: STEM_TRACK_HEIGHT,
-      borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-      background: isMuted ? 'rgba(0, 0, 0, 0.2)' : 'transparent',
-      opacity: isMuted ? 0.5 : 1, transition: 'opacity 0.15s',
-    }}>
-      {/* Track Header */}
-      <div style={{
-        flex: `0 0 ${STEM_HEADER_WIDTH}px`, display: 'flex', flexDirection: 'column',
-        padding: '2px 6px', gap: 2,
-        borderRight: `2px solid ${isMuted ? 'rgba(100,100,100,0.3)' : color}`,
-      }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 4,
-          fontSize: 10, fontWeight: 600,
-          color: isMuted ? 'var(--text-muted)' : color.replace('0.8)', '1)'),
-        }}>
-          <span style={{ fontSize: 12 }}>{icon}</span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{label}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); onMuteToggle(); }}
-            style={{
-              width: 22, height: 16, padding: 0, fontSize: 8, fontWeight: 700,
-              background: isMuted ? 'rgba(239, 68, 68, 0.7)' : 'rgba(100, 100, 100, 0.3)',
-              color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer',
-            }}
-          >M</button>
-          <input
-            type="range" min="0" max="100"
-            value={Math.round(volume * 100)}
-            onChange={(e) => { e.stopPropagation(); onVolumeChange(parseInt(e.target.value) / 100); }}
-            onClick={(e) => e.stopPropagation()}
-            style={{ flex: 1, height: 2, cursor: 'pointer', accentColor: color.replace('0.8)', '1)') }}
-            title={`Volume: ${Math.round(volume * 100)}%`}
-          />
-          <span style={{ fontSize: 8, color: 'var(--text-muted)', minWidth: 20, textAlign: 'right' }}>
-            {Math.round(volume * 100)}%
-          </span>
-        </div>
-      </div>
-      {/* Track Waveform Canvas */}
+    <div
+      style={{
+        position: 'relative', height: STEM_TRACK_HEIGHT,
+        borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+        opacity: isMuted ? 0.5 : 1, transition: 'opacity 0.15s',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Full-width waveform canvas */}
       <canvas
         ref={canvasRef}
-        style={{ flex: 1, height: STEM_TRACK_HEIGHT - 4, borderRadius: '0 4px 4px 0', background: 'rgba(0, 0, 0, 0.3)' }}
-        width={700}
+        style={{ width: '100%', height: STEM_TRACK_HEIGHT - 4, display: 'block', borderRadius: 0, background: 'rgba(0, 0, 0, 0.3)' }}
+        width={900}
         height={STEM_TRACK_HEIGHT - 4}
       />
+      {/* Overlay controls — visible on hover */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, height: '100%',
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '0 6px',
+        background: hovered ? 'rgba(0, 0, 0, 0.7)' : 'transparent',
+        borderRight: hovered ? `2px solid ${isMuted ? 'rgba(100,100,100,0.3)' : color}` : 'none',
+        transition: 'background 0.15s, opacity 0.15s',
+        opacity: hovered ? 1 : 0,
+        pointerEvents: hovered ? 'auto' : 'none',
+      }}>
+        <span style={{ fontSize: 12 }}>{icon}</span>
+        <span style={{
+          fontSize: 10, fontWeight: 600, minWidth: 50,
+          color: isMuted ? 'var(--text-muted)' : color.replace('0.8)', '1)'),
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{label}</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onMuteToggle(); }}
+          style={{
+            width: 22, height: 16, padding: 0, fontSize: 8, fontWeight: 700,
+            background: isMuted ? 'rgba(239, 68, 68, 0.7)' : 'rgba(100, 100, 100, 0.3)',
+            color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer',
+          }}
+        >M</button>
+        <input
+          type="range" min="0" max="100"
+          value={Math.round(volume * 100)}
+          onChange={(e) => { e.stopPropagation(); onVolumeChange(parseInt(e.target.value) / 100); }}
+          onClick={(e) => e.stopPropagation()}
+          style={{ width: 60, height: 2, cursor: 'pointer', accentColor: color.replace('0.8)', '1)') }}
+          title={`Volume: ${Math.round(volume * 100)}%`}
+        />
+        <span style={{ fontSize: 8, color: 'var(--text-muted)', minWidth: 20, textAlign: 'right' }}>
+          {Math.round(volume * 100)}%
+        </span>
+      </div>
+      {/* Small label badge — always visible when not hovered */}
+      {!hovered && (
+        <div style={{
+          position: 'absolute', top: 2, left: 4,
+          display: 'flex', alignItems: 'center', gap: 3,
+          padding: '1px 5px',
+          background: 'rgba(0, 0, 0, 0.55)',
+          borderRadius: 3, fontSize: 9, fontWeight: 600,
+          color: isMuted ? 'var(--text-muted)' : color.replace('0.8)', '1)'),
+          pointerEvents: 'none',
+        }}>
+          <span style={{ fontSize: 10 }}>{icon}</span>
+          {label}
+        </div>
+      )}
     </div>
   );
 });
@@ -495,7 +515,7 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
     const handleResize = () => {
       if (!stemContainerRef.current) return;
       const containerWidth = stemContainerRef.current.clientWidth;
-      const canvasWidth = Math.max(200, containerWidth - STEM_HEADER_WIDTH);
+      const canvasWidth = Math.max(200, containerWidth);
       const canvases = stemContainerRef.current.querySelectorAll('canvas');
       canvases.forEach((canvas) => {
         if (canvas.width !== canvasWidth) canvas.width = canvasWidth;
@@ -590,6 +610,13 @@ function SubtitleTimeline({ currentTime, duration, onSeek }) {
         <span style={{ flex: 1 }}>
           {isAnalyzing && <span style={{ fontSize: 11, color: 'var(--accent-warning)' }}>Analyzing audio...</span>}
         </span>
+
+        {/* Action Buttons */}
+        <TransportActionButtons />
+
+        {/* Divider */}
+        <span style={{ width: 1, height: 16, background: 'var(--border-color)', opacity: 0.5 }} />
+
         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{subtitles.length} subtitles</span>
       </div>
       

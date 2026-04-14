@@ -232,8 +232,9 @@ export default function PlaylistPanel() {
       if (window.electronAPI?.openFile) {
         // Electron native dialog — returns absolute paths directly
         const result = await window.electronAPI.openFile({
+          title: 'Select MP3 files for playlist',
           filters: [{ name: 'MP3 Files', extensions: ['mp3'] }],
-          properties: ['openFile', 'multiSelections'],
+          multiSelections: true,
         });
         if (!result || result.canceled || !result.filePaths?.length) {
           setAdding(false);

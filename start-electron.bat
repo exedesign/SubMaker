@@ -2,11 +2,18 @@
 title SubMaker - Electron Dev
 cd /d "%~dp0"
 
-:: Kill any existing Python processes on port 5000
+:: Kill any existing processes on port 5000 (backend) and 5173 (vite)
+:: /T flag kills entire process tree (parent + children)
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5000 ^| findstr LISTENING') do (
     echo Killing existing process on port 5000 (PID: %%a)
-    taskkill /F /PID %%a >nul 2>&1
+    taskkill /F /T /PID %%a >nul 2>&1
 )
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5173 ^| findstr LISTENING') do (
+    echo Killing existing process on port 5173 (PID: %%a)
+    taskkill /F /T /PID %%a >nul 2>&1
+)
+:: Wait for ports to be fully released
+timeout /t 2 /nobreak >nul
 
 :: Start Python backend in background
 echo Starting Python backend...
