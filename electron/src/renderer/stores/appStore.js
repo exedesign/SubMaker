@@ -411,6 +411,7 @@ export const useAppStore = create((set, get) => ({
   systemHealth: null,        // Full health check result from backend
   healthCheckLoading: false,
   modelDownloading: {},      // { modelKey: true/false }
+  modelProgress: {},         // { modelKey: { progress: 0-100, downloaded_bytes, total_bytes, status } }
   startupCheckComplete: false, // true after startup overlay finishes
   
   // ==========================================================================
@@ -453,11 +454,26 @@ export const useAppStore = create((set, get) => ({
     set({ modelDownloading: { ...get().modelDownloading, ...downloading } });
     try {
       await api.post('/system/download-models', { models: modelKeys });
-      // Poll for completion
+      // Poll for completion with progress tracking
       const poll = setInterval(async () => {
         try {
           const res = await api.get('/system/download-status');
           const jobs = res.data;
+
+          // Update per-model progress
+          const progressUpdate = {};
+          modelKeys.forEach(k => {
+            if (jobs[k]) {
+              progressUpdate[k] = {
+                progress: jobs[k].progress || 0,
+                downloaded_bytes: jobs[k].downloaded_bytes || 0,
+                total_bytes: jobs[k].total_bytes || 0,
+                status: jobs[k].status || 'downloading',
+              };
+            }
+          });
+          set({ modelProgress: { ...get().modelProgress, ...progressUpdate } });
+
           const stillActive = modelKeys.some(k => jobs[k]?.active);
           if (!stillActive) {
             clearInterval(poll);
@@ -468,7 +484,7 @@ export const useAppStore = create((set, get) => ({
             get().runSystemHealthCheck();
           }
         } catch { /* ignore polling errors */ }
-      }, 3000);
+      }, 1500);
     } catch (error) {
       const cleared = { ...get().modelDownloading };
       modelKeys.forEach(k => delete cleared[k]);

@@ -292,14 +292,48 @@
   50% { opacity: 1; }
 }
 
+@keyframes startupShimmer {
+  0%   { left: -100%; }
+  100% { left: 100%; }
+}
+
 /* ── Download UI ───────────────────────────────────────────── */
 
 .startup-download-badge {
   font-size: 10px;
   color: var(--accent-primary);
   margin-left: 8px;
+  font-weight: 600;
+  opacity: 0.95;
+  font-variant-numeric: tabular-nums;
+}
+
+.startup-download-size {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-left: 6px;
   font-weight: 400;
-  opacity: 0.85;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Downloading bar fill — smooth gradient with glow */
+.startup-check-bar-fill--downloading {
+  background: linear-gradient(90deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 70%, var(--accent-success)));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  position: relative;
+  overflow: hidden;
+}
+
+.startup-check-bar-fill--downloading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+  animation: startupShimmer 2s ease-in-out infinite;
 }
 
 .startup-download-actions {

@@ -17,8 +17,16 @@ const CHECK_ITEMS = [
 
 const FIRST_RUN_KEY = 'submaker-startup-check-done';
 
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
 function StartupHealthCheck() {
-  const { systemHealth, runSystemHealthCheck, setStartupCheckComplete, backendStatus, downloadModels, modelDownloading } = useAppStore();
+  const { systemHealth, runSystemHealthCheck, setStartupCheckComplete, backendStatus, downloadModels, modelDownloading, modelProgress } = useAppStore();
   const [itemStates, setItemStates] = useState({}); // key -> 'waiting' | 'checking' | 'ok' | 'fail'
   const [progress, setProgress] = useState({});     // key -> 0..100
   const [fadeOut, setFadeOut] = useState(false);
@@ -204,6 +212,10 @@ function StartupHealthCheck() {
             const state = itemStates[item.key] || 'waiting';
             const prog = progress[item.key] || 0;
             const isDownloading = modelDownloading[item.key];
+            const dlProgress = modelProgress[item.key];
+            const dlPercent = dlProgress?.progress || 0;
+            const dlBytes = dlProgress?.downloaded_bytes || 0;
+            const dlTotal = dlProgress?.total_bytes || 0;
 
             return (
               <div key={item.key} className={`startup-check-row startup-check-row--${isDownloading ? 'checking' : state}`}>
@@ -211,12 +223,24 @@ function StartupHealthCheck() {
                 <div className="startup-check-body">
                   <div className="startup-check-label">
                     {item.label}
-                    {isDownloading && <span className="startup-download-badge">downloading...</span>}
+                    {isDownloading && (
+                      <span className="startup-download-badge">
+                        {dlPercent > 0 ? `${dlPercent}%` : 'preparing...'}
+                      </span>
+                    )}
+                    {isDownloading && dlTotal > 0 && (
+                      <span className="startup-download-size">
+                        {formatBytes(dlBytes)} / {formatBytes(dlTotal)}
+                      </span>
+                    )}
                   </div>
                   <div className="startup-check-bar-track">
                     <div
-                      className={`startup-check-bar-fill startup-check-bar-fill--${isDownloading ? 'checking' : state}`}
-                      style={{ width: isDownloading ? '100%' : `${prog}%`, animation: isDownloading ? 'startupPulse 1.5s ease-in-out infinite' : 'none' }}
+                      className={`startup-check-bar-fill startup-check-bar-fill--${isDownloading ? 'downloading' : state}`}
+                      style={{
+                        width: isDownloading ? `${Math.max(2, dlPercent)}%` : `${prog}%`,
+                        transition: isDownloading ? 'width 0.8s ease-out' : 'width 0.05s linear',
+                      }}
                     />
                   </div>
                 </div>
@@ -275,7 +299,7 @@ function StartupHealthCheck() {
             {anyDownloading && (
               <div className="startup-download-status">
                 <span className="startup-icon-spin" style={{ marginRight: '8px' }} />
-                <span>Downloading... This may take a while</span>
+                <span>Downloading models... Please wait</span>
               </div>
             )}
 

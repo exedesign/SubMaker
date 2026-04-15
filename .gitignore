@@ -47,4 +47,7 @@ Thumbs.db
 logs/
 
 # Installer build artifacts (large binaries)
-installer/
+installer/*
+!installer/SubMaker.iss
+!installer/download_models.py
+!installer/prepare_build.ps1

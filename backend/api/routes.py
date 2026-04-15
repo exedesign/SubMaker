@@ -3054,6 +3054,16 @@ _HEALTH_MODELS = {
             "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
             "bs_roformer_instrumental_resurrection_unwa.ckpt",
         ],
+        "download_urls": {
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt":
+                "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+            "model_bs_roformer_ep_317_sdr_12.9755.yaml":
+                "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/model_bs_roformer_ep_317_sdr_12.9755.yaml",
+            "bs_roformer_instrumental_resurrection_unwa.ckpt":
+                "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/bs_roformer_instrumental_resurrection_unwa.ckpt",
+            "config_bs_roformer_instrumental_resurrection_unwa.yaml":
+                "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/config_bs_roformer_instrumental_resurrection_unwa.yaml",
+        },
     },
     "qwen": {
         "name": "Qwen 2.5 3B AWQ",
@@ -3243,6 +3253,35 @@ def system_health_check():
 _download_jobs = {}
 
 
+def _calc_dir_size(path):
+    """Calculate total size of all files in directory recursively (including hidden)."""
+    total = 0
+    try:
+        p = Path(path)
+        if p.exists():
+            for f in p.rglob('*'):
+                if f.is_file():
+                    try:
+                        total += f.stat().st_size
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    return total
+
+
+def _get_repo_total_bytes(repo_id):
+    """Get total repository size in bytes from HuggingFace API."""
+    try:
+        from huggingface_hub import HfApi
+        hf_api = HfApi()
+        info = hf_api.repo_info(repo_id)
+        total = sum(s.size for s in info.siblings if s.size)
+        return total
+    except Exception:
+        return 0
+
+
 @api.route('/system/download-models', methods=['POST'])
 def system_download_models():
     """Start downloading specified models. Body: { "models": ["turbo", "qwen", ...] }"""
@@ -3265,12 +3304,45 @@ def system_download_models():
     def _download_worker(keys):
         for key in keys:
             info = _HEALTH_MODELS[key]
-            _download_jobs[key] = {"active": True, "status": "downloading", "error": None}
+            target_dir = MODELS_DIR / info["local_dir"]
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            # Get expected total size — try HF API first, fall back to size_mb estimate
+            total_bytes = 0
+            repo_id = info.get("repo_id")
+            if repo_id:
+                total_bytes = _get_repo_total_bytes(repo_id)
+            if total_bytes <= 0:
+                total_bytes = info.get("size_mb", 0) * 1024 * 1024
+
+            # Pre-existing size (already-downloaded partial files)
+            pre_existing = _calc_dir_size(target_dir)
+
+            _download_jobs[key] = {
+                "active": True,
+                "status": "downloading",
+                "error": None,
+                "progress": 0,
+                "downloaded_bytes": 0,
+                "total_bytes": total_bytes,
+                "target_dir": str(target_dir),
+                "pre_existing": pre_existing,
+            }
             try:
                 _do_download(MODELS_DIR, key, info)
-                _download_jobs[key] = {"active": False, "status": "done", "error": None}
+                _download_jobs[key].update({
+                    "active": False,
+                    "status": "done",
+                    "error": None,
+                    "progress": 100,
+                    "downloaded_bytes": total_bytes,
+                })
             except Exception as e:
-                _download_jobs[key] = {"active": False, "status": "error", "error": str(e)}
+                _download_jobs[key].update({
+                    "active": False,
+                    "status": "error",
+                    "error": str(e),
+                })
 
     t = threading.Thread(target=_download_worker, args=(valid_keys,), daemon=True)
     t.start()
@@ -3284,16 +3356,34 @@ def _do_download(models_dir, key, info):
     target_dir.mkdir(parents=True, exist_ok=True)
 
     if key == "audio-separator":
-        import tempfile
-        from audio_separator.separator import Separator
-        for model_file in info["check_files"]:
-            dest = target_dir / model_file
-            if dest.exists() and dest.stat().st_size > 0:
-                continue
-            with tempfile.TemporaryDirectory() as tmpdir:
-                sep = Separator(output_dir=tmpdir, model_file_dir=str(target_dir))
-                sep.load_model(model_filename=model_file)
-                del sep
+        # Download model files directly from known URLs (more reliable than Separator.load_model)
+        import requests
+        download_urls = info.get("download_urls", {})
+        if download_urls:
+            for filename, url in download_urls.items():
+                dest = target_dir / filename
+                if dest.exists() and dest.stat().st_size > 0:
+                    continue
+                logger.info(f"Downloading {filename} from {url}")
+                resp = requests.get(url, stream=True, timeout=600)
+                resp.raise_for_status()
+                with open(str(dest), "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                logger.info(f"Downloaded {filename}: {dest.stat().st_size} bytes")
+        else:
+            # Fallback to audio-separator library
+            import tempfile
+            from audio_separator.separator import Separator
+            for model_file in info["check_files"]:
+                dest = target_dir / model_file
+                if dest.exists() and dest.stat().st_size > 0:
+                    continue
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    sep = Separator(output_dir=tmpdir, model_file_dir=str(target_dir))
+                    sep.load_model(model_filename=model_file)
+                    del sep
     else:
         from huggingface_hub import snapshot_download
         repo_id = info.get("repo_id")
@@ -3307,5 +3397,23 @@ def _do_download(models_dir, key, info):
 
 @api.route('/system/download-status', methods=['GET'])
 def system_download_status():
-    """Check status of model downloads."""
-    return jsonify(_download_jobs)
+    """Check status of model downloads — includes real-time progress via directory size."""
+    result = {}
+    for key, job in _download_jobs.items():
+        entry = dict(job)
+        # For active downloads, recalculate progress from actual directory size
+        target_dir = entry.get("target_dir")
+        total_bytes = entry.get("total_bytes", 0)
+        if entry.get("active") and target_dir and total_bytes > 0:
+            current_size = _calc_dir_size(target_dir)
+            pre_existing = entry.get("pre_existing", 0)
+            new_bytes = max(0, current_size - pre_existing)
+            net_total = max(1, total_bytes - pre_existing)
+            pct = min(99, int(new_bytes / net_total * 100))
+            entry["downloaded_bytes"] = current_size
+            entry["progress"] = pct
+        # Strip internal fields from response
+        entry.pop("target_dir", None)
+        entry.pop("pre_existing", None)
+        result[key] = entry
+    return jsonify(result)
