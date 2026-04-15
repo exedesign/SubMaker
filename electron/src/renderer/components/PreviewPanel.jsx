@@ -176,6 +176,27 @@ function PreviewPanel() {
     });
   };
 
+  // Listen for global panel focus requests (Alt+B / Shift+P shortcuts)
+  const focusPanelRequest = useAppStore(s => s._focusPanelRequest);
+  useEffect(() => {
+    if (!focusPanelRequest) return;
+    const panelId = focusPanelRequest;
+    useAppStore.getState().clearFocusPanelRequest();
+    // Ensure the preview tab is active
+    setRightPanelTab('preview');
+    // Expand the section if collapsed
+    setCollapsedSections(prev => {
+      const next = { ...prev, [panelId]: false };
+      localStorage.setItem(PREVIEW_COLLAPSED_KEY, JSON.stringify(next));
+      return next;
+    });
+    // Scroll to the section after a short delay to allow render
+    setTimeout(() => {
+      const el = document.querySelector(`.sidebar-section[data-section-id="${panelId}"]`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }, [focusPanelRequest, setRightPanelTab]);
+
   // Section drag handlers
   const handleSectionDragStart = useCallback((e, id) => {
     setSectionDraggedId(id);
@@ -1125,6 +1146,7 @@ function PreviewPanel() {
         return (
           <div
             key={id}
+            data-section-id={id}
             className={`sidebar-section${isDragging ? ' dragging' : ''}${isDragOver ? ' drag-over' : ''}${isCollapsed ? ' collapsed' : ''}`}
             onDragOver={(e) => handleSectionDragOver(e, id)}
             onDrop={(e) => handleSectionDrop(e, id)}

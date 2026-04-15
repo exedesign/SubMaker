@@ -8,7 +8,9 @@ import io
 import logging
 import re
 import threading
+import uuid
 from abc import ABC, abstractmethod
+from pathlib import Path
 from threading import Lock
 from typing import Dict, Optional
 
@@ -92,6 +94,18 @@ class BaseGenerator(ABC):
             img = self.apply_text_overlay(img, text_macros)
             img_rgb = img.convert("RGB")
             result["image_base64"] = self._image_to_base64(img_rgb)
+
+        # Save to temp file instead of keeping base64 in memory
+        if result.get("image_base64"):
+            from config import TEMP_DIR
+            cover_dir = Path(TEMP_DIR) / "cover_art"
+            cover_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"cover_{uuid.uuid4().hex[:12]}.png"
+            file_path = cover_dir / filename
+            file_path.write_bytes(base64.b64decode(result["image_base64"]))
+            result["image_filename"] = filename
+            result["image_path"] = str(file_path)
+            del result["image_base64"]
 
         return result
 

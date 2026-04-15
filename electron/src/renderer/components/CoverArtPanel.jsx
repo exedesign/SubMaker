@@ -54,7 +54,7 @@ function CoverArtPanel() {
           />
         ) : coverArt.generatedImage ? (
           <img
-            src={`data:image/png;base64,${coverArt.generatedImage}`}
+            src={coverArt.generatedImage}
             alt="Generated Cover Art"
             className="cover-art-image"
           />
@@ -177,13 +177,12 @@ function CoverArtPanel() {
           <button
             className="cover-art-btn secondary"
             onClick={() => {
-              const byteString = atob(coverArt.generatedImage);
-              const ab = new ArrayBuffer(byteString.length);
-              const ia = new Uint8Array(ab);
-              for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-              const blob = new Blob([ab], { type: 'image/png' });
-              const blobUrl = URL.createObjectURL(blob);
-              setBackgroundImage(blobUrl);
+              fetch(coverArt.generatedImage)
+                .then(r => r.blob())
+                .then(blob => {
+                  const blobUrl = URL.createObjectURL(blob);
+                  setBackgroundImage(blobUrl);
+                });
             }}
             title="Use as preview background"
           >
@@ -231,15 +230,16 @@ function CoverArtPanel() {
             {coverArt.history.map((item, i) => (
               <button
                 key={i}
-                className={`cover-art-history-thumb ${coverArt.generatedImage === item.image_base64 ? 'active' : ''}`}
+                className={`cover-art-history-thumb ${coverArt.generatedImage === item.imageUrl ? 'active' : ''}`}
                 onClick={() => setCoverArt({
-                  generatedImage: item.image_base64,
+                  generatedImage: item.imageUrl,
+                  generatedImagePath: item.imagePath,
                   editedPrompt: item.prompt,
                   lastUsedSeed: item.seed,
                 })}
                 title={`Seed: ${item.seed}`}
               >
-                <img src={`data:image/png;base64,${item.image_base64}`} alt={`History ${i + 1}`} />
+                <img src={item.imageUrl} alt={`History ${i + 1}`} />
               </button>
             ))}
           </div>

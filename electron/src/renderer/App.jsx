@@ -7,13 +7,15 @@ import MainContent from './components/MainContent';
 import StatusBar from './components/StatusBar';
 import PreviewPanel from './components/PreviewPanel';
 import PreviewScreenOutput from './components/PreviewScreenOutput';
+import StartupHealthCheck from './components/StartupHealthCheck';
 import THEMES from './themes';
+import './styles/startup.css';
 
 // Detect if this window is the second-display preview output
 const isPreviewScreen = new URLSearchParams(window.location.search).has('previewScreen');
 
 function MainApp() {
-  const { checkBackendHealth, backendStatus, previewMode, settings, generateCoverArt, coverArt } = useAppStore();
+  const { checkBackendHealth, backendStatus, previewMode, settings, generateCoverArt, coverArt, startupCheckComplete } = useAppStore();
   const fastPollRef = useRef(null);
 
   // Global Ctrl+Enter → Generate Cover Art
@@ -27,6 +29,54 @@ function MainApp() {
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Global shortcuts: Audio solo toggles (V/B/C) & Panel navigation (Alt+B / Shift+P)
+  useEffect(() => {
+    const handleMixerKeys = (e) => {
+      const isInput = e.target.matches('input, textarea, select, [contenteditable]');
+      if (isInput) return;
+      const { shortcuts, audioMixer, setTrackSolo, requestFocusPanel } = useAppStore.getState();
+
+      // V — Toggle Vocal Solo
+      if (matchesShortcut(e, shortcuts.soloVocals.keys)) {
+        e.preventDefault();
+        if (audioMixer.enabled && audioMixer.tracks.vocals) {
+          setTrackSolo('vocals', !audioMixer.tracks.vocals.solo);
+        }
+        return;
+      }
+      // B — Toggle Instrumental Solo
+      if (matchesShortcut(e, shortcuts.soloInstrumental.keys)) {
+        e.preventDefault();
+        if (audioMixer.enabled && audioMixer.tracks.instrumental) {
+          setTrackSolo('instrumental', !audioMixer.tracks.instrumental.solo);
+        }
+        return;
+      }
+      // C — Toggle Original Solo
+      if (matchesShortcut(e, shortcuts.soloOriginal.keys)) {
+        e.preventDefault();
+        if (audioMixer.enabled && audioMixer.tracks.original) {
+          setTrackSolo('original', !audioMixer.tracks.original.solo);
+        }
+        return;
+      }
+      // Alt+B — Show Batch Panel
+      if (matchesShortcut(e, shortcuts.showBatchPanel.keys)) {
+        e.preventDefault();
+        requestFocusPanel('batch');
+        return;
+      }
+      // Shift+P — Show Playlist Panel
+      if (matchesShortcut(e, shortcuts.showPlaylistPanel.keys)) {
+        e.preventDefault();
+        requestFocusPanel('playlist');
+        return;
+      }
+    };
+    document.addEventListener('keydown', handleMixerKeys);
+    return () => document.removeEventListener('keydown', handleMixerKeys);
   }, []);
 
   // Apply color theme to :root CSS variables
@@ -66,6 +116,7 @@ function MainApp() {
 
   return (
     <div className="app">
+      {!startupCheckComplete && <StartupHealthCheck />}
       <Header />
       <div className="app-body">
         <Sidebar />

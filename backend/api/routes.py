@@ -2139,6 +2139,11 @@ def batch_pick_files():
     return jsonify({"paths": paths, "count": len(paths)})
 
 
+@api.route("/output-dir", methods=["GET"])
+def get_output_dir():
+    """Return the configured output directory path"""
+    return jsonify({"output_dir": str(OUTPUT_DIR)})
+
 @api.route("/open-folder", methods=["GET"])
 def open_folder():
     """Open folder in system file explorer"""
@@ -2283,6 +2288,9 @@ def export_lyrics():
         elif format_type == "word_json":
             output_path = os.path.join(source_dir, f"{source_stem}.json")
             engine.save_word_level_json(subtitles, output_path)
+        elif format_type == "srt":
+            output_path = os.path.join(source_dir, f"{source_stem}.srt")
+            engine.save_srt(subtitles, output_path)
         elif format_type == "id3":
             if not source_file_path.lower().endswith(".mp3"):
                 return jsonify({"error": "ID3 tags can only be written to MP3 files"}), 400
@@ -2800,6 +2808,17 @@ def cover_art_cancel(job_id):
     return jsonify({"error": "Job not found"}), 404
 
 
+@api.route('/cover-art/image/<filename>', methods=['GET'])
+def cover_art_image(filename):
+    """Serve a generated cover art image from the temp directory."""
+    from config import TEMP_DIR
+    safe_name = secure_filename(filename)
+    file_path = Path(TEMP_DIR) / "cover_art" / safe_name
+    if not file_path.exists():
+        return jsonify({"error": "Image not found"}), 404
+    return send_file(str(file_path), mimetype='image/png')
+
+
 @api.route('/cover-art/alternatives', methods=['POST'])
 def cover_art_alternatives():
     """Get 3 alternative suggestions for a tag using Qwen 2.5."""
@@ -2831,19 +2850,21 @@ def cover_art_save():
     if not data:
         return jsonify({"error": "JSON body required"}), 400
 
+    image_path = data.get('imagePath', '').strip()
     image_base64 = data.get('imageBase64', '').strip()
     filename = data.get('filename', 'cover_art').strip()
     target_dir = data.get('targetDir', '').strip()
 
-    if not image_base64:
-        return jsonify({"error": "imageBase64 is required"}), 400
+    if not image_path and not image_base64:
+        return jsonify({"error": "imagePath or imageBase64 is required"}), 400
 
     try:
-        import base64, re
+        import base64 as b64mod
+        import re as re_mod
         from pathlib import Path
 
         # Sanitize filename
-        safe_name = re.sub(r'[^\w\-.]', '_', filename)
+        safe_name = re_mod.sub(r'[^\w\-.]', '_', filename)
         if not safe_name.lower().endswith('.png'):
             safe_name += '.png'
 
@@ -2855,8 +2876,17 @@ def cover_art_save():
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             out_path = OUTPUT_DIR / safe_name
 
-        img_bytes = base64.b64decode(image_base64)
-        out_path.write_bytes(img_bytes)
+        # Read image bytes from temp file or base64
+        if image_path:
+            src = Path(image_path)
+            if not src.exists():
+                return jsonify({"error": "Image file not found"}), 404
+            import shutil as shutil_mod
+            shutil_mod.copy2(str(src), str(out_path))
+        else:
+            img_bytes = b64mod.b64decode(image_base64)
+            out_path.write_bytes(img_bytes)
+
         print(f"[CoverArt] Saved: {out_path}")
         return jsonify({"success": True, "path": str(out_path)})
     except Exception as e:
@@ -2871,14 +2901,15 @@ def cover_art_embed():
     if not data:
         return jsonify({"error": "JSON body required"}), 400
 
+    image_path = data.get('imagePath', '').strip()
     image_base64 = data.get('imageBase64', '').strip()
     audio_path = data.get('audioPath', '').strip()
 
-    if not image_base64 or not audio_path:
-        return jsonify({"error": "imageBase64 and audioPath are required"}), 400
+    if (not image_path and not image_base64) or not audio_path:
+        return jsonify({"error": "(imagePath or imageBase64) and audioPath are required"}), 400
 
     try:
-        import base64
+        import base64 as b64mod
         from pathlib import Path
         from mutagen.mp3 import MP3
         from mutagen.id3 import ID3, APIC, ID3NoHeaderError
@@ -2890,7 +2921,14 @@ def cover_art_embed():
         if not audio.exists():
             return jsonify({"error": f"Audio file not found: {audio_path}"}), 404
 
-        img_bytes = base64.b64decode(image_base64)
+        # Read image bytes from temp file or base64
+        if image_path:
+            src = Path(image_path)
+            if not src.exists():
+                return jsonify({"error": "Image file not found"}), 404
+            img_bytes = src.read_bytes()
+        else:
+            img_bytes = b64mod.b64decode(image_base64)
         ext = audio.suffix.lower()
 
         # 1) Embed cover art into audio file
@@ -2991,3 +3029,283 @@ def system_unload_all():
     vram = get_vram_manager()
     unloaded = vram.release_all()
     return jsonify({"success": True, "unloaded": unloaded})
+
+
+# ── System Health Check ───────────────────────────────────────
+
+# Model registry matching download_models.py
+_HEALTH_MODELS = {
+    "turbo": {
+        "name": "Whisper Turbo",
+        "category": "required",
+        "size_mb": 1500,
+        "local_dir": "turbo",
+        "description": "Speech recognition — fast and accurate (recommended)",
+        "repo_id": "deepdml/faster-whisper-large-v3-turbo-ct2",
+        "check_files": ["model.bin", "config.json"],
+    },
+    "audio-separator": {
+        "name": "BS-Roformer Vocal Separator",
+        "category": "required",
+        "size_mb": 805,
+        "local_dir": "audio-separator",
+        "description": "Vocal isolation — extract vocals from music",
+        "check_files": [
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+            "bs_roformer_instrumental_resurrection_unwa.ckpt",
+        ],
+    },
+    "qwen": {
+        "name": "Qwen 2.5 3B AWQ",
+        "category": "translation",
+        "size_mb": 2600,
+        "local_dir": "qwen2.5-3b-awq",
+        "description": "AI translation engine — 37+ languages",
+        "repo_id": "Qwen/Qwen2.5-3B-Instruct-AWQ",
+        "check_files": ["config.json"],
+    },
+    "small": {
+        "name": "Whisper Small",
+        "category": "extra",
+        "size_mb": 464,
+        "local_dir": "small",
+        "description": "Better accuracy for Arabic/Chinese/Japanese/Korean",
+        "repo_id": "Systran/faster-whisper-small",
+        "check_files": ["model.bin", "config.json"],
+    },
+    "tiny": {
+        "name": "Whisper Tiny",
+        "category": "extra",
+        "size_mb": 75,
+        "local_dir": "tiny",
+        "description": "Fastest, lower accuracy",
+        "repo_id": "Systran/faster-whisper-tiny",
+        "check_files": ["model.bin", "config.json"],
+    },
+    "distil-large-v3": {
+        "name": "Whisper Distil Large v3",
+        "category": "extra",
+        "size_mb": 1500,
+        "local_dir": "distil-large-v3",
+        "description": "Fast + high accuracy (distilled)",
+        "repo_id": "Systran/faster-distil-whisper-large-v3",
+        "check_files": ["model.bin", "config.json"],
+    },
+    "flux-klein": {
+        "name": "FLUX.2 Klein 4B",
+        "category": "cover-art",
+        "size_mb": 22600,
+        "local_dir": "flux-klein-4b",
+        "description": "AI cover art generator — text to image",
+        "repo_id": "black-forest-labs/FLUX.2-klein-4B",
+        "check_files": ["model_index.json"],
+    },
+    "flux-small-decoder": {
+        "name": "FLUX.2 Small Decoder",
+        "category": "cover-art",
+        "size_mb": 250,
+        "local_dir": "flux-small-decoder",
+        "description": "Fast VAE decoder — 1.4x faster decode, low VRAM",
+        "repo_id": "black-forest-labs/FLUX.2-small-decoder",
+        "check_files": ["config.json"],
+    },
+}
+
+
+_health_cache = {"result": None, "time": 0}
+
+
+def _check_model_status(models_dir, model_key, model_info):
+    """Check a single model's installation status.
+    In production, checks both user-writable dir and bundled resources dir."""
+    import config as _cfg
+    local_path = models_dir / model_info["local_dir"]
+
+    # In production, also check bundled models dir
+    bundled_path = None
+    if getattr(_cfg, 'IS_PRODUCTION', False) and hasattr(_cfg, '_BUNDLED_MODELS_DIR'):
+        bundled_path = _cfg._BUNDLED_MODELS_DIR / model_info["local_dir"]
+
+    result = {
+        "key": model_key,
+        "name": model_info["name"],
+        "category": model_info["category"],
+        "size_mb": model_info["size_mb"],
+        "description": model_info["description"],
+        "path": str(local_path),
+        "installed": False,
+        "status": "missing",
+        "files_ok": 0,
+        "files_expected": len(model_info.get("check_files", [])),
+    }
+
+    # Try user dir first, then bundled dir
+    effective_path = local_path
+    if not local_path.exists() and bundled_path and bundled_path.exists():
+        effective_path = bundled_path
+        result["path"] = str(bundled_path)
+
+    if not effective_path.exists():
+        return result
+
+    # Check if directory has any files
+    try:
+        all_files = list(effective_path.rglob("*"))
+        file_count = sum(1 for f in all_files if f.is_file())
+    except OSError:
+        return result
+
+    if file_count == 0:
+        result["status"] = "empty"
+        return result
+
+    # Check required files
+    check_files = model_info.get("check_files", [])
+    files_found = 0
+    for cf in check_files:
+        if (effective_path / cf).exists():
+            files_found += 1
+
+    result["files_ok"] = files_found
+
+    if files_found == len(check_files) and len(check_files) > 0:
+        result["installed"] = True
+        result["status"] = "ok"
+    elif files_found > 0:
+        result["installed"] = True
+        result["status"] = "incomplete"
+    else:
+        # Has files but not the expected ones — might still be valid
+        result["installed"] = True
+        result["status"] = "ok"
+
+    return result
+
+
+@api.route('/system/health-check', methods=['GET'])
+def system_health_check():
+    """Full system health check — Python, FFmpeg, models.
+    Pass ?quick=1 to use cached results (max 5 min old)."""
+    import time as _time
+    from config import MODELS_DIR
+    import shutil
+
+    # Return cached result if quick mode requested and cache is fresh (< 5 min)
+    if request.args.get("quick") == "1" and _health_cache["result"]:
+        age = _time.time() - _health_cache["time"]
+        if age < 300:
+            return jsonify(_health_cache["result"])
+
+    results = {
+        "python": {"ok": True, "version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"},
+        "ffmpeg": {"ok": False, "path": None},
+        "models": {},
+        "summary": {
+            "total": len(_HEALTH_MODELS),
+            "installed": 0,
+            "missing": 0,
+            "incomplete": 0,
+        },
+    }
+
+    # Check FFmpeg
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        results["ffmpeg"]["ok"] = True
+        results["ffmpeg"]["path"] = ffmpeg_path
+    else:
+        # Check app-relative path
+        import config
+        app_ffmpeg = Path(config.BASE_DIR) / "ffmpeg" / "ffmpeg.exe"
+        if app_ffmpeg.exists():
+            results["ffmpeg"]["ok"] = True
+            results["ffmpeg"]["path"] = str(app_ffmpeg)
+
+    # Check each model
+    for key, info in _HEALTH_MODELS.items():
+        status = _check_model_status(MODELS_DIR, key, info)
+        results["models"][key] = status
+        if status["status"] == "ok":
+            results["summary"]["installed"] += 1
+        elif status["status"] == "incomplete":
+            results["summary"]["incomplete"] += 1
+        else:
+            results["summary"]["missing"] += 1
+
+    # Update cache
+    _health_cache["result"] = results
+    _health_cache["time"] = _time.time()
+
+    return jsonify(results)
+
+
+# Global dict to track active download threads
+_download_jobs = {}
+
+
+@api.route('/system/download-models', methods=['POST'])
+def system_download_models():
+    """Start downloading specified models. Body: { "models": ["turbo", "qwen", ...] }"""
+    import threading
+    from config import MODELS_DIR
+
+    data = request.get_json(silent=True) or {}
+    model_keys = data.get("models", [])
+
+    # Validate keys
+    valid_keys = [k for k in model_keys if k in _HEALTH_MODELS]
+    if not valid_keys:
+        return jsonify({"error": "No valid model keys provided"}), 400
+
+    # Check if already downloading
+    active = [k for k in valid_keys if k in _download_jobs and _download_jobs[k].get("active")]
+    if active:
+        return jsonify({"error": f"Already downloading: {', '.join(active)}"}), 409
+
+    def _download_worker(keys):
+        for key in keys:
+            info = _HEALTH_MODELS[key]
+            _download_jobs[key] = {"active": True, "status": "downloading", "error": None}
+            try:
+                _do_download(MODELS_DIR, key, info)
+                _download_jobs[key] = {"active": False, "status": "done", "error": None}
+            except Exception as e:
+                _download_jobs[key] = {"active": False, "status": "error", "error": str(e)}
+
+    t = threading.Thread(target=_download_worker, args=(valid_keys,), daemon=True)
+    t.start()
+
+    return jsonify({"started": valid_keys})
+
+
+def _do_download(models_dir, key, info):
+    """Download a single model."""
+    target_dir = models_dir / info["local_dir"]
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if key == "audio-separator":
+        import tempfile
+        from audio_separator.separator import Separator
+        for model_file in info["check_files"]:
+            dest = target_dir / model_file
+            if dest.exists() and dest.stat().st_size > 0:
+                continue
+            with tempfile.TemporaryDirectory() as tmpdir:
+                sep = Separator(output_dir=tmpdir, model_file_dir=str(target_dir))
+                sep.load_model(model_filename=model_file)
+                del sep
+    else:
+        from huggingface_hub import snapshot_download
+        repo_id = info.get("repo_id")
+        if repo_id:
+            snapshot_download(
+                repo_id=repo_id,
+                local_dir=str(target_dir),
+                local_dir_use_symlinks=False,
+            )
+
+
+@api.route('/system/download-status', methods=['GET'])
+def system_download_status():
+    """Check status of model downloads."""
+    return jsonify(_download_jobs)

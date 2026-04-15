@@ -166,7 +166,7 @@ export const useAppStore = create((set, get) => ({
   
   // App Settings
   settings: {
-    colorTheme: 'default', // 'default' | 'black-green' | 'black-red' | 'anthracite-blue'
+    colorTheme: 'black-red', // 'default' | 'black-green' | 'black-red' | 'anthracite-blue'
     gifProvider: 'tenor', // 'tenor' or 'giphy'
     dualSubtitleEnabled: true, // Module toggle in settings - enabled by default
     seekStep: 5, // Arrow key seek step in seconds
@@ -211,6 +211,13 @@ export const useAppStore = create((set, get) => ({
     logoMoveRightFast: { keys: 'Shift+ArrowRight', label: 'Move Object Right (10px)' },
     logoLayerUp: { keys: 'Ctrl+ArrowUp', label: 'Object Layer Up' },
     logoLayerDown: { keys: 'Ctrl+ArrowDown', label: 'Object Layer Down' },
+    // Audio Mixer
+    soloVocals: { keys: 'V', label: 'Toggle Vocal Solo' },
+    soloInstrumental: { keys: 'B', label: 'Toggle Instrumental Solo' },
+    soloOriginal: { keys: 'C', label: 'Toggle Original Solo' },
+    // Panel Navigation
+    showBatchPanel: { keys: 'Alt+B', label: 'Show Batch Panel' },
+    showPlaylistPanel: { keys: 'Shift+P', label: 'Show Playlist Panel' },
   },
 
   setShortcut: (actionId, newKeys) => set((state) => ({
@@ -244,6 +251,11 @@ export const useAppStore = create((set, get) => ({
       logoMoveRightFast: { keys: 'Shift+ArrowRight', label: 'Move Object Right (10px)' },
       logoLayerUp: { keys: 'Ctrl+ArrowUp', label: 'Object Layer Up' },
       logoLayerDown: { keys: 'Ctrl+ArrowDown', label: 'Object Layer Down' },
+      soloVocals: { keys: 'V', label: 'Toggle Vocal Solo' },
+      soloInstrumental: { keys: 'B', label: 'Toggle Instrumental Solo' },
+      soloOriginal: { keys: 'C', label: 'Toggle Original Solo' },
+      showBatchPanel: { keys: 'Alt+B', label: 'Show Batch Panel' },
+      showPlaylistPanel: { keys: 'Shift+P', label: 'Show Playlist Panel' },
     };
     return { shortcuts: defaults };
   }),
@@ -306,6 +318,7 @@ export const useAppStore = create((set, get) => ({
   // Preview mode
   previewMode: 'docked', // 'docked' or 'floating'
   rightPanelTab: 'preview', // 'preview' or 'coverArt'
+  _focusPanelRequest: null, // 'batch' | 'playlist' | null — consumed by PreviewPanel
 
   // Cover Art Generator
   coverArt: {
@@ -327,8 +340,9 @@ export const useAppStore = create((set, get) => ({
     isAnalyzing: false,
     isGenerating: false,
     currentJobId: null,        // Active generation job ID for cancellation
-    generatedImage: null,    // base64 PNG string
-    history: [],             // [{image_base64, prompt, seed, timestamp}]
+    generatedImage: null,    // URL to temp image served by backend
+    generatedImagePath: null, // backend temp file path for save/embed
+    history: [],             // [{imageUrl, imagePath, prompt, seed, timestamp}]
   },
   
   // Processing state
@@ -392,6 +406,12 @@ export const useAppStore = create((set, get) => ({
 
   // Errors
   error: null,
+
+  // System health check
+  systemHealth: null,        // Full health check result from backend
+  healthCheckLoading: false,
+  modelDownloading: {},      // { modelKey: true/false }
+  startupCheckComplete: false, // true after startup overlay finishes
   
   // ==========================================================================
   // Actions
@@ -407,6 +427,52 @@ export const useAppStore = create((set, get) => ({
     } catch (error) {
       set({ backendStatus: 'offline' });
       return false;
+    }
+  },
+
+  // Full system health check (Python, FFmpeg, models)
+  runSystemHealthCheck: async (quick = false) => {
+    set({ healthCheckLoading: true });
+    try {
+      const url = quick ? '/system/health-check?quick=1' : '/system/health-check';
+      const response = await api.get(url);
+      set({ systemHealth: response.data, healthCheckLoading: false });
+      return response.data;
+    } catch (error) {
+      set({ healthCheckLoading: false });
+      return null;
+    }
+  },
+
+  setStartupCheckComplete: () => set({ startupCheckComplete: true }),
+
+  // Download missing models
+  downloadModels: async (modelKeys) => {
+    const downloading = {};
+    modelKeys.forEach(k => downloading[k] = true);
+    set({ modelDownloading: { ...get().modelDownloading, ...downloading } });
+    try {
+      await api.post('/system/download-models', { models: modelKeys });
+      // Poll for completion
+      const poll = setInterval(async () => {
+        try {
+          const res = await api.get('/system/download-status');
+          const jobs = res.data;
+          const stillActive = modelKeys.some(k => jobs[k]?.active);
+          if (!stillActive) {
+            clearInterval(poll);
+            const cleared = { ...get().modelDownloading };
+            modelKeys.forEach(k => delete cleared[k]);
+            set({ modelDownloading: cleared });
+            // Refresh health check
+            get().runSystemHealthCheck();
+          }
+        } catch { /* ignore polling errors */ }
+      }, 3000);
+    } catch (error) {
+      const cleared = { ...get().modelDownloading };
+      modelKeys.forEach(k => delete cleared[k]);
+      set({ modelDownloading: cleared });
     }
   },
   
@@ -1165,6 +1231,8 @@ export const useAppStore = create((set, get) => ({
   // Preview mode
   setPreviewMode: (mode) => set({ previewMode: mode }),
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
+  requestFocusPanel: (panelId) => set({ _focusPanelRequest: panelId }),
+  clearFocusPanelRequest: () => set({ _focusPanelRequest: null }),
 
   // ============================================================
   // Cover Art Actions
@@ -1346,10 +1414,12 @@ export const useAppStore = create((set, get) => ({
 
       const wasFirstGen = !get().coverArt.generatedImage;
       const elapsedSeconds = result.elapsed_seconds || null;
+      const imageUrl = `${API_URL}/cover-art/image/${result.image_filename}`;
       set(s => ({
         coverArt: {
           ...s.coverArt,
-          generatedImage: result.image_base64,
+          generatedImage: imageUrl,
+          generatedImagePath: result.image_path,
           lastUsedSeed: result.seed,
           seedLocked: wasFirstGen ? true : s.coverArt.seedLocked,
           isGenerating: false,
@@ -1357,7 +1427,7 @@ export const useAppStore = create((set, get) => ({
           currentJobId: null,
           lastGenerationTime: elapsedSeconds,
           history: [
-            { image_base64: result.image_base64, prompt, seed: result.seed, timestamp: Date.now() },
+            { imageUrl, imagePath: result.image_path, prompt, seed: result.seed, timestamp: Date.now() },
             ...s.coverArt.history,
           ].slice(0, 20),
         },
@@ -1377,7 +1447,7 @@ export const useAppStore = create((set, get) => ({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              imageBase64: result.image_base64,
+              imagePath: result.image_path,
               filename: audioName + '_cover',
               targetDir: audioDir,
             }),
@@ -1512,7 +1582,7 @@ export const useAppStore = create((set, get) => ({
       const res = await fetch(`${API_URL}/cover-art/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: coverArt.generatedImage, filename }),
+        body: JSON.stringify({ imagePath: coverArt.generatedImagePath, filename }),
       });
       const data = await res.json();
       if (data.success) return data.path;
@@ -1522,15 +1592,23 @@ export const useAppStore = create((set, get) => ({
     return null;
   },
 
-  downloadCoverArt: () => {
+  downloadCoverArt: async () => {
     const { coverArt } = get();
     if (!coverArt.generatedImage) return;
-    const link = document.createElement('a');
-    link.href = `data:image/png;base64,${coverArt.generatedImage}`;
-    link.download = `cover_art_${coverArt.lastUsedSeed || Date.now()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const res = await fetch(coverArt.generatedImage);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `cover_art_${coverArt.lastUsedSeed || Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error('[CoverArt] Download error:', e);
+    }
   },
 
   embedCoverArt: async () => {
@@ -1541,7 +1619,7 @@ export const useAppStore = create((set, get) => ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          imageBase64: coverArt.generatedImage,
+          imagePath: coverArt.generatedImagePath,
           audioPath: originalMediaPath,
         }),
       });

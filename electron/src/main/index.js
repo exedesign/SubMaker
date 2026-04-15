@@ -22,7 +22,21 @@ if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
 }
 
 const CRASH_MARKER = path.join(app.getPath('userData'), 'gpu-crash-marker.txt');
+const STARTUP_MARKER = path.join(app.getPath('userData'), 'startup-marker.txt');
 const swiftshaderActive = process.argv.includes('--use-angle=swiftshader');
+const hwAccelDisabled = process.argv.includes('--disable-hw-accel');
+
+// Startup marker system: detect repeated launch failures
+// 1st failure → SwiftShader (ANGLE), 2nd failure → disable hardware acceleration entirely
+if (!swiftshaderActive && !hwAccelDisabled && fs.existsSync(STARTUP_MARKER)) {
+  const failCount = parseInt(fs.readFileSync(STARTUP_MARKER, 'utf-8') || '0', 10);
+  if (failCount >= 2) {
+    console.log('[MAIN] Multiple launch failures detected — disabling hardware acceleration');
+    app.relaunch({ args: ['--disable-hw-accel', ...process.argv.slice(1)] });
+    app.exit(0);
+  }
+}
+
 if (!swiftshaderActive && fs.existsSync(CRASH_MARKER)) {
   console.log('[MAIN] GPU crash marker found — relaunching with SwiftShader');
   app.relaunch({ args: ['--use-angle=swiftshader', ...process.argv.slice(1)] });
@@ -46,6 +60,10 @@ if (swiftshaderActive) {
   console.log('[MAIN] SwiftShader mode — using software WebGL');
   app.commandLine.appendSwitch('use-angle', 'swiftshader');
 }
+if (hwAccelDisabled) {
+  console.log('[MAIN] Hardware acceleration disabled — software rendering');
+  app.disableHardwareAcceleration();
+}
 app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('disable-gpu-sandbox');
 // Suppress unsupported DevTools Autofill protocol errors (harmless Chromium CDP noise)
@@ -57,6 +75,27 @@ let pythonProcess = null;
 
 // Development mode check
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// ─── Diagnostic Log ───────────────────────────────────────────────────
+// Write a startup diagnostic log for debugging production issues.
+// Log location: %APPDATA%/SubMaker/startup-diagnostic.log
+const DIAG_LOG_DIR = path.join(app.getPath('userData'), '..', 'SubMaker');
+const DIAG_LOG_PATH = path.join(DIAG_LOG_DIR, 'startup-diagnostic.log');
+try { fs.mkdirSync(DIAG_LOG_DIR, { recursive: true }); } catch (e) {}
+
+function diagLog(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(line);
+  try { fs.appendFileSync(DIAG_LOG_PATH, line + '\n'); } catch (e) {}
+}
+
+// Start fresh log on each launch
+try { fs.writeFileSync(DIAG_LOG_PATH, `=== SubMaker Startup Diagnostic ===\nLaunch: ${new Date().toISOString()}\n\n`); } catch (e) {}
+diagLog(`isDev: ${isDev}`);
+diagLog(`app.isPackaged: ${app.isPackaged}`);
+diagLog(`process.argv: ${JSON.stringify(process.argv)}`);
+diagLog(`__dirname: ${__dirname}`);
+if (!isDev) diagLog(`resourcesPath: ${process.resourcesPath}`);
 
 /**
  * Create the main application window
@@ -71,12 +110,18 @@ function createWindow() {
   console.log('🔧 [MAIN] Preload path:', path.join(__dirname, 'preload.js'));
   console.log('🔧 [MAIN] __dirname:', __dirname);
   
+  // Resolve application icon path (dev vs production)
+  const iconPath = isDev
+    ? path.join(__dirname, '../../public/icon.ico')
+    : path.join(path.dirname(process.execPath), 'icon.ico');
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1200,
     minHeight: 700,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#0d0d0d',
+    icon: iconPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -120,9 +165,16 @@ function createWindow() {
     }
   });
 
+  // Write startup marker BEFORE showing window — cleared on successful show
+  const startupFailCount = fs.existsSync(STARTUP_MARKER)
+    ? parseInt(fs.readFileSync(STARTUP_MARKER, 'utf-8') || '0', 10) : 0;
+  fs.writeFileSync(STARTUP_MARKER, String(startupFailCount + 1));
+
   // Show window when ready
   mainWindow.once('ready-to-show', () => {
     console.log('🔧 [MAIN] Window ready to show');
+    // Clear startup marker — successful launch
+    try { fs.unlinkSync(STARTUP_MARKER); } catch (e) {}
     mainWindow.show();
 
     if (isDev) {
@@ -151,6 +203,16 @@ function createWindow() {
       }, 1500);
     }
   });
+
+  // Safety timeout: if ready-to-show never fires (e.g., GPU crash in VM),
+  // force-show after 15 seconds so user sees something
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.warn('[MAIN] ready-to-show timeout — force showing window');
+      try { fs.unlinkSync(STARTUP_MARKER); } catch (e) {}
+      mainWindow.show();
+    }
+  }, 15000);
 
   // Notify renderer about maximize/unmaximize state changes
   mainWindow.on('maximize', () => {
@@ -260,16 +322,26 @@ function startPythonBackend() {
     backendCwd = path.join(process.resourcesPath);
   }
 
+  diagLog(`Backend path: ${backendPath}`);
+  diagLog(`Backend cwd: ${backendCwd}`);
+  diagLog(`Backend exists: ${fs.existsSync(backendPath)}`);
+
   // Verify the backend script exists before attempting to spawn
   if (!fs.existsSync(backendPath)) {
-    console.error(`❌ [MAIN] Backend script not found: ${backendPath}`);
+    diagLog(`FATAL: Backend script not found: ${backendPath}`);
+    // List what IS in the expected directory for diagnosis
+    try {
+      const parentDir = path.dirname(backendPath);
+      const grandParentDir = path.dirname(parentDir);
+      diagLog(`Contents of ${grandParentDir}: ${fs.readdirSync(grandParentDir).join(', ')}`);
+      if (fs.existsSync(parentDir)) {
+        diagLog(`Contents of ${parentDir}: ${fs.readdirSync(parentDir).join(', ')}`);
+      }
+    } catch (e) { diagLog(`Could not list directory: ${e.message}`); }
     dialog.showErrorBox('SubMaker - Backend Not Found',
-      `Backend script not found at:\n${backendPath}\n\nPlease reinstall SubMaker.`);
+      `Backend script not found at:\n${backendPath}\n\nDiagnostic log: ${DIAG_LOG_PATH}\n\nPlease reinstall SubMaker.`);
     return;
   }
-
-  console.log(`🚀 [MAIN] Starting Python backend: ${backendPath}`);
-  console.log(`🚀 [MAIN] Backend cwd: ${backendCwd}`);
 
   // Build environment for backend
   const backendEnv = {
@@ -279,47 +351,49 @@ function startPythonBackend() {
   if (!isDev) {
     backendEnv.SUBMAKER_PRODUCTION = '1';
     backendEnv.SUBMAKER_USER_DATA = path.join(app.getPath('userData'), '..', 'SubMaker');
+    diagLog(`SUBMAKER_USER_DATA: ${backendEnv.SUBMAKER_USER_DATA}`);
   }
 
   // Try common Python executable names
-  // Prefer venv Python if it exists (has all dependencies installed)
   const venvPython = process.platform === 'win32'
     ? path.join(backendCwd, 'backend', 'venv', 'Scripts', 'python.exe')
     : path.join(backendCwd, 'backend', 'venv', 'bin', 'python');
 
   const pythonCandidates = [];
 
-  // In production, check for bundled Python first (installed by Inno Setup)
+  // In production, check for bundled Python first
   if (!isDev) {
     const bundledPython = path.join(process.resourcesPath, '..', 'python', 'python.exe');
+    diagLog(`Bundled Python path: ${bundledPython}`);
+    diagLog(`Bundled Python exists: ${fs.existsSync(bundledPython)}`);
     if (fs.existsSync(bundledPython)) {
       pythonCandidates.push(bundledPython);
-      console.log(`🐍 [MAIN] Found bundled Python: ${bundledPython}`);
     }
   }
 
   if (isDev && fs.existsSync(venvPython)) {
     pythonCandidates.push(venvPython);
-    console.log(`🐍 [MAIN] Found venv Python: ${venvPython}`);
   }
   pythonCandidates.push(...(process.platform === 'win32'
     ? ['python', 'python3', 'py']
     : ['python3', 'python']));
 
+  diagLog(`Python candidates: ${JSON.stringify(pythonCandidates)}`);
+
   const trySpawn = (idx) => {
     if (idx >= pythonCandidates.length) {
-      console.error('❌ [MAIN] No working Python executable found. Tried:', pythonCandidates.join(', '));
+      diagLog('FATAL: No working Python executable found');
       dialog.showErrorBox('SubMaker - Python Not Found',
-        'Python not found on this system.\n\nPlease install Python 3.10+ from https://www.python.org/downloads/\nand make sure it is added to PATH.\n\nAfter installing Python, run:\npip install flask flask-cors flask-socketio eventlet faster-whisper librosa soundfile audio-separator mutagen numpy tqdm pydub');
+        `Python could not be started.\n\nDiagnostic log: ${DIAG_LOG_PATH}\n\nPlease check the log file for details.`);
       return;
     }
     const pyExe = pythonCandidates[idx];
-    console.log(`🔧 [MAIN] Trying: ${pyExe} ${backendPath}`);
+    diagLog(`Trying Python [${idx}]: "${pyExe}" "${backendPath}"`);
 
     pythonProcess = spawn(pyExe, [backendPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: backendCwd,
-      shell: true,
+      shell: false,
       env: backendEnv,
     });
 
@@ -328,38 +402,39 @@ function startPythonBackend() {
 
     pythonProcess.on('error', (err) => {
       spawnFailed = true;
-      console.error(`❌ [MAIN] Failed to start with '${pyExe}':`, err.message);
+      diagLog(`Python spawn error [${idx}] "${pyExe}": ${err.message}`);
       pythonProcess = null;
       trySpawn(idx + 1);
     });
 
-    // If the process exits almost immediately (within 3s), try next candidate
     pythonProcess.on('close', (code) => {
+      diagLog(`Python exited with code ${code} (exe: "${pyExe}")`);
+      if (stderrBuffer.trim()) {
+        diagLog(`Python stderr output:\n${stderrBuffer.slice(-2000)}`);
+      }
       if (code !== null && code !== 0) {
-        console.warn(`⚠️ [MAIN] Python (${pyExe}) exited with code ${code}`);
-        // Show import errors to user
         if (stderrBuffer.includes('ModuleNotFoundError') || stderrBuffer.includes('No module named')) {
           const missingModule = stderrBuffer.match(/No module named '([^']+)'/)?.[1] || 'unknown';
           dialog.showErrorBox('SubMaker - Missing Python Package',
-            `Python package '${missingModule}' is not installed.\n\nPlease run:\npip install -r backend/requirements.txt\n\nFull error:\n${stderrBuffer.slice(-500)}`);
+            `Python package '${missingModule}' is not installed.\n\nDiagnostic log: ${DIAG_LOG_PATH}\n\nFull error:\n${stderrBuffer.slice(-500)}`);
+        } else if (!spawnFailed) {
+          // Show generic error with log location
+          dialog.showErrorBox('SubMaker - Backend Error',
+            `Python backend exited with code ${code}.\n\nDiagnostic log: ${DIAG_LOG_PATH}\n\nLast output:\n${stderrBuffer.slice(-500)}`);
         }
       }
       pythonProcess = null;
     });
 
     pythonProcess.stdout.on('data', (data) => {
-      console.log(`Python: ${data.toString().trim()}`);
+      const msg = data.toString().trim();
+      diagLog(`Python stdout: ${msg}`);
     });
 
     pythonProcess.stderr.on('data', (data) => {
       const msg = data.toString().trim();
       stderrBuffer += msg + '\n';
-      // Flask prints startup info to stderr — that's normal
-      if (msg.includes('Running on') || msg.includes('WARNING')) {
-        console.log(`Python: ${msg}`);
-      } else {
-        console.error(`Python Error: ${msg}`);
-      }
+      diagLog(`Python stderr: ${msg}`);
     });
   };
 
@@ -379,15 +454,15 @@ function stopPythonBackend() {
 
 // App event handlers
 app.whenReady().then(() => {
-  console.log('🔧 [MAIN] Electron app ready');
-  console.log('🔧 [MAIN] Node version:', process.version);
-  console.log('🔧 [MAIN] Electron version:', process.versions.electron);
-  console.log('🔧 [MAIN] Platform:', process.platform);
+  diagLog('Electron app ready');
+  diagLog(`Node version: ${process.version}`);
+  diagLog(`Electron version: ${process.versions.electron}`);
+  diagLog(`Platform: ${process.platform}`);
   
   // Check if backend is already running (e.g. started manually in dev)
   const http = require('http');
   let attempts = 0;
-  const maxAttempts = 60; // 60 * 2s = 120s max wait
+  const maxAttempts = 15; // 15 * 2s = 30s max wait
   
   const checkHealth = () => new Promise((resolve) => {
     const req = http.get('http://127.0.0.1:5000/api/health', (res) => resolve(res.statusCode === 200));
@@ -398,9 +473,9 @@ app.whenReady().then(() => {
   const startBackendIfNeeded = async () => {
     const alreadyRunning = await checkHealth();
     if (alreadyRunning) {
-      console.log('\u2705 [MAIN] Backend already running, skipping spawn');
+      diagLog('Backend already running, skipping spawn');
     } else {
-      console.log('\u{1F680} [MAIN] Starting Python backend...');
+      diagLog('Starting Python backend...');
       startPythonBackend();
     }
   };
@@ -409,21 +484,15 @@ app.whenReady().then(() => {
     attempts++;
     checkHealth().then(ok => {
       if (ok) {
-        console.log(`\u2705 [MAIN] Backend ready after ${attempts * 2}s`);
+        diagLog(`Backend ready after ${attempts * 2}s`);
+        createWindow();
+      } else if (attempts >= maxAttempts) {
+        diagLog(`Backend NOT ready after ${maxAttempts * 2}s — opening window anyway`);
         createWindow();
       } else {
-        retryOrCreate();
+        setTimeout(waitForBackend, 2000);
       }
     });
-  };
-  
-  const retryOrCreate = () => {
-    if (attempts >= maxAttempts) {
-      console.log('\u26a0\ufe0f [MAIN] Backend not ready after 120s, opening window anyway');
-      createWindow();
-    } else {
-      setTimeout(waitForBackend, 2000);
-    }
   };
   
   // Start backend if needed, then wait for it

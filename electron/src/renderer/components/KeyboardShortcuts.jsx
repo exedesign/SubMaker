@@ -19,6 +19,16 @@ const CATEGORIES = [
     ids: ['nextTrack', 'prevTrack'],
   },
   {
+    label: 'Audio Mixer',
+    icon: '🎚️',
+    ids: ['soloVocals', 'soloInstrumental', 'soloOriginal'],
+  },
+  {
+    label: 'Panel Navigation',
+    icon: '📂',
+    ids: ['showBatchPanel', 'showPlaylistPanel'],
+  },
+  {
     label: 'Visualizer',
     icon: '🎨',
     ids: ['vizPrevPreset', 'vizNextPreset'],

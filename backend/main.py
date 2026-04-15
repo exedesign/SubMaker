@@ -10,14 +10,58 @@ import threading
 import logging
 from pathlib import Path
 
+# ── Early bootstrap diagnostic ────────────────────────────────────────
+# Write a diagnostic log before any project imports, so we can see
+# exactly where it fails if an import crashes.
+_BOOT_LOG = None
+try:
+    _user_data = Path(os.environ.get('SUBMAKER_USER_DATA', Path.home() / 'SubMaker'))
+    _user_data.mkdir(parents=True, exist_ok=True)
+    _BOOT_LOG = _user_data / "backend-bootstrap.log"
+    with open(_BOOT_LOG, 'w', encoding='utf-8') as f:
+        f.write(f"=== SubMaker Backend Bootstrap ===\n")
+        f.write(f"Time: {__import__('datetime').datetime.now().isoformat()}\n")
+        f.write(f"Python: {sys.version}\n")
+        f.write(f"Executable: {sys.executable}\n")
+        f.write(f"__file__: {__file__}\n")
+        f.write(f"cwd: {os.getcwd()}\n")
+        f.write(f"sys.path: {sys.path}\n")
+        f.write(f"SUBMAKER_PRODUCTION: {os.environ.get('SUBMAKER_PRODUCTION', 'not set')}\n")
+        f.write(f"SUBMAKER_USER_DATA: {os.environ.get('SUBMAKER_USER_DATA', 'not set')}\n\n")
+except Exception as e:
+    print(f"[BOOT] Failed to write bootstrap log: {e}")
+
+def _boot_log(msg):
+    """Append a line to the bootstrap log."""
+    print(msg)
+    if _BOOT_LOG:
+        try:
+            with open(_BOOT_LOG, 'a', encoding='utf-8') as f:
+                f.write(f"{msg}\n")
+        except Exception:
+            pass
+
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent))
+_boot_log(f"[BOOT] sys.path updated, backend dir: {Path(__file__).parent}")
 
-from flask import Flask, request
-from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+try:
+    _boot_log("[BOOT] Importing Flask...")
+    from flask import Flask, request
+    from flask_cors import CORS
+    from flask_socketio import SocketIO, emit
+    _boot_log("[BOOT] Flask imported OK")
+except Exception as e:
+    _boot_log(f"[BOOT] FATAL — Flask import failed: {e}")
+    raise
 
-from config import SERVER_HOST, SERVER_PORT, DEBUG, TEMP_DIR, FFMPEG_PATH, IS_PRODUCTION
+try:
+    _boot_log("[BOOT] Importing config...")
+    from config import SERVER_HOST, SERVER_PORT, DEBUG, TEMP_DIR, FFMPEG_PATH, IS_PRODUCTION
+    _boot_log(f"[BOOT] Config imported OK — PORT={SERVER_PORT}, TEMP={TEMP_DIR}, PROD={IS_PRODUCTION}")
+except Exception as e:
+    _boot_log(f"[BOOT] FATAL — config import failed: {e}")
+    raise
 
 # ---------------------------------------------------------------------------
 # Production log file — captures all print output for debugging packaged builds
@@ -50,7 +94,16 @@ if IS_PRODUCTION:
         print(f"[LOG] Backend log file: {_LOG_FILE}")
     except Exception as _log_err:
         print(f"[LOG] Failed to create log file: {_log_err}")
-from api.routes import api
+
+try:
+    _boot_log("[BOOT] Importing api.routes...")
+    from api.routes import api
+    _boot_log("[BOOT] api.routes imported OK")
+except Exception as e:
+    _boot_log(f"[BOOT] FATAL — api.routes import failed: {e}")
+    import traceback
+    _boot_log(traceback.format_exc())
+    raise
 
 # ---------------------------------------------------------------------------
 # Visualizer WebSocket pipe state (per socket session)
@@ -276,9 +329,9 @@ def main():
     """)
     
     if USE_SOCKETIO and socketio:
-        socketio.run(app, host=SERVER_HOST, port=SERVER_PORT, debug=DEBUG, allow_unsafe_werkzeug=True)
+        socketio.run(app, host=SERVER_HOST, port=SERVER_PORT, debug=DEBUG)
     else:
-        app.run(host=SERVER_HOST, port=SERVER_PORT, debug=DEBUG, allow_unsafe_werkzeug=True)
+        app.run(host=SERVER_HOST, port=SERVER_PORT, debug=DEBUG)
 
 
 if __name__ == "__main__":

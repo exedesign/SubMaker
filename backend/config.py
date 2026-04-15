@@ -15,28 +15,55 @@ RESOURCES_DIR = BASE_DIR / "resources"
 FONTS_DIR = RESOURCES_DIR / "fonts"
 PRESETS_DIR = RESOURCES_DIR / "presets"
 
-# In production, use user-writable locations for temp/output
+# In production, use user-writable locations for temp/output/models
 if IS_PRODUCTION:
     _USER_DATA = Path(os.environ.get('SUBMAKER_USER_DATA', Path.home() / 'SubMaker'))
     TEMP_DIR = _USER_DATA / "temp"
     OUTPUT_DIR = _USER_DATA / "output"
-    # Models are bundled with the installer in resources/models
-    MODELS_DIR = RESOURCES_DIR / "models"
+    # Models: check user-writable dir first, fall back to bundled resources
+    _USER_MODELS_DIR = _USER_DATA / "models"
+    _BUNDLED_MODELS_DIR = RESOURCES_DIR / "models"
+    MODELS_DIR = _USER_MODELS_DIR
 else:
     TEMP_DIR = BASE_DIR / "temp"
     OUTPUT_DIR = BASE_DIR / "output"
     MODELS_DIR = RESOURCES_DIR / "models"
+    _USER_MODELS_DIR = MODELS_DIR
+    _BUNDLED_MODELS_DIR = MODELS_DIR
+
+
+def resolve_model_dir(local_dir_name):
+    """Resolve model directory by checking user dir first, then bundled dir.
+    Returns the path that contains model files, or the user dir for downloads."""
+    user_path = _USER_MODELS_DIR / local_dir_name
+    if user_path.exists() and any(user_path.iterdir() if user_path.is_dir() else []):
+        return user_path
+    bundled_path = _BUNDLED_MODELS_DIR / local_dir_name
+    if bundled_path.exists() and any(bundled_path.iterdir() if bundled_path.is_dir() else []):
+        return bundled_path
+    return user_path  # Default: user-writable dir for new downloads
 
 # Create directories if they don't exist
-for dir_path in [MODELS_DIR, FONTS_DIR, PRESETS_DIR, TEMP_DIR, OUTPUT_DIR]:
+# In production, app-bundled dirs (FONTS_DIR, PRESETS_DIR) may be
+# inside Program Files and not writable — skip silently if creation fails.
+for dir_path in [TEMP_DIR, OUTPUT_DIR, MODELS_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
+for dir_path in [FONTS_DIR, PRESETS_DIR]:
+    try:
+        dir_path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 
 # Qwen2.5 translation model
 QWEN_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct-AWQ"
 
 # FLUX.2 Klein 4B settings (loaded with BitsAndBytes NF4 quantization)
 FLUX_KLEIN_MODEL_REPO = "black-forest-labs/FLUX.2-klein-4B"
-FLUX_KLEIN_LOCAL_DIR = MODELS_DIR / "flux-klein-4b"
+FLUX_KLEIN_LOCAL_DIR = resolve_model_dir("flux-klein-4b")
+
+# FLUX.2 Small Decoder — distilled VAE decoder (~28M params, ~1.4x faster decode)
+FLUX_SMALL_DECODER_REPO = "black-forest-labs/FLUX.2-small-decoder"
+FLUX_SMALL_DECODER_LOCAL_DIR = resolve_model_dir("flux-small-decoder")
 
 # Cover Art Model Registry — all available image generation models
 COVER_ART_MODELS = {
@@ -44,7 +71,7 @@ COVER_ART_MODELS = {
         "name": "FLUX.2 Klein 4B",
         "description": "4B param rectified flow transformer (full NF4 quantized). Fast iteration with Qwen3 text encoder.",
         "generator_class": "services.generators.flux_klein.FluxKleinGenerator",
-        "vram_estimate": "~3.5 GB",
+        "vram_estimate": "~3.1 GB",
         "supports_text_macros": True,
         "defaults": {
             "steps": 4,

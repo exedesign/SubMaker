@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { FiPlus, FiRefreshCw, FiDownload, FiMusic, FiDisc, FiHeadphones, FiMic } from 'react-icons/fi';
+import { FiPlus, FiRefreshCw, FiDownload, FiMusic, FiDisc, FiHeadphones, FiMic, FiFileText } from 'react-icons/fi';
 
 /**
  * TransportActionButtons — Export/action buttons displayed inside the transport bar.
@@ -26,6 +26,7 @@ function TransportActionButtons() {
   const [karaokeStatus, setKaraokeStatus] = useState(null);
   const [vocalStatus, setVocalStatus] = useState(null);
   const [showRetranscribeConfirm, setShowRetranscribeConfirm] = useState(false);
+  const [srtStatus, setSrtStatus] = useState(null);
 
   const isMp3 = mediaFile && mediaFile.toLowerCase().endsWith('.mp3');
   const hasInstrumental = !!audioMixer?.tracks?.instrumental?.filePath;
@@ -39,6 +40,18 @@ function TransportActionButtons() {
       start = lastSub.end + 0.5;
     }
     addSubtitle({ start, end: start + 3, text: 'New subtitle' });
+  };
+
+  const handleExportSRT = async () => {
+    if (subtitles.length === 0) return;
+    setSrtStatus('loading');
+    try {
+      const result = await exportLyrics('srt', {});
+      setSrtStatus(result?.success ? 'success' : 'error');
+    } catch {
+      setSrtStatus('error');
+    }
+    setTimeout(() => setSrtStatus(null), 3000);
   };
 
   const handleEmbedSYLT = async () => {
@@ -163,6 +176,26 @@ function TransportActionButtons() {
         </button>
       )}
 
+      {/* Export SRT */}
+      <button
+        onClick={handleExportSRT}
+        disabled={isProcessing || srtStatus === 'loading'}
+        title="Export subtitles as SRT file"
+        style={{
+          ...btnBase,
+          background: srtStatus === 'success' ? 'var(--accent-success)' :
+                       srtStatus === 'error' ? 'var(--accent-error)' :
+                       'rgba(59, 130, 246, 0.85)',
+          opacity: isProcessing ? 0.5 : 1,
+        }}
+      >
+        <FiFileText size={11} />
+        {srtStatus === 'loading' ? 'Exporting...' :
+         srtStatus === 'success' ? 'Done!' :
+         srtStatus === 'error' ? 'Error' :
+         'Export SRT'}
+      </button>
+
       {/* Export Dropdown */}
       <div style={{ position: 'relative' }}>
         <button
@@ -198,6 +231,10 @@ function TransportActionButtons() {
             <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 11 }}
               onClick={() => handleExport('lrc')}>
               <FiMusic size={11} /> Standard LRC
+            </button>
+            <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 11 }}
+              onClick={() => handleExport('srt')}>
+              <FiFileText size={11} /> SRT Subtitle
             </button>
             <button className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', fontSize: 11 }}
               onClick={() => handleExport('word_json')}>

@@ -3,8 +3,9 @@ FLUX.2 Klein 4B Generator (BitsAndBytes NF4)
 Model: black-forest-labs/FLUX.2-klein-4B
   Transformer: NF4 quantized (~7.2 GB → ~1.8 GB)
   Text Encoder: Qwen3ForCausalLM NF4 quantized (~4.6 GB → ~1.2 GB)
+  VAE: FLUX.2 Small Decoder (~28M params, ~0.11 GB) — 1.4x faster decode
 Pipeline: diffusers Flux2KleinPipeline (requires diffusers git main)
-VRAM: ~3.2 GB models, GPU-resident (no CPU offload)
+VRAM: ~3.1 GB models, GPU-resident (no CPU offload)
 """
 
 import gc
@@ -14,7 +15,7 @@ from typing import Dict
 
 import torch
 
-from config import FLUX_KLEIN_MODEL_REPO, FLUX_KLEIN_LOCAL_DIR
+from config import FLUX_KLEIN_MODEL_REPO, FLUX_KLEIN_LOCAL_DIR, FLUX_SMALL_DECODER_REPO, FLUX_SMALL_DECODER_LOCAL_DIR
 from services.generators.base import BaseGenerator
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,22 @@ class FluxKleinGenerator(BaseGenerator):
                 torch_dtype=torch.bfloat16,
             )
 
+            # Load Small Decoder VAE (~28M params, ~1.4x faster decode)
+            _progress(15, "Loading FLUX.2 Small Decoder VAE...")
+            from diffusers import AutoencoderKLFlux2
+            small_decoder_dir = Path(str(FLUX_SMALL_DECODER_LOCAL_DIR))
+            if (small_decoder_dir / "config.json").exists():
+                vae_source = str(small_decoder_dir)
+                logger.info(f"[FluxKlein] Using local Small Decoder VAE: {vae_source}")
+            else:
+                vae_source = FLUX_SMALL_DECODER_REPO
+                logger.info(f"[FluxKlein] Local Small Decoder not found, using HuggingFace: {vae_source}")
+
+            vae = AutoencoderKLFlux2.from_pretrained(
+                vae_source,
+                torch_dtype=torch.bfloat16,
+            )
+
             # Build pipeline — all models GPU-resident, no CPU offload
             _progress(18, "Building Flux2Klein pipeline (GPU-resident)...")
             logger.info("[FluxKlein] Loading Flux2KleinPipeline (GPU-resident, no CPU offload)...")
@@ -103,15 +120,16 @@ class FluxKleinGenerator(BaseGenerator):
                 model_source,
                 transformer=transformer,
                 text_encoder=text_encoder,
+                vae=vae,
                 torch_dtype=torch.bfloat16,
             )
 
-            # Move VAE to GPU (small: ~0.16 GB) — transformer & text_encoder already on CUDA from BnB
+            # Move VAE to GPU (small decoder: ~0.11 GB) — transformer & text_encoder already on CUDA from BnB
             self.pipe.vae.to("cuda")
 
             self._loaded = True
             _progress(25, "Pipeline ready")
-            logger.info("[FluxKlein] Pipeline ready — GPU-resident (transformer NF4 + Qwen3 NF4 + VAE)")
+            logger.info("[FluxKlein] Pipeline ready — GPU-resident (transformer NF4 + Qwen3 NF4 + Small Decoder VAE)")
 
     def _latent_to_preview(self, latents, height, width):
         """

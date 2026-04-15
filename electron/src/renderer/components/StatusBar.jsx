@@ -40,17 +40,26 @@ function StatusBar() {
         if (outputPath) {
           await window.electronAPI.openPath(outputPath);
         } else {
-          const defaultOutput = 'D:\\AI\\SubMaker\\output';
+          // Ask backend for the configured output directory
+          const res = await fetchJson('http://localhost:5000/api/output-dir');
+          const defaultOutput = res?.output_dir || '.';
           await window.electronAPI.openPath(defaultOutput);
         }
       } else {
         // Browser mode - open via backend
         const folderPath = outputPath 
           ? outputPath.substring(0, outputPath.lastIndexOf('\\'))
-          : 'D:\\AI\\SubMaker\\output';
+          : null;
         
-        // Send folder open request to backend
-        await fetchJson(`http://localhost:5000/api/open-folder?path=${encodeURIComponent(folderPath)}`);
+        if (folderPath) {
+          await fetchJson(`http://localhost:5000/api/open-folder?path=${encodeURIComponent(folderPath)}`);
+        } else {
+          // Open configured output directory
+          const res = await fetchJson('http://localhost:5000/api/output-dir');
+          if (res?.output_dir) {
+            await fetchJson(`http://localhost:5000/api/open-folder?path=${encodeURIComponent(res.output_dir)}`);
+          }
+        }
       }
     } catch (error) {
       console.error('Error opening output folder:', error);

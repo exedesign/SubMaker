@@ -147,7 +147,7 @@ class VocalIsolator:
         from config import (
             VOCAL_ENGINE, VOCAL_MDX_MODEL, VOCAL_MDX_SEGMENT_SIZE,
             VOCAL_MDX_BATCH_SIZE, DEMUCS_MODEL, DEMUCS_DEVICE,
-            VOCAL_CACHE_DIR, VOCAL_CACHE_ENABLED, MODELS_DIR,
+            VOCAL_CACHE_DIR, VOCAL_CACHE_ENABLED, resolve_model_dir,
         )
         self.engine = VOCAL_ENGINE
         self.mdx_model_name = VOCAL_MDX_MODEL
@@ -157,7 +157,7 @@ class VocalIsolator:
         self.demucs_device = DEMUCS_DEVICE
         self.cache_dir = Path(VOCAL_CACHE_DIR)
         self.cache_enabled = VOCAL_CACHE_ENABLED
-        self.models_dir = MODELS_DIR
+        self.models_dir = resolve_model_dir("audio-separator").parent
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Model cache â€” keep loaded models in memory to avoid reloading

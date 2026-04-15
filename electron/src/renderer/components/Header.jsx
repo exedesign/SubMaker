@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { FiFilm, FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft, FiTrash2, FiDroplet, FiHeart } from 'react-icons/fi';
+import { FiFilm, FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft, FiTrash2, FiDroplet, FiHeart, FiCpu, FiDownload, FiCheck, FiAlertTriangle, FiRefreshCw } from 'react-icons/fi';
 import { useAppStore } from '../stores/appStore';
 import packageJson from '../../../package.json';
 import THEMES from '../themes';
@@ -16,6 +16,209 @@ const Toggle = ({ enabled, onClick }) => (
   </button>
 );
 
+// ── System Health Panel ──────────────────────────────────────────────
+
+const CATEGORY_LABELS = {
+  required: 'Required',
+  translation: 'Translation',
+  extra: 'Extra Whisper Models',
+  'cover-art': 'Cover Art',
+};
+
+const CATEGORY_ORDER = ['required', 'translation', 'extra', 'cover-art'];
+
+function SystemHealthPanel({ systemHealth, healthCheckLoading, onRefresh, onDownload, modelDownloading }) {
+  if (healthCheckLoading && !systemHealth) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
+        <FiRefreshCw size={24} style={{ animation: 'spin 1s linear infinite' }} />
+        <p style={{ marginTop: 12, fontSize: 13 }}>Checking system...</p>
+      </div>
+    );
+  }
+
+  if (!systemHealth) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40 }}>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 16 }}>
+          Health check not available. Backend may be offline.
+        </p>
+        <button className="btn btn-primary" onClick={onRefresh} style={{ padding: '8px 20px' }}>
+          <FiRefreshCw size={14} style={{ marginRight: 6 }} />
+          Run Check
+        </button>
+      </div>
+    );
+  }
+
+  const { python, ffmpeg, models, summary } = systemHealth;
+  const missingModels = Object.entries(models).filter(([, m]) => m.status === 'missing' || m.status === 'incomplete');
+  const missingKeys = missingModels.map(([k]) => k);
+
+  // Group models by category
+  const grouped = {};
+  for (const cat of CATEGORY_ORDER) grouped[cat] = [];
+  for (const [key, model] of Object.entries(models)) {
+    const cat = model.category || 'extra';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push({ key, ...model });
+  }
+
+  return (
+    <div>
+      {/* System Status */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <label className="label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FiCpu size={16} />
+            System Status
+          </label>
+          <button
+            className="btn btn-secondary"
+            onClick={onRefresh}
+            disabled={healthCheckLoading}
+            style={{ padding: '4px 12px', fontSize: 11 }}
+          >
+            <FiRefreshCw size={12} style={{ marginRight: 4, animation: healthCheckLoading ? 'spin 1s linear infinite' : 'none' }} />
+            {healthCheckLoading ? 'Checking...' : 'Refresh'}
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+          <div style={{
+            padding: '10px 12px',
+            background: python.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            borderRadius: 8,
+            border: `1px solid ${python.ok ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+          }}>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>Python</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: python.ok ? '#22c55e' : '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {python.ok ? <FiCheck size={14} /> : <FiAlertTriangle size={14} />}
+              {python.ok ? python.version : 'Not Found'}
+            </div>
+          </div>
+          <div style={{
+            padding: '10px 12px',
+            background: ffmpeg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            borderRadius: 8,
+            border: `1px solid ${ffmpeg.ok ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+          }}>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>FFmpeg</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: ffmpeg.ok ? '#22c55e' : '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {ffmpeg.ok ? <FiCheck size={14} /> : <FiAlertTriangle size={14} />}
+              {ffmpeg.ok ? 'Installed' : 'Not Found'}
+            </div>
+          </div>
+        </div>
+
+        {/* Summary bar */}
+        <div style={{
+          padding: '10px 12px',
+          background: 'var(--bg-secondary)',
+          borderRadius: 8,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: 12,
+        }}>
+          <span>
+            <strong style={{ color: '#22c55e' }}>{summary.installed}</strong> installed
+            {summary.incomplete > 0 && <>, <strong style={{ color: '#f59e0b' }}>{summary.incomplete}</strong> incomplete</>}
+            {summary.missing > 0 && <>, <strong style={{ color: '#ef4444' }}>{summary.missing}</strong> missing</>}
+          </span>
+          <span style={{ color: 'var(--text-secondary)' }}>{summary.total} total</span>
+        </div>
+      </div>
+
+      {/* Download All Missing button */}
+      {missingKeys.length > 0 && (
+        <>
+          <div style={{ height: 1, background: 'var(--border-color)', margin: '16px 0' }} />
+          <button
+            className="btn btn-primary"
+            onClick={() => onDownload(missingKeys)}
+            disabled={missingKeys.some(k => modelDownloading[k])}
+            style={{ width: '100%', padding: '10px 16px', fontSize: 13, marginBottom: 16 }}
+          >
+            <FiDownload size={14} style={{ marginRight: 6 }} />
+            Download {missingKeys.length} Missing Model{missingKeys.length > 1 ? 's' : ''}
+          </button>
+        </>
+      )}
+
+      {/* Models by category */}
+      {CATEGORY_ORDER.map((cat) => {
+        const catModels = grouped[cat];
+        if (!catModels || catModels.length === 0) return null;
+        return (
+          <div key={cat} style={{ marginBottom: 16 }}>
+            <div style={{ height: 1, background: 'var(--border-color)', margin: '12px 0' }} />
+            <label className="label" style={{ fontSize: 12, marginBottom: 8, display: 'block', color: 'var(--text-secondary)' }}>
+              {CATEGORY_LABELS[cat] || cat}
+            </label>
+            {catModels.map((model) => {
+              const isOk = model.status === 'ok';
+              const isIncomplete = model.status === 'incomplete';
+              const isMissing = model.status === 'missing' || model.status === 'empty';
+              const isDownloading = !!modelDownloading[model.key];
+              return (
+                <div
+                  key={model.key}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 10px',
+                    background: 'var(--bg-secondary)',
+                    borderRadius: 6,
+                    marginBottom: 6,
+                    border: `1px solid ${isOk ? 'rgba(34,197,94,0.15)' : isIncomplete ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {isOk ? (
+                        <FiCheck size={13} style={{ color: '#22c55e', flexShrink: 0 }} />
+                      ) : isIncomplete ? (
+                        <FiAlertTriangle size={13} style={{ color: '#f59e0b', flexShrink: 0 }} />
+                      ) : (
+                        <FiAlertTriangle size={13} style={{ color: '#ef4444', flexShrink: 0 }} />
+                      )}
+                      {model.name}
+                      <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontWeight: 400 }}>
+                        {model.size_mb >= 1000 ? `${(model.size_mb / 1000).toFixed(1)} GB` : `${model.size_mb} MB`}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>
+                      {model.description}
+                    </div>
+                  </div>
+                  {(isMissing || isIncomplete) && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => onDownload([model.key])}
+                      disabled={isDownloading}
+                      style={{ padding: '4px 10px', fontSize: 10, marginLeft: 8, flexShrink: 0 }}
+                    >
+                      {isDownloading ? (
+                        <><FiRefreshCw size={11} style={{ marginRight: 4, animation: 'spin 1s linear infinite' }} />Downloading...</>
+                      ) : (
+                        <><FiDownload size={11} style={{ marginRight: 4 }} />Download</>
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Header Component ─────────────────────────────────────────────────
+
 function Header() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState('general');
@@ -29,6 +232,7 @@ function Header() {
     currentStep, subtitles,
     cacheInfo, fetchCacheInfo, clearCache,
     systemStats, fetchSystemStats, unloadAllModels,
+    systemHealth, healthCheckLoading, runSystemHealthCheck, downloadModels, modelDownloading,
   } = useAppStore();
 
   const handleChangeSource = useCallback(async () => {
@@ -110,6 +314,13 @@ function Header() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Refresh health check when System tab is opened
+  useEffect(() => {
+    if (showSettings && settingsTab === 'system') {
+      runSystemHealthCheck();
+    }
+  }, [showSettings, settingsTab, runSystemHealthCheck]);
 
   return (
     <>
@@ -316,7 +527,7 @@ function Header() {
             background: 'var(--bg-primary)',
             borderRadius: 12,
             width: '90%',
-            maxWidth: 550,
+            maxWidth: 600,
             maxHeight: '85vh',
             overflow: 'hidden',
             display: 'flex',
@@ -351,6 +562,7 @@ function Header() {
             }}>
               {[
                 { id: 'general', label: 'General' },
+                { id: 'system', label: 'System' },
                 { id: 'shortcuts', label: 'Keyboard Shortcuts' },
               ].map((tab) => (
                 <button
@@ -377,6 +589,14 @@ function Header() {
             <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
               {settingsTab === 'shortcuts' ? (
                 <KeyboardShortcuts />
+              ) : settingsTab === 'system' ? (
+                <SystemHealthPanel
+                  systemHealth={systemHealth}
+                  healthCheckLoading={healthCheckLoading}
+                  onRefresh={runSystemHealthCheck}
+                  onDownload={downloadModels}
+                  modelDownloading={modelDownloading}
+                />
               ) : (
               <>
               {/* Color Theme */}

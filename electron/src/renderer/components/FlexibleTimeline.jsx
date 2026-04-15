@@ -1050,27 +1050,28 @@ const FlexibleTimeline = () => {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (!duration || duration <= 0) return
+      const isInput = e.target.matches('input, textarea, select, [contenteditable]')
       // When playlist is active, let PlaylistPanel handle Arrow keys
       const pl = useAppStore.getState().playlist
       const sc = useAppStore.getState().shortcuts
       if (pl.isActive && (matchesShortcut(e, sc.seekBackward.keys) || matchesShortcut(e, sc.seekForward.keys))) return
       
       // Arrow keys: seek by configurable step
-      if (matchesShortcut(e, sc.seekBackward.keys) && !e.target.matches('input,textarea')) {
+      if (matchesShortcut(e, sc.seekBackward.keys) && !isInput) {
         e.preventDefault()
         const step = settings?.seekStep ?? 5
         seek(Math.max(0, currentTime - step))
-      } else if (matchesShortcut(e, sc.seekForward.keys) && !e.target.matches('input,textarea')) {
+      } else if (matchesShortcut(e, sc.seekForward.keys) && !isInput) {
         e.preventDefault()
         const step = settings?.seekStep ?? 5
         seek(Math.min(duration, currentTime + step))
-      } else if (matchesShortcut(e, sc.goToStart.keys)) {
+      } else if (matchesShortcut(e, sc.goToStart.keys) && !isInput) {
         e.preventDefault()
         seek(0)
-      } else if (matchesShortcut(e, sc.toggleSplitMode.keys)) {
+      } else if (matchesShortcut(e, sc.toggleSplitMode.keys) && !isInput) {
         e.preventDefault()
         setSplitMode(!splitMode)
-      } else if (matchesShortcut(e, sc.exitSplitMode.keys)) {
+      } else if (matchesShortcut(e, sc.exitSplitMode.keys) && !isInput) {
         setSplitMode(false)
         setSplitPosition(null)
       }

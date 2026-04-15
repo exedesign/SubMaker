@@ -11,7 +11,7 @@ from pathlib import Path
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from config import MODELS_DIR
+from config import MODELS_DIR, resolve_model_dir
 
 from .base import TranscriptionResult, SegmentResult
 
@@ -102,7 +102,7 @@ class FasterWhisperEngine:
         logger.info(f"Model download/cache dir: {MODELS_DIR}")
 
         # Check if a flat (non-HuggingFace-cache) model directory exists
-        flat_model_dir = os.path.join(str(MODELS_DIR), model_id)
+        flat_model_dir = str(resolve_model_dir(model_id))
         if os.path.isdir(flat_model_dir) and any(
             f.endswith(".bin") for f in os.listdir(flat_model_dir)
         ):
