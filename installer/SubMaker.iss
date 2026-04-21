@@ -1,4 +1,4 @@
-; ============================================================================
+﻿; ============================================================================
 ; SubMaker - Inno Setup Installer Script
 ; ============================================================================
 
@@ -7,7 +7,6 @@
 #define MyAppPublisher "exedesign"
 #define MyAppURL       "https://github.com/exedesign/SubMaker"
 #define MyAppExeName   "SubMaker.exe"
-#define PythonVersion  "3.13.7"
 #define StagingDir     "..\installer\staging"
 
 [Setup]
@@ -25,6 +24,7 @@ OutputDir=output
 OutputBaseFilename=SubMaker_Setup_{#MyAppVersion}
 Compression=lzma2/ultra
 SolidCompression=yes
+DiskSpanning=yes
 LZMANumBlockThreads=4
 LZMAAlgorithm=1
 LZMAUseSeparateProcess=yes
@@ -35,9 +35,6 @@ WizardStyle=modern
 WizardSizePercent=120,120
 SetupIconFile=..\electron\public\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-WizardImageFile=wizard_image.bmp,wizard_image_large.bmp
-WizardSmallImageFile=wizard_small.bmp,wizard_small_large.bmp
-ExtraDiskSpaceRequired=536870912
 DisableWelcomePage=no
 DisableDirPage=no
 DisableProgramGroupPage=yes
@@ -56,34 +53,22 @@ Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 english.BeveledLabel=SubMaker
 turkish.BeveledLabel=SubMaker
 
-[Types]
-Name: "standard"; Description: "Standard Installation -- App + Python + FFmpeg + Presets (~6 GB)"
-Name: "minimal";  Description: "Minimal -- App + Python + FFmpeg (~6 GB, no presets)"
-Name: "custom";   Description: "Custom Installation"; Flags: iscustom
-
-[Components]
-Name: "core";    Description: "SubMaker Application (Electron)";                       Types: standard minimal custom; Flags: fixed
-Name: "python";  Description: "Python {#PythonVersion} Runtime + AI Packages (~5 GB)"; Types: standard minimal custom; Flags: fixed
-Name: "ffmpeg";  Description: "FFmpeg Media Processor (~150 MB)";                      Types: standard minimal custom; Flags: fixed
-Name: "presets"; Description: "Visualizer Presets (1,755 presets, ~8 MB)";              Types: standard custom
-Name: "tools";   Description: "Model Download Tool (download_models.py)";              Types: standard minimal custom; Flags: fixed
-
 [Files]
-Source: "{#StagingDir}\app\*"; DestDir: "{app}"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "resources\resources\models\*"
-Source: "{#StagingDir}\python\*"; DestDir: "{app}\python"; Components: python; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#StagingDir}\ffmpeg\ffmpeg.exe"; DestDir: "{app}\ffmpeg"; Components: ffmpeg; Flags: ignoreversion
-Source: "{#StagingDir}\ffmpeg\ffprobe.exe"; DestDir: "{app}\ffmpeg"; Components: ffmpeg; Flags: ignoreversion
-Source: "{#StagingDir}\presets\*"; DestDir: "{app}\resources\resources\presets"; Components: presets; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#StagingDir}\tools\download_models.py"; DestDir: "{app}\tools"; Components: tools; Flags: ignoreversion
+Source: "..\electron\public\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StagingDir}\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "resources\resources\models\*"
+Source: "{#StagingDir}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StagingDir}\ffmpeg\ffmpeg.exe"; DestDir: "{app}\ffmpeg"; Flags: ignoreversion
+Source: "{#StagingDir}\ffmpeg\ffprobe.exe"; DestDir: "{app}\ffmpeg"; Flags: ignoreversion
+Source: "{#StagingDir}\presets\*"; DestDir: "{app}\resources\resources\presets"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StagingDir}\tools\download_models.py"; DestDir: "{app}\tools"; Flags: ignoreversion
+; Bundled AI models (turbo + audio-separator)
+Source: "{#StagingDir}\models\turbo\*"; DestDir: "{app}\resources\resources\models\turbo"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StagingDir}\models\audio-separator\*"; DestDir: "{app}\resources\resources\models\audio-separator"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}";          Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"
-Name: "{group}\Download AI Models";     Filename: "{app}\python\python.exe"; Parameters: """{app}\tools\download_models.py"" --info"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Comment: "View and download AI models for SubMaker"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}";     Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
-
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "{autodesktop}\{#MyAppName}";     Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"
 
 [Registry]
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\ffmpeg;{app}\python"; Check: NeedsAddPath(ExpandConstant('{app}\ffmpeg')) and NeedsAddPath(ExpandConstant('{app}\python'))
@@ -98,12 +83,12 @@ Type: filesandordirs; Name: "{userappdata}\SubMaker"
 
 [Code]
 var
-  ModelInfoPage: TOutputMsgMemoWizardPage;
-  ModelDirPage: TInputDirWizardPage;
+  ModelDirPage: TWizardPage;
+  ModelDirEdit: TNewEdit;
   ModelSourcePath: string;
 
 const
-  MODEL_DIRS = 'turbo,audio-separator,qwen2.5-3b-awq,small,tiny,distil-large-v3,flux-klein-4b,flux-small-decoder';
+  MODEL_DIRS = 'turbo,audio-separator,qwen2.5-3b-awq,small,tiny,medium,large-v3,distil-large-v3,flux-klein-4b,flux-small-decoder';
 
 function NeedsAddPath(Param: string): boolean;
 var
@@ -142,33 +127,6 @@ begin
   end;
 end;
 
-function BuildModelScanResult(Dir: string): string;
-var
-  Token: string;
-  Pos1, J, Len: Integer;
-  ModelList, SubDir: string;
-  NL: string;
-begin
-  NL := Chr(13) + Chr(10);
-  Result := '';
-  ModelList := MODEL_DIRS;
-  Len := Length(ModelList);
-  Pos1 := 1;
-  while Pos1 <= Len do
-  begin
-    J := Pos1;
-    while (J <= Len) and (ModelList[J] <> ',') do
-      J := J + 1;
-    Token := Copy(ModelList, Pos1, J - Pos1);
-    SubDir := AddBackslash(Dir) + Token;
-    if DirExists(SubDir) then
-      Result := Result + '  [FOUND]    ' + Token + NL
-    else
-      Result := Result + '  [MISSING]  ' + Token + NL;
-    Pos1 := J + 1;
-  end;
-end;
-
 procedure CopyModelDirs(SourceDir, DestDir: string);
 var
   Token: string;
@@ -196,100 +154,94 @@ begin
   end;
 end;
 
-procedure InitializeWizard;
+procedure ModelDirBrowseClick(Sender: TObject);
 var
-  NL: string;
+  Dir: string;
 begin
-  NL := Chr(13) + Chr(10);
+  Dir := ModelDirEdit.Text;
+  if BrowseForFolder('Select model folder:', Dir, False) then
+    ModelDirEdit.Text := Dir;
+end;
 
-  { ── Model source directory selection page (before install) ── }
-  ModelDirPage := CreateInputDirPage(wpSelectDir,
-    'AI Models Location (Optional)',
-    'Do you already have SubMaker AI models downloaded?',
-    'If you have previously downloaded SubMaker models, select the folder that contains ' +
-    'model sub-folders (turbo, audio-separator, qwen2.5-3b-awq, etc.).' + NL + NL +
-    'Leave empty to skip — you can download models later from within the app.' + NL + NL +
-    'Expected folder structure:' + NL +
-    '  <selected folder>\turbo\' + NL +
-    '  <selected folder>\audio-separator\' + NL +
-    '  <selected folder>\qwen2.5-3b-awq\' + NL +
-    '  <selected folder>\small\' + NL +
-    '  ...',
-    False, '');
-  ModelDirPage.Add('Model source folder (leave empty to skip):');
-  ModelDirPage.Values[0] := '';
+procedure InitializeWizard;
+begin
+  ModelDirPage := CreateCustomPage(wpSelectDir,
+    'AI Models (Optional)',
+    'Already have models? Select the folder. Otherwise leave empty to skip.');
 
-  { ── Model info page (after install) ── }
-  ModelInfoPage := CreateOutputMsgMemoPage(wpInfoAfter,
-    'AI Models - Important Notice',
-    'SubMaker requires AI models to function. Models are NOT included in this installer.',
-    'When you launch SubMaker for the first time, the app will automatically check for ' +
-    'missing models and guide you through downloading them.' + NL + NL +
-    'You can also manage models anytime from the Startup Health Check screen.',
-    'AI MODELS REFERENCE' + NL +
-    '========================================' + NL + NL +
-    'Models will be stored in:' + NL +
-    '  [Install Dir]\resources\resources\models\' + NL + NL +
-    '----------------------------------------' + NL +
-    'REQUIRED (~2.3 GB):' + NL +
-    '  - Whisper Turbo (~1.5 GB) - Speech Recognition' + NL +
-    '  - Vocal Separator (~805 MB) - Vocal Isolation' + NL + NL +
-    'TRANSLATION (~2.6 GB):' + NL +
-    '  - Qwen 2.5 3B AWQ - AI Translation (37+ languages)' + NL + NL +
-    'EXTRA WHISPER (~2 GB):' + NL +
-    '  - Whisper Small (~464 MB)' + NL +
-    '  - Whisper Tiny (~75 MB)' + NL +
-    '  - Distil Large v3 (~1.5 GB)' + NL + NL +
-    'COVER ART (~22.8 GB):' + NL +
-    '  - FLUX.2 Klein 4B (~22.6 GB)' + NL +
-    '  - FLUX.2 Small Decoder (~112 MB)' + NL + NL +
-    '----------------------------------------' + NL +
-    'DOWNLOAD OPTIONS:' + NL + NL +
-    '  1. In-App: Launch SubMaker — startup screen auto-checks' + NL +
-    '     and offers "Download Missing Models" button' + NL + NL +
-    '  2. Start Menu: SubMaker > Download AI Models' + NL +
-    '     (Command-line tool for bulk download)' + NL + NL +
-    '  3. Command Line:' + NL +
-    '     python tools\download_models.py --all' + NL + NL +
-    '========================================');
+  with TNewStaticText.Create(ModelDirPage) do
+  begin
+    Parent := ModelDirPage.Surface;
+    Left := 0;
+    Top := 0;
+    Width := ModelDirPage.SurfaceWidth;
+    WordWrap := True;
+    AutoSize := True;
+    Caption :=
+      'Select the folder containing model sub-folders' +
+      ' (turbo, audio-separator, qwen2.5-3b-awq, etc.).' + #13#10 + #13#10 +
+      'Leave empty to skip - models can be downloaded from within the app.';
+  end;
+
+  with TNewStaticText.Create(ModelDirPage) do
+  begin
+    Parent := ModelDirPage.Surface;
+    Left := 0;
+    Top := ScaleY(60);
+    Width := ModelDirPage.SurfaceWidth;
+    Caption := 'Model folder:';
+  end;
+
+  ModelDirEdit := TNewEdit.Create(ModelDirPage);
+  ModelDirEdit.Parent := ModelDirPage.Surface;
+  ModelDirEdit.Left := 0;
+  ModelDirEdit.Top := ScaleY(76);
+  ModelDirEdit.Width := ModelDirPage.SurfaceWidth - ScaleX(90);
+  ModelDirEdit.Text := '';
+
+  with TNewButton.Create(ModelDirPage) do
+  begin
+    Parent := ModelDirPage.Surface;
+    Left := ModelDirEdit.Left + ModelDirEdit.Width + ScaleX(8);
+    Top := ScaleY(74);
+    Width := ScaleX(80);
+    Height := ScaleY(23);
+    Caption := 'Browse...';
+    OnClick := @ModelDirBrowseClick;
+  end;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Dir: string;
   FoundCount: Integer;
-  NL, ScanResult: string;
 begin
   Result := True;
   if CurPageID = ModelDirPage.ID then
   begin
-    Dir := ModelDirPage.Values[0];
+    Dir := Trim(ModelDirEdit.Text);
     ModelSourcePath := '';
     if Dir = '' then
       Exit;
     if not DirExists(Dir) then
     begin
-      MsgBox('The specified folder does not exist:' + #13#10 + Dir, mbError, MB_OK);
+      MsgBox('Folder not found: ' + Dir, mbError, MB_OK);
       Result := False;
       Exit;
     end;
-    NL := Chr(13) + Chr(10);
     FoundCount := CountModelsInDir(Dir);
-    ScanResult := BuildModelScanResult(Dir);
     if FoundCount = 0 then
     begin
-      if MsgBox('No model folders found in:' + NL + Dir + NL + NL +
-                ScanResult + NL +
-                'Continue without models?', mbConfirmation, MB_YESNO) = IDNO then
+      if MsgBox('No model folders found here.' + #13#10 + 'Continue without models?',
+                mbConfirmation, MB_YESNO) = IDNO then
         Result := False
       else
         ModelSourcePath := '';
     end
     else
     begin
-      if MsgBox('Found ' + IntToStr(FoundCount) + ' model folder(s):' + NL + NL +
-                ScanResult + NL +
-                'Copy these models to the installation?', mbConfirmation, MB_YESNO) = IDYES then
+      if MsgBox('Found ' + IntToStr(FoundCount) + ' model folder(s).' + #13#10 +
+                'Copy to installation?', mbConfirmation, MB_YESNO) = IDYES then
         ModelSourcePath := Dir
       else
         ModelSourcePath := '';
@@ -299,16 +251,10 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  S, DestModelsDir: string;
+  DestModelsDir: string;
 begin
   if CurStep = ssPostInstall then
   begin
-    { Update placeholder in info page }
-    S := ModelInfoPage.RichEditViewer.Lines.Text;
-    StringChangeEx(S, '[Install Dir]', ExpandConstant('{app}'), True);
-    ModelInfoPage.RichEditViewer.Lines.Text := S;
-
-    { Copy user-supplied models to bundled models directory }
     if ModelSourcePath <> '' then
     begin
       DestModelsDir := ExpandConstant('{app}\resources\resources\models');

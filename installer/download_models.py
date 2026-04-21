@@ -51,6 +51,22 @@ MODELS = {
         "repo_id": "Systran/faster-whisper-tiny",
         "local_dir": "tiny",
     },
+    "medium": {
+        "name": "Whisper Medium",
+        "description": "Good accuracy for most languages",
+        "size_mb": 1500,
+        "type": "whisper",
+        "repo_id": "Systran/faster-whisper-medium",
+        "local_dir": "medium",
+    },
+    "large-v3": {
+        "name": "Whisper Large v3",
+        "description": "Best accuracy — largest model",
+        "size_mb": 3100,
+        "type": "whisper",
+        "repo_id": "Systran/faster-whisper-large-v3",
+        "local_dir": "large-v3",
+    },
     "distil-large-v3": {
         "name": "Whisper Distil Large v3",
         "description": "Fast + high accuracy (distilled)",

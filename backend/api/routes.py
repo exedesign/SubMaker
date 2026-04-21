@@ -867,7 +867,10 @@ def vocal_isolation_separate():
             isolator = get_vocal_isolator()
 
             if not isolator.is_available():
-                yield f"data: {json_module.dumps({'type': 'error', 'error': 'No vocal separation engine available'})}\n\n"
+                status = isolator.get_status()
+                detail = f"mdx={status.get('mdx_available')}, demucs={status.get('demucs_available')}"
+                logger.error(f"Vocal separation not available: {detail}")
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'No vocal separation engine available ({detail})'})}\n\n"
                 return
 
             progress_queue = queue.Queue()
@@ -1067,7 +1070,7 @@ def transcribe_stream():
     if not file_path:
         return jsonify({"error": "file_path required"}), 400
 
-    print(f"[Transcribe Stream] file_path='{file_path}', exists={os.path.exists(file_path)}")
+    print(f"[Transcribe Stream] file_path='{file_path}', exists={os.path.exists(file_path)}, language={language!r}, model_override={model_settings}")
 
     if not os.path.exists(file_path):
         return jsonify({"error": f"File not found: {file_path}"}), 404
@@ -1119,6 +1122,7 @@ def transcribe_stream():
 
                     # Use frontend model_settings if provided
                     model_override = model_settings.get(language) or model_settings.get('auto') if model_settings else None
+                    progress_callback(6, "Starting transcription service...")
                     result = service.transcribe(
                         audio_to_transcribe,
                         language=language,
@@ -3092,6 +3096,24 @@ _HEALTH_MODELS = {
         "repo_id": "Systran/faster-whisper-tiny",
         "check_files": ["model.bin", "config.json"],
     },
+    "medium": {
+        "name": "Whisper Medium",
+        "category": "extra",
+        "size_mb": 1500,
+        "local_dir": "medium",
+        "description": "Good accuracy for most languages",
+        "repo_id": "Systran/faster-whisper-medium",
+        "check_files": ["model.bin", "config.json"],
+    },
+    "large-v3": {
+        "name": "Whisper Large v3",
+        "category": "extra",
+        "size_mb": 3100,
+        "local_dir": "large-v3",
+        "description": "Best accuracy \u2014 largest model",
+        "repo_id": "Systran/faster-whisper-large-v3",
+        "check_files": ["model.bin", "config.json"],
+    },
     "distil-large-v3": {
         "name": "Whisper Distil Large v3",
         "category": "extra",
@@ -3218,18 +3240,17 @@ def system_health_check():
         },
     }
 
-    # Check FFmpeg
-    ffmpeg_path = shutil.which("ffmpeg")
+    # Check FFmpeg — bundled path first, then system PATH
+    import config
+    ffmpeg_path = None
+    bundled = Path(config.FFMPEG_PATH)
+    if bundled.is_absolute() and bundled.exists():
+        ffmpeg_path = str(bundled)
+    else:
+        ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
         results["ffmpeg"]["ok"] = True
         results["ffmpeg"]["path"] = ffmpeg_path
-    else:
-        # Check app-relative path
-        import config
-        app_ffmpeg = Path(config.BASE_DIR) / "ffmpeg" / "ffmpeg.exe"
-        if app_ffmpeg.exists():
-            results["ffmpeg"]["ok"] = True
-            results["ffmpeg"]["path"] = str(app_ffmpeg)
 
     # Check each model
     for key, info in _HEALTH_MODELS.items():

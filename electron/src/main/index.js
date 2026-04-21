@@ -352,6 +352,15 @@ function startPythonBackend() {
     backendEnv.SUBMAKER_PRODUCTION = '1';
     backendEnv.SUBMAKER_USER_DATA = path.join(app.getPath('userData'), '..', 'SubMaker');
     diagLog(`SUBMAKER_USER_DATA: ${backendEnv.SUBMAKER_USER_DATA}`);
+
+    // Add bundled ffmpeg and python to PATH so backend can find them
+    const bundledFfmpegDir = path.join(process.resourcesPath, '..', 'ffmpeg');
+    const bundledPythonDir = path.join(process.resourcesPath, '..', 'python');
+    const extraPaths = [bundledFfmpegDir, bundledPythonDir].filter(p => fs.existsSync(p));
+    if (extraPaths.length > 0) {
+      backendEnv.PATH = extraPaths.join(';') + ';' + (process.env.PATH || '');
+      diagLog(`Extended PATH with: ${extraPaths.join(', ')}`);
+    }
   }
 
   // Try common Python executable names
@@ -571,11 +580,13 @@ ipcMain.handle('sse:request', async (event, { id, url, body }) => {
             try {
               const data = JSON.parse(line.slice(6));
               if (!event.sender.isDestroyed()) {
-                // Always send complete/error/result events immediately
-                if (data.type === 'complete' || data.type === 'error' || data.type === 'result') {
+                // Always send complete/error/result/status/heartbeat events immediately
+                // (status = pipeline stage transitions, heartbeat = keep-alive, both infrequent)
+                if (data.type === 'complete' || data.type === 'error' || data.type === 'result' ||
+                    data.type === 'status' || data.type === 'heartbeat') {
                   event.sender.send(`sse:event:${id}`, data);
                 } else {
-                  // Throttle progress/status/heartbeat events
+                  // Throttle only progress events (segment text, can fire many times per second)
                   const now = Date.now();
                   if (now - lastSendTime >= THROTTLE_MS) {
                     lastSendTime = now;

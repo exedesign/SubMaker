@@ -110,10 +110,11 @@ if (-not $SkipElectronBuild) {
     $AppStaging = Join-Path $StagingDir "app"
     if (Test-Path $AppStaging) { Remove-Item $AppStaging -Recurse -Force }
 
-    # Robocopy ile kopyala (modeller hariç — /XD ile dışla)
+    # Robocopy ile kopyala (modeller ve venv hariç — /XD ile dışla)
     $ModelsInBuild = Join-Path $WinUnpacked "resources\resources\models"
+    $VenvInBuild   = Join-Path $WinUnpacked "resources\backend\venv"
     robocopy $WinUnpacked $AppStaging /E /NFL /NDL /NJH /NJS /NC /NS /NP `
-        /XD $ModelsInBuild | Out-Null
+        /XD $ModelsInBuild $VenvInBuild | Out-Null
 
     Write-Host "  Electron uygulama dosyalari kopyalandi." -ForegroundColor Green
 }
@@ -126,8 +127,9 @@ else {
     if ((Test-Path $ExistingBuild) -and -not (Test-Path $AppStaging)) {
         Write-Host "  Mevcut build kullaniliyor: $ExistingBuild" -ForegroundColor Gray
         $ModelsInBuild = Join-Path $ExistingBuild "resources\resources\models"
+        $VenvInBuild   = Join-Path $ExistingBuild "resources\backend\venv"
         robocopy $ExistingBuild $AppStaging /E /NFL /NDL /NJH /NJS /NC /NS /NP `
-            /XD $ModelsInBuild | Out-Null
+            /XD $ModelsInBuild $VenvInBuild | Out-Null
     }
 }
 

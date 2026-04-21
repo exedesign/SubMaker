@@ -10,6 +10,8 @@ const CHECK_ITEMS = [
   { key: 'qwen',     label: 'Qwen Translation',   icon: '🌐', type: 'model', category: 'translation' },
   { key: 'small',    label: 'Whisper Small',       icon: '🎤', type: 'model', category: 'extra' },
   { key: 'tiny',     label: 'Whisper Tiny',        icon: '🎤', type: 'model', category: 'extra' },
+  { key: 'medium',   label: 'Whisper Medium',      icon: '🎤', type: 'model', category: 'extra' },
+  { key: 'large-v3', label: 'Whisper Large v3',     icon: '🎤', type: 'model', category: 'extra' },
   { key: 'distil-large-v3', label: 'Whisper Distil Large', icon: '🎤', type: 'model', category: 'extra' },
   { key: 'flux-klein', label: 'FLUX Cover Art',   icon: '🎨', type: 'model', category: 'cover-art' },
   { key: 'flux-small-decoder', label: 'FLUX Decoder', icon: '🎨', type: 'model', category: 'cover-art' },
@@ -300,6 +302,13 @@ function StartupHealthCheck() {
               <div className="startup-download-status">
                 <span className="startup-icon-spin" style={{ marginRight: '8px' }} />
                 <span>Downloading models... Please wait</span>
+                <button
+                  className="startup-btn startup-btn--secondary"
+                  onClick={handleContinue}
+                  style={{ marginLeft: '12px' }}
+                >
+                  Skip
+                </button>
               </div>
             )}
 

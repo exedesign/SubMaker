@@ -867,6 +867,8 @@ export const useAppStore = create((set, get) => ({
           const stepMessage = data.current_text
             ? `${data.current_text}`
             : `Processing... ${data.progress}%`;
+          // Keep lastKnownStep in sync so heartbeat shows the latest stage, not the initial status
+          if (data.current_text) lastKnownStep = data.current_text;
           set({
             processingStep: stepMessage,
             processingProgress: data.progress,
@@ -891,6 +893,11 @@ export const useAppStore = create((set, get) => ({
             currentStep: 'edit',
             currentTranscriptText: '',
           });
+          // Waveforms were deferred during transcription — load them now that CPU is free
+          const { audioMixer: completedMixer } = get();
+          if (completedMixer.enabled && Object.keys(completedMixer.tracks).length > 0) {
+            get().loadTrackWaveforms(completedMixer.tracks);
+          }
           resolve(data);
           return;
         }
@@ -2149,8 +2156,14 @@ export const useAppStore = create((set, get) => ({
 
     set({ audioMixer: { enabled: true, tracks, masterVolume: 1.0, masterMuted: false, showTimelineTracks: true }, isPlaying: false });
     
-    // Load waveforms for all tracks asynchronously
-    get().loadTrackWaveforms(tracks);
+    // Defer waveform loading — if transcription is about to start, avoid CPU competition.
+    // The complete handler will trigger loadTrackWaveforms after transcription finishes.
+    setTimeout(() => {
+      if (!get().isProcessing) {
+        get().loadTrackWaveforms(get().audioMixer.tracks);
+      }
+      // else: complete handler will call loadTrackWaveforms after transcription
+    }, 1000);
   },
 
   // Load waveforms for all tracks

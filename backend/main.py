@@ -105,6 +105,21 @@ except Exception as e:
     _boot_log(traceback.format_exc())
     raise
 
+# ── Vocal isolation diagnostics at boot ───────────────────────────────
+try:
+    _boot_log("[BOOT] Checking torch...")
+    import torch
+    _boot_log(f"[BOOT] torch {torch.__version__} OK, CUDA={torch.cuda.is_available()}")
+except Exception as e:
+    _boot_log(f"[BOOT] torch import FAILED: {type(e).__name__}: {e}")
+
+try:
+    _boot_log("[BOOT] Checking audio_separator...")
+    from audio_separator.separator import Separator
+    _boot_log("[BOOT] audio_separator OK")
+except Exception as e:
+    _boot_log(f"[BOOT] audio_separator import FAILED: {type(e).__name__}: {e}")
+
 # ---------------------------------------------------------------------------
 # Visualizer WebSocket pipe state (per socket session)
 # ---------------------------------------------------------------------------

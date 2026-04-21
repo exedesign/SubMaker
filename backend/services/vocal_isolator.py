@@ -175,18 +175,24 @@ class VocalIsolator:
         try:
             from audio_separator.separator import Separator
             return True
-        except ImportError:
+        except Exception as e:
+            logger.warning(f"audio_separator not available: {type(e).__name__}: {e}")
             return False
 
     def _demucs_available(self) -> bool:
         try:
             import demucs.pretrained
             return True
-        except ImportError:
+        except Exception as e:
+            logger.warning(f"demucs not available: {type(e).__name__}: {e}")
             return False
 
     def is_available(self) -> bool:
-        return self._mdx_available() or self._demucs_available()
+        mdx = self._mdx_available()
+        demucs = self._demucs_available()
+        if not mdx and not demucs:
+            logger.error("No vocal separation engine available (mdx=False, demucs=False)")
+        return mdx or demucs
 
     def get_status(self) -> dict:
         status = {

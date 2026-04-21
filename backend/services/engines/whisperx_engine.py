@@ -109,8 +109,17 @@ class FasterWhisperEngine:
             model_path = flat_model_dir
             logger.info(f"Using local flat model directory: {model_path}")
         else:
-            model_path = model_id
-            logger.info(f"Using HuggingFace model ID: {model_path}")
+            # Model not found locally — raise error immediately instead of trying
+            # to download from HuggingFace (which hangs with no internet/timeout)
+            logger.error(
+                f"Model '{model_id}' not found locally at {flat_model_dir}. "
+                f"Please copy model files to this directory or use the model download tool."
+            )
+            raise RuntimeError(
+                f"Model '{model_id}' not found. "
+                f"Expected location: {flat_model_dir}. "
+                f"Please download models using the app's model manager or copy them manually to the models directory."
+            )
 
         try:
             self._model = WhisperModel(
@@ -191,6 +200,8 @@ class FasterWhisperEngine:
             if k in known_params and v is not None:
                 fw_params[k] = v
 
+        logger.info(f"Calling model.transcribe() with language={language!r}, task={task!r}")
+
         segments_gen, info = self._model.transcribe(
             audio_path,
             language=language,
@@ -200,7 +211,9 @@ class FasterWhisperEngine:
         )
 
         detected_language = info.language or language or "en"
-        logger.info(f"Faster-Whisper transcription started. Language: {detected_language}, duration: {info.duration:.1f}s")
+        if language and detected_language != language:
+            logger.warning(f"Language mismatch! Requested: {language}, detected: {detected_language}")
+        logger.info(f"Faster-Whisper transcription started. Language: {detected_language} (requested: {language!r}), duration: {info.duration:.1f}s")
 
         # --- 2) Iterate generator lazily for real-time progress ---
         if progress_callback:

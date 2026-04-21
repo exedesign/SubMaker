@@ -83,58 +83,47 @@ class TranscriptionService:
         }
     
     def preprocess_audio(self, audio_path: str, target_path: Optional[str] = None) -> str:
-        """Preprocess audio for better transcription quality.
+        """Preprocess audio for better transcription quality using ffmpeg.
 
-        Applies Whisper-compatible preprocessing:
-        1. 16 kHz resampling
-        2. Leading + trailing silence trimming
-        3. Dynamic range compression (boosts quiet vocal sections)
-        4. Peak normalization
+        Uses ffmpeg subprocess instead of Python audio libraries to avoid
+        hangs on embedded Python installations.
 
-        Silence trimming is critical for vocal-isolated tracks: the
-        instrumental intro/outro becomes dead silence, which confuses
-        Whisper's language detection and causes hallucinations or
-        premature transcription cutoff.
-
-        Dynamic range compression is equally important: vocal isolation
-        produces extreme dynamic range (loud chorus vs. quiet verse
-        endings/fade-outs).  Without compression the quiet sections stay
-        below Whisper's internal speech-detection threshold and are
-        silently dropped, causing "missing subtitles at end of track".
+        Steps:
+        1. Detect & trim leading/trailing silence (keep 0.5 s lead-in, 0.3 s tail)
+        2. Resample to 16 kHz mono (Whisper's native format)
+        3. Dynamic loudness normalisation (boosts quiet vocal sections)
 
         Returns the path to the preprocessed file.  The trimmed offset
         (in seconds) is stored as ``self._preprocess_offset`` so that
         subtitle timestamps can be shifted back to the original timeline.
         """
-        self._preprocess_offset = 0.0  # Reset offset
+        import subprocess, re
+        from config import FFMPEG_PATH
 
-        if not AUDIO_PROCESSING_AVAILABLE:
-            logger.warning("Audio preprocessing unavailable (librosa not installed)")
-            return audio_path
+        self._preprocess_offset = 0.0
+
+        if target_path is None:
+            base_path = Path(audio_path)
+            target_path = str(base_path.parent / f"{base_path.stem}_preprocessed.wav")
 
         try:
-            logger.info(f"Preprocessing audio: {audio_path}")
+            logger.info(f"Preprocessing audio (ffmpeg): {audio_path}")
 
-            # Load audio at 16 kHz (Whisper's native sample rate)
-            y, sr = librosa.load(audio_path, sr=16000)
-            original_len = len(y)
-
-            # --- 1) Trim leading + trailing silence ---
-            # top_db=30 → anything quieter than −30 dB from peak is "silence"
-            _y_trimmed, trim_indices = librosa.effects.trim(
-                y, top_db=30, frame_length=2048, hop_length=512
+            # --- 1) Detect silence boundaries and total duration ---
+            leading_end, trailing_start, total_dur = self._ffmpeg_detect_silence(
+                FFMPEG_PATH, audio_path
             )
-            leading_samples = trim_indices[0]
-            trailing_samples = original_len - trim_indices[1]
-            leading_sec = leading_samples / sr
-            trailing_sec = trailing_samples / sr
 
-            # Trim leading silence (keep 0.5 s lead-in for natural onset)
+            # --- 2) Calculate trim points ---
+            trim_start = 0.0
+            trim_end = total_dur
+
+            leading_sec = leading_end
+            trailing_sec = total_dur - trailing_start if trailing_start < total_dur else 0.0
+
             if leading_sec > 2.0:
-                keep_samples = int(0.5 * sr)
-                start_sample = max(0, leading_samples - keep_samples)
-                y = y[start_sample:]
-                self._preprocess_offset = start_sample / sr
+                trim_start = leading_sec - 0.5  # keep 0.5 s lead-in
+                self._preprocess_offset = trim_start
                 logger.info(
                     f"Trimmed {leading_sec:.1f}s leading silence "
                     f"(kept 0.5s lead-in, offset={self._preprocess_offset:.2f}s)"
@@ -142,41 +131,52 @@ class TranscriptionService:
             else:
                 logger.info(f"Leading silence {leading_sec:.1f}s — no trim needed")
 
-            # Trim trailing silence (keep 0.3 s tail for natural decay)
             if trailing_sec > 2.0:
-                keep_tail = int(0.3 * sr)
-                # trim_indices[1] is relative to the ORIGINAL array; adjust
-                # for the leading trim we may have already applied.
-                end_abs = trim_indices[1] + keep_tail
-                start_abs = max(0, leading_samples - int(0.5 * sr)) if leading_sec > 2.0 else 0
-                new_end = end_abs - start_abs
-                if new_end < len(y):
-                    y = y[:new_end]
-                    logger.info(
-                        f"Trimmed {trailing_sec:.1f}s trailing silence "
-                        f"(kept 0.3s tail)"
-                    )
+                trim_end = trailing_start + 0.3  # keep 0.3 s tail
+                logger.info(
+                    f"Trimmed {trailing_sec:.1f}s trailing silence (kept 0.3s tail)"
+                )
             else:
                 logger.info(f"Trailing silence {trailing_sec:.1f}s — no trim needed")
 
-            # --- 2) Dynamic range compression ---
-            # Boost quiet vocal sections so Whisper doesn't drop them.
-            # Uses per-frame RMS envelope with a moderate 4:1 ratio and
-            # a threshold tuned to typical vocal-isolated track levels.
-            y = self._apply_dynamic_range_compression(y, sr)
+            seg_duration = trim_end - trim_start
 
-            # --- 3) Peak-normalize to 95 % ---
-            max_val = float(np.abs(y).max())
-            if max_val > 0:
-                y = y / max_val * 0.95
+            # --- 3) Process: trim + normalise + resample to 16 kHz mono ---
+            # dynaudnorm: per-frame loudness normalisation.  Boosts quiet
+            # vocal sections and normalises peaks — replaces the manual
+            # DRC + peak normalisation that previously used librosa/numpy.
+            af = "dynaudnorm=framelen=500:gausssize=31:peak=0.95:maxgain=8"
 
-            # Save preprocessed audio
-            if target_path is None:
-                base_path = Path(audio_path)
-                target_path = str(base_path.parent / f"{base_path.stem}_preprocessed{base_path.suffix}")
+            cmd = [
+                FFMPEG_PATH, '-y', '-hide_banner', '-loglevel', 'warning',
+                '-ss', f'{trim_start:.3f}',
+                '-i', audio_path,
+                '-t', f'{seg_duration:.3f}',
+                '-af', af,
+                '-ar', '16000',
+                '-ac', '1',
+                '-c:a', 'pcm_s16le',
+                '-f', 'wav',
+                target_path,
+            ]
 
-            import soundfile as sf
-            sf.write(target_path, y, sr)
+            logger.info(
+                f"ffmpeg preprocess: [{trim_start:.1f}s – {trim_end:.1f}s] "
+                f"→ 16 kHz mono + dynaudnorm"
+            )
+
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=120,
+            )
+
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"ffmpeg exit {proc.returncode}: {proc.stderr[-500:]}"
+                )
+
+            if not os.path.exists(target_path):
+                raise RuntimeError("ffmpeg produced no output file")
 
             logger.info(f"Audio preprocessed and saved to: {target_path}")
             return target_path
@@ -184,6 +184,69 @@ class TranscriptionService:
         except Exception as e:
             logger.warning(f"Audio preprocessing failed: {e}")
             return audio_path
+
+    # ------------------------------------------------------------------
+    # ffmpeg-based silence detection (used by preprocess_audio)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _ffmpeg_detect_silence(
+        ffmpeg_path: str, audio_path: str,
+        noise_db: str = "-30dB", min_dur: float = 0.5,
+    ):
+        """Detect leading/trailing silence via ffmpeg *silencedetect*.
+
+        Returns ``(leading_silence_end, trailing_silence_start, total_duration)``.
+        All values are in seconds.
+        """
+        import subprocess, re
+
+        cmd = [
+            ffmpeg_path, '-i', audio_path, '-hide_banner',
+            '-af', f'silencedetect=noise={noise_db}:d={min_dur}',
+            '-f', 'null', '-',
+        ]
+
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=60,
+        )
+
+        # Parse total duration — "Duration: 00:02:49.74, ..."
+        duration = 0.0
+        dur_m = re.search(r'Duration:\s*(\d+):(\d+):([\d.]+)', proc.stderr)
+        if dur_m:
+            duration = (
+                int(dur_m.group(1)) * 3600
+                + int(dur_m.group(2)) * 60
+                + float(dur_m.group(3))
+            )
+
+        # Collect silence_start / silence_end pairs
+        silences: list = []
+        pending_start = None
+        for line in proc.stderr.split('\n'):
+            sm = re.search(r'silence_start:\s*([\d.e+-]+)', line)
+            em = re.search(r'silence_end:\s*([\d.e+-]+)', line)
+            if sm:
+                pending_start = float(sm.group(1))
+            if em and pending_start is not None:
+                silences.append((pending_start, float(em.group(1))))
+                pending_start = None
+        # Unclosed silence → extends to EOF
+        if pending_start is not None:
+            silences.append((pending_start, duration))
+
+        # Leading: first silence block starting at / near 0
+        leading_end = 0.0
+        if silences and silences[0][0] < 0.1:
+            leading_end = silences[0][1]
+
+        # Trailing: last silence block reaching EOF
+        trailing_start = duration
+        if silences and silences[-1][1] >= duration - 0.5:
+            trailing_start = silences[-1][0]
+
+        return leading_end, trailing_start, duration
 
     @staticmethod
     def _apply_dynamic_range_compression(
@@ -966,35 +1029,37 @@ class TranscriptionService:
     ) -> Dict[str, Any]:
         """
         Transcribe an audio file with language-specific optimizations
-
-        Args:
-            audio_path: Path to audio/video file
-            language: Language code (e.g., 'en', 'ar') or None for auto-detect
-            task: 'transcribe' or 'translate' (to English)
-            word_timestamps: Include word-level timestamps
-            progress_callback: Callback function for progress updates
-            preprocess_audio: Whether to preprocess audio for better quality
-            model_size_override: Explicit model ID from frontend settings
-
-        Returns:
-            Dict containing segments and metadata
         """
         start_time = time.time()
-        
-        # Preprocess audio if requested
+
+        logger.info(f"transcribe() start — audio={audio_path}, lang={language}, model_override={model_size_override}")
+
+        # Preprocess audio if requested (ffmpeg-based, no Python audio libs)
         processed_audio_path = audio_path
         if preprocess_audio:
             if progress_callback:
-                progress_callback(10, "Pre-processing audio...")
+                progress_callback(10, "Analyzing audio...")
             processed_audio_path = self.preprocess_audio(audio_path)
+            if progress_callback:
+                progress_callback(17, "Audio ready...")
 
+        _target_model = model_size_override or self.get_optimal_model_size(language)
+        model_already_loaded = (
+            getattr(self.engine, '_model', None) is not None
+            and getattr(self.engine, '_model_id', None) == _target_model
+        )
         if progress_callback:
-            progress_callback(20, "Loading model...")
+            if model_already_loaded:
+                progress_callback(20, f"Model ready ({_target_model})...")
+            else:
+                progress_callback(20, f"Loading {_target_model} model...")
         self.load_model(language, model_size_override=model_size_override)
-        
+        if progress_callback and not model_already_loaded:
+            progress_callback(27, f"Model loaded ({_target_model})...")
+
         if not os.path.exists(processed_audio_path):
             raise FileNotFoundError(f"Audio file not found: {processed_audio_path}")
-        
+
         logger.info(f"Transcribing: {audio_path}")
         logger.info(f"Language: {language or 'auto-detect'}")
 
@@ -1008,8 +1073,9 @@ class TranscriptionService:
         # Transcribe via ASR engine
         if progress_callback:
             progress_callback(30, "Transcription started...")
+
         if is_rtl:
-            params['initial_prompt'] = ""  # RTL: empty prompt prevents garbled output
+            params['initial_prompt'] = ""
         elif language and language.lower() in LANGUAGE_PROMPTS:
             lang_prompts = LANGUAGE_PROMPTS[language.lower()]
             if lang_prompts is not None:
