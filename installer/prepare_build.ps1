@@ -1,30 +1,36 @@
+﻿# ============================================================================
+# SubMaker - Installer Build Preparation Script
 # ============================================================================
-# SubMaker - Installer Build Preparation Script (Modelsiz / Lightweight)
-# ============================================================================
-# Bu script Inno Setup için gerekli staging klasörünü hazırlar.
-# Modeller DAHİL EDİLMEZ — kurulum sonrası indirilebilir.
+# Bu script NSIS installer icin gerekli staging klasorunu hazirlar.
+# Modeller dahil edilmez -- kurulum sonrasi app ici Model Yoneticisi
+# veya tools\download_models.py ile indirilebilir.
 #
-# Adımlar:
-#   1. Electron uygulamasını derler (win-unpacked)
-#   2. Python Embedded indirir ve tüm paketleri kurar
+# Adimlar:
+#   1. Electron uygulamasini derler (win-unpacked)
+#   2. Python Embedded indirir ve tum paketleri kurar
 #   3. FFmpeg indirir
-#   4. Presetleri ve araçları kopyalar (modeller hariç)
+#   4. Presetleri ve araclari kopyalar (modeller haric)
+#   5. NSIS ile installer derler (SubMaker_Setup_x.x.x.exe)
 #
-# Kullanım:
+# Kullanim:
 #   PowerShell -ExecutionPolicy Bypass -File prepare_build.ps1
+#   PowerShell -ExecutionPolicy Bypass -File prepare_build.ps1 -SkipBuild  # sadece NSIS
 #
 # Gereksinimler:
 #   - Node.js 18+ ve npm
 #   - Python 3.13.x (pip ile)
-#   - İnternet bağlantısı (ilk çalıştırmada)
-#   - ~15 GB boş disk alanı
+#   - NSIS 3.x (makensis PATH'te olmali)
+#   - Internet baglantisi (ilk calistirmada)
+#   - ~15 GB bos disk alani
 # ============================================================================
 
 param(
     [switch]$SkipElectronBuild,
     [switch]$SkipPythonSetup,
     [switch]$SkipFFmpeg,
+    [switch]$MinimalPython,       # Only Flask stack + numpy (app installs torch etc. on first run)
     [switch]$SkipModels,
+    [switch]$SkipBuild,
     [string]$PythonVersion = "3.13.7"
 )
 
@@ -110,7 +116,7 @@ if (-not $SkipElectronBuild) {
     $AppStaging = Join-Path $StagingDir "app"
     if (Test-Path $AppStaging) { Remove-Item $AppStaging -Recurse -Force }
 
-    # Robocopy ile kopyala (modeller ve venv hariç — /XD ile dışla)
+    # Robocopy ile kopyala (modeller ve venv haric - /XD ile disla)
     $ModelsInBuild = Join-Path $WinUnpacked "resources\resources\models"
     $VenvInBuild   = Join-Path $WinUnpacked "resources\backend\venv"
     robocopy $WinUnpacked $AppStaging /E /NFL /NDL /NJH /NJS /NC /NS /NP `
@@ -183,54 +189,122 @@ if (-not $SkipPythonSetup) {
     $ErrorActionPreference = $prevEA
     if ($LASTEXITCODE -ne 0) { throw "get-pip.py basarisiz" }
 
-    # 2e. PyTorch + CUDA 12.4 kur (ayrı index URL gerekli)
-    Write-Host "  PyTorch + CUDA 12.4 kuruluyor (bu uzun surebilir)..." -ForegroundColor Gray
-    $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    & $PythonExe -m pip install --no-warn-script-location `
-        torch torchvision torchaudio `
-        --index-url https://download.pytorch.org/whl/cu124 2>&1 | ForEach-Object {
-            if ($_ -match "Successfully installed") { Write-Host "  $_" -ForegroundColor Green }
+    if ($MinimalPython) {
+        # -- MINIMAL MODE: Only Flask stack + lightweight deps --
+        Write-Host ""
+        Write-Host "  *** MINIMAL PYTHON MODU ***" -ForegroundColor Cyan
+        Write-Host "  Sadece sunucu ve temel paketler kuruluyor." -ForegroundColor Cyan
+        Write-Host "  Torch/CUDA ve ML kutuphaneleri uygulama ilk acildiginda kurulacak." -ForegroundColor Cyan
+        Write-Host ""
+
+        # Paket secimi:
+        #   torch CUDA 12.4          -> GPU transcription + translation + vokal izolasyon
+        #   Flask stack + lightweight deps  -> UI/backend bootu
+        #   faster-whisper + ctranslate2    -> transcription
+        #   onnxruntime-gpu + audio-separator -> vokal izolasyon
+        # Dahil edilmeyenler (cok buyuk / ozel index gerektirir):
+        #   transformers, accelerate, diffusers, bitsandbytes, autoawq
+        #   -> Kullanici Ayarlar > System'dan kurabilir
+
+        # ── 1. Adim: PyTorch CUDA 12.4 kur (ozel index URL gerektirir) ──────
+        Write-Host "  PyTorch CUDA 12.4 kuruluyor (~2.5 GB, lutfen bekleyin)..." -ForegroundColor Cyan
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $PythonExe -m pip install --no-warn-script-location `
+            torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/cu124 2>&1 | ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "Successfully installed") { Write-Host "  $line" -ForegroundColor Green }
+                elseif ($line -match "ERROR|error") { Write-Host "  $line" -ForegroundColor Red }
+                elseif ($line -match "Downloading|Installing") { Write-Host "  $line" -ForegroundColor Gray }
+            }
+        $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
+        if ($pipExit -ne 0) {
+            Write-Host "  UYARI: PyTorch CUDA kurulamadi. Devam ediliyor..." -ForegroundColor DarkYellow
+        } else {
+            # Dogrula: torch_cuda.dll var mi?
+            $cudaDll = Join-Path $StagingDir "python\Lib\site-packages\torch\lib\torch_cuda.dll"
+            if (Test-Path $cudaDll) {
+                Write-Host "  [OK] PyTorch CUDA basariyla kuruldu (torch_cuda.dll mevcut)." -ForegroundColor Green
+            } else {
+                Write-Host "  UYARI: torch_cuda.dll bulunamadi — CPU build indirilis olmali." -ForegroundColor DarkYellow
+            }
         }
-    $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
-    if ($pipExit -ne 0) { throw "PyTorch kurulumu basarisiz" }
 
-    # 2f. onnxruntime-gpu kur (onnxruntime ile çakışmaması için önce kur)
-    Write-Host "  onnxruntime-gpu kuruluyor..." -ForegroundColor Gray
-    $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    & $PythonExe -m pip install --no-warn-script-location onnxruntime-gpu 2>&1 | Out-Null
-    $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
-    if ($pipExit -ne 0) {
-        Write-Host "  UYARI: onnxruntime-gpu kurulamadi, devam ediliyor..." -ForegroundColor DarkYellow
-    }
-
-    # 2f-bis. autoawq — Windows'ta ozel kurulum gerektirir (--no-build-isolation --no-deps)
-    # Standart pip install ile build hatalari verir; requirements.txt'ten ONCE kurulmali
-    Write-Host "  autoawq kuruluyor (Windows ozel kurulum)..." -ForegroundColor Gray
-    $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    & $PythonExe -m pip install --no-warn-script-location `
-        autoawq --no-build-isolation --no-deps 2>&1 | ForEach-Object {
+        # ── 2. Adim: Diger minimal paketler ─────────────────────────────────
+        $MinimalPackages = @(
+            # API framework
+            "flask", "flask-cors", "flask-socketio", "eventlet",
+            # Core utils
+            "numpy", "requests", "psutil", "mutagen", "tqdm", "werkzeug",
+            # Audio processing
+            "pydub", "soundfile", "librosa",
+            # RTL / language
+            "arabic-reshaper", "python-bidi", "sentencepiece",
+            # HuggingFace (hf_xet extra => cok daha hizli repo indirme)
+            "huggingface-hub[hf_xet]",
+            # Transcription (CTranslate2 CUDA destekli)
+            "faster-whisper", "ctranslate2", "tokenizers", "av",
+            # Datasets (AWQ/Qwen loading icin gerekli)
+            "datasets",
+            # ONNX runtime (audio-separator icin)
+            "onnxruntime-gpu",
+            # Vocal isolation package
+            "audio-separator"
+        )
+        Write-Host "  Minimal paketler kuruluyor: $($MinimalPackages -join ', ')" -ForegroundColor Gray
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $PythonExe -m pip install --no-warn-script-location @MinimalPackages 2>&1 | ForEach-Object {
             $line = $_.ToString()
             if ($line -match "Successfully installed") { Write-Host "  $line" -ForegroundColor Green }
             elseif ($line -match "ERROR") { Write-Host "  $line" -ForegroundColor Red }
         }
-    $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
-    if ($pipExit -ne 0) {
-        Write-Host "  UYARI: autoawq kurulamadi (AWQ cevirisi/Qwen modeli calismayabilir)." -ForegroundColor DarkYellow
-    }
+        $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
+        if ($pipExit -ne 0) { Write-Host "  UYARI: Bazi paketler kurulamadi." -ForegroundColor DarkYellow }
 
-    # 2g. requirements.txt'ten geri kalan paketleri kur
-    Write-Host "  Backend paketleri kuruluyor (git clone adimi uzun surebilir)..." -ForegroundColor Gray
-    $ReqFile = Join-Path $BackendDir "requirements.txt"
-    $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    & $PythonExe -m pip install --no-warn-script-location -r $ReqFile 2>&1 | ForEach-Object {
-        $line = $_.ToString()
-        if ($line -match "Successfully installed") { Write-Host "  $line" -ForegroundColor Green }
-        elseif ($line -match "ERROR") { Write-Host "  $line" -ForegroundColor Red }
-        elseif ($line -match "Running command git clone") { Write-Host "  $line" -ForegroundColor Gray }
-    }
-    $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
-    if ($pipExit -ne 0) {
-        Write-Host "  UYARI: Bazi paketler kurulamadi, kontrol edin." -ForegroundColor DarkYellow
+    } else {
+        # -- FULL MODE: All packages bundled --
+        # 2e. PyTorch + CUDA 12.4 kur (ayrı index URL gerekli)
+        Write-Host "  PyTorch + CUDA 12.4 kuruluyor (bu uzun surebilir)..." -ForegroundColor Gray
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $PythonExe -m pip install --no-warn-script-location `
+            torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/cu124 2>&1 | ForEach-Object {
+                if ($_ -match "Successfully installed") { Write-Host "  $_" -ForegroundColor Green }
+            }
+        $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
+        if ($pipExit -ne 0) { throw "PyTorch kurulumu basarisiz" }
+
+        # 2f. onnxruntime-gpu kur
+        Write-Host "  onnxruntime-gpu kuruluyor..." -ForegroundColor Gray
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $PythonExe -m pip install --no-warn-script-location onnxruntime-gpu 2>&1 | Out-Null
+        $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
+        if ($pipExit -ne 0) { Write-Host "  UYARI: onnxruntime-gpu kurulamadi." -ForegroundColor DarkYellow }
+
+        # 2f-bis. autoawq
+        Write-Host "  autoawq kuruluyor (Windows ozel kurulum)..." -ForegroundColor Gray
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $PythonExe -m pip install --no-warn-script-location `
+            autoawq --no-build-isolation --no-deps 2>&1 | ForEach-Object {
+                $line = $_.ToString()
+                if ($line -match "Successfully installed") { Write-Host "  $line" -ForegroundColor Green }
+                elseif ($line -match "ERROR") { Write-Host "  $line" -ForegroundColor Red }
+            }
+        $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
+        if ($pipExit -ne 0) { Write-Host "  UYARI: autoawq kurulamadi." -ForegroundColor DarkYellow }
+
+        # 2g. requirements.txt'ten geri kalan paketleri kur
+        Write-Host "  Backend paketleri kuruluyor (git clone adimi uzun surebilir)..." -ForegroundColor Gray
+        $ReqFile = Join-Path $BackendDir "requirements.txt"
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $PythonExe -m pip install --no-warn-script-location -r $ReqFile 2>&1 | ForEach-Object {
+            $line = $_.ToString()
+            if ($line -match "Successfully installed") { Write-Host "  $line" -ForegroundColor Green }
+            elseif ($line -match "ERROR") { Write-Host "  $line" -ForegroundColor Red }
+            elseif ($line -match "Running command git clone") { Write-Host "  $line" -ForegroundColor Gray }
+        }
+        $pipExit = $LASTEXITCODE; $ErrorActionPreference = $prevEA
+        if ($pipExit -ne 0) { Write-Host "  UYARI: Bazi paketler kurulamadi." -ForegroundColor DarkYellow }
     }
 
     # 2h. Gereksiz dosyaları temizle (boyutu küçült)
@@ -245,17 +319,18 @@ if (-not $SkipPythonSetup) {
     Get-ChildItem $SitePackages -Recurse -Directory -Filter "test" -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -notmatch "unittest" } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    # .dist-info klasörlerindeki büyük dosyalar
+    # .dist-info RECORD dosyalarini sil (bos birakma — Python 3.13 csv.reader ile parse eder,
+    # bos satir [[]] uretir ve make_file() argumansiz cagrisi "missing positional arg" hatasina yol acar)
     Get-ChildItem $SitePackages -Recurse -Filter "RECORD" -ErrorAction SilentlyContinue |
         Where-Object { $_.DirectoryName -match "\.dist-info" } |
-        ForEach-Object { Set-Content $_.FullName -Value "" }
+        Remove-Item -Force -ErrorAction SilentlyContinue
 
     # 2i. _pth ve python313.zip dosyalarini dogrula (embedded Python icin ZORUNLU)
-    # pip veya temizlik adimlari bu dosyalari silebilir — restore et
+    # pip veya temizlik adimlari bu dosyalari silebilir - restore et
     $PthFile = Join-Path $PythonStaging "python${PythonMajorMinor}._pth"
     $StdlibZip = Join-Path $PythonStaging "python${PythonMajorMinor}.zip"
     if (-not (Test-Path $StdlibZip)) {
-        Write-Host "  UYARI: python${PythonMajorMinor}.zip kayip — arsivden geri yukleniyor..." -ForegroundColor DarkYellow
+        Write-Host "  UYARI: python${PythonMajorMinor}.zip kayip - arsivden geri yukleniyor..." -ForegroundColor DarkYellow
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip = [System.IO.Compression.ZipFile]::OpenRead($PythonZipPath)
         $entry = $zip.GetEntry("python${PythonMajorMinor}.zip")
@@ -273,6 +348,31 @@ if (-not $SkipPythonSetup) {
     $PythonSize = [math]::Round(((Get-ChildItem $PythonStaging -Recurse -File |
         Measure-Object Length -Sum).Sum / 1GB), 2)
     Write-Host "  Python ortami hazir: $PythonSize GB" -ForegroundColor Green
+
+    # Python ortamini dogrula — temel importlar calisiyor mu?
+    Write-Host "  Python ortami dogrulaniyor (Flask importu test ediliyor)..." -ForegroundColor Gray
+    $testScript = 'import flask, flask_cors, flask_socketio, numpy, mutagen; print("OK")'
+    $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $testOut = & $PythonExe -c $testScript 2>&1
+    $ErrorActionPreference = $prevEA
+    if ($testOut -match "OK") {
+        Write-Host "  [OK] Flask stack importu basarili." -ForegroundColor Green
+    } else {
+        Write-Host "  UYARI: Flask import testi basarisiz:" -ForegroundColor Red
+        Write-Host "  $testOut" -ForegroundColor Red
+        Write-Host "  Bu ortam hedef makinede calismiyor olabilir!" -ForegroundColor DarkYellow
+    }
+
+    # faster-whisper / ctranslate2 kontrolu (bu paketler en sik sorun cikariyor)
+    $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $ctTest = & $PythonExe -c "import ctranslate2; print('ctranslate2 OK')" 2>&1
+    $ErrorActionPreference = $prevEA
+    if ($ctTest -match "ctranslate2 OK") {
+        Write-Host "  [OK] ctranslate2 (faster-whisper backend) OK." -ForegroundColor Green
+    } else {
+        Write-Host "  UYARI: ctranslate2 import edilemiyor — faster-whisper calismayacak." -ForegroundColor DarkYellow
+        Write-Host "  Hata: $ctTest" -ForegroundColor Gray
+    }
 }
 else {
     Write-Host "[2/5] Python setup ATLANDI (-SkipPythonSetup)" -ForegroundColor DarkGray
@@ -359,6 +459,69 @@ if (-not $SkipModels) {
         Write-Host "  UYARI: download_models.py bulunamadi: $DownloadScript" -ForegroundColor Red
     }
 
+    # ── audio-separator modelleri staging'e kopyala (NSIS'e dahil edilecek) ──
+    Write-Host "  Vocal Separator model dosyalari staging'e hazirlaniyor..." -ForegroundColor Gray
+    $AsSrcDirs = @(
+        # Kullanici modeller klasoru (uygulama ici indirilmis)
+        (Join-Path $env:APPDATA "SubMaker\models\audio-separator"),
+        (Join-Path $env:USERPROFILE "SubMaker\models\audio-separator"),
+        # Proje modeller klasoru (gelistirici ortami)
+        (Join-Path $ProjectRoot "resources\models\audio-separator"),
+        # Mevcut staging (onceki build kalinti)
+        (Join-Path $InstallerDir "staging\models\audio-separator")
+    )
+    $AsModelFiles = @(
+        "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+        "model_bs_roformer_ep_317_sdr_12.9755.yaml",
+        "bs_roformer_instrumental_resurrection_unwa.ckpt",
+        "config_bs_roformer_instrumental_resurrection_unwa.yaml"
+    )
+    $AsStagingDir = Join-Path $InstallerDir "staging\models\audio-separator"
+    Ensure-Dir $AsStagingDir
+
+    $asSrcFound = $null
+    foreach ($d in $AsSrcDirs) {
+        if ((Test-Path $d) -and (Test-Path (Join-Path $d "model_bs_roformer_ep_317_sdr_12.9755.ckpt"))) {
+            $asSrcFound = $d; break
+        }
+    }
+
+    if ($asSrcFound -and $asSrcFound -ne $AsStagingDir) {
+        Write-Host "  Kaynak: $asSrcFound" -ForegroundColor Gray
+        foreach ($f in $AsModelFiles) {
+            $src = Join-Path $asSrcFound $f
+            $dst = Join-Path $AsStagingDir $f
+            if (Test-Path $src) {
+                if (-not (Test-Path $dst) -or (Get-Item $src).Length -ne (Get-Item $dst).Length) {
+                    Copy-Item $src $dst -Force
+                    Write-Host "  Kopyalandi: $f" -ForegroundColor Gray
+                } else {
+                    Write-Host "  Mevcut (es boyut): $f" -ForegroundColor DarkGray
+                }
+            }
+        }
+        Write-Host "  [OK] Vocal Separator modelleri staging'e hazir." -ForegroundColor Green
+    } elseif (Test-Path (Join-Path $AsStagingDir "model_bs_roformer_ep_317_sdr_12.9755.ckpt")) {
+        Write-Host "  [OK] Vocal Separator modelleri staging'de mevcut." -ForegroundColor Green
+    } else {
+        Write-Host "  UYARI: Vocal Separator model dosyalari bulunamadi!" -ForegroundColor DarkYellow
+        Write-Host "  Lutfen once uygulamayi calistirip modelleri indirin, sonra build yapin." -ForegroundColor Gray
+        Write-Host "  Beklenen: %APPDATA%\SubMaker\models\audio-separator\" -ForegroundColor Gray
+    }
+
+    # 7z.exe + 7z.dll kopyala (NSIS installer'ın Python arşivini extract etmesi için)
+    Write-Host "  7-Zip araclari kopyalaniyor..." -ForegroundColor Gray
+    $7zExe = "C:\Program Files\7-Zip\7z.exe"
+    $7zDll = "C:\Program Files\7-Zip\7z.dll"
+    if (Test-Path $7zExe) {
+        Copy-Item $7zExe (Join-Path $ToolsStaging "7z.exe") -Force
+        Write-Host "  7z.exe kopyalandi." -ForegroundColor Green
+    } else { Write-Host "  UYARI: 7z.exe bulunamadi: $7zExe" -ForegroundColor Red }
+    if (Test-Path $7zDll) {
+        Copy-Item $7zDll (Join-Path $ToolsStaging "7z.dll") -Force
+        Write-Host "  7z.dll kopyalandi." -ForegroundColor Green
+    } else { Write-Host "  UYARI: 7z.dll bulunamadi: $7zDll" -ForegroundColor Red }
+
     Write-Host "  Presetler ve araclar hazir (modeller dahil EDILMEDI)." -ForegroundColor Green
     Write-Host "  NOT: Modeller kurulum sonrasi kullanici tarafindan indirilecek." -ForegroundColor Cyan
 }
@@ -402,16 +565,126 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Staging Toplam: $totalGB GB (modeller haric)" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 
-if ($allOk) {
-    Write-Host ""
-    Write-Host "  Staging hazir! Simdi Inno Setup ile derleyin:" -ForegroundColor Green
-    Write-Host "    iscc installer\SubMaker.iss" -ForegroundColor White
-    Write-Host ""
-    Write-Host "  NOT: AI modelleri kuruluma dahil EDILMEMISTIR." -ForegroundColor Cyan
-    Write-Host "  Kullanicilar kurulum sonrasi modelleri indirebilir." -ForegroundColor Cyan
-    Write-Host "  Beklenen installer boyutu: ~$([math]::Round($totalGB * 0.60, 1)) - $([math]::Round($totalGB * 0.75, 1)) GB" -ForegroundColor DarkGray
-}
-else {
+if (-not $allOk) {
     Write-Host ""
     Write-Host "  UYARI: Bazi bilesenler eksik! Yukaridaki hatalari kontrol edin." -ForegroundColor Red
+    Write-Host "  NSIS build atlandi." -ForegroundColor DarkGray
+    exit 1
 }
+
+# ============================================================================
+# ADIM 5a: VC++ Redistributable İndir
+# ============================================================================
+Write-Step "5a" "Visual C++ Redistributable indiriliyor..."
+$VCRedistUrl  = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+$VCRedistDest = Join-Path $InstallerDir "output\vc_redist.x64.exe"
+Ensure-Dir (Join-Path $InstallerDir "output")
+if (-not (Test-Path $VCRedistDest)) {
+    try {
+        Invoke-WebRequest -Uri $VCRedistUrl -OutFile $VCRedistDest
+        $vcSize = [math]::Round((Get-Item $VCRedistDest).Length / 1MB, 1)
+        Write-Host "  [OK] vc_redist.x64.exe indirildi: $vcSize MB" -ForegroundColor Green
+        Write-Host "  NOT: Installer ile ayni klasorde bulunmali." -ForegroundColor Cyan
+    } catch {
+        Write-Host "  UYARI: vc_redist.x64.exe indirilemedi: $_" -ForegroundColor DarkYellow
+        Write-Host "  El ile indirin: $VCRedistUrl" -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  vc_redist.x64.exe zaten mevcut." -ForegroundColor DarkGray
+}
+
+# ============================================================================
+# ADIM 5b: Python Runtime 7z Arşivi Oluştur (sadece FULL modda)
+# ============================================================================
+if (-not $SkipBuild -and -not $MinimalPython) {
+    Write-Host ""
+    Write-Step "5b" "Python runtime arsivi olusturuluyor (SubMaker_Python_Runtime.7z)..."
+
+    $7zipExe = "C:\Program Files\7-Zip\7z.exe"
+    if (-not (Test-Path $7zipExe)) {
+        Write-Host "  UYARI: 7-Zip bulunamadi ($7zipExe). Python arsivi olusturulamadi." -ForegroundColor Red
+        Write-Host "  7-Zip'i kurun: https://www.7-zip.org/" -ForegroundColor Gray
+    } else {
+        $PythonStagingPath = Join-Path $StagingDir "python"
+        $PythonArchiveDest = Join-Path $InstallerDir "output\SubMaker_Python_Runtime.7z"
+        Ensure-Dir (Join-Path $InstallerDir "output")
+
+        if (Test-Path $PythonArchiveDest) {
+            Write-Host "  Mevcut arsiv siliniyor..." -ForegroundColor Gray
+            Remove-Item $PythonArchiveDest -Force
+        }
+
+        Write-Host "  7z ile sikistiriliyor (mx=5, bu birkas dakika surebilir)..." -ForegroundColor Gray
+        $archiveStart = Get-Date
+        & $7zipExe a -mx=5 -mmt=auto $PythonArchiveDest "$PythonStagingPath\*"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  HATA: Python arsivi olusturulamadi." -ForegroundColor Red
+        } else {
+            $archiveSec = [int]((Get-Date) - $archiveStart).TotalSeconds
+            $archiveGB  = [math]::Round((Get-Item $PythonArchiveDest).Length / 1GB, 2)
+            Write-Host "  [OK] SubMaker_Python_Runtime.7z olusturuldu: $archiveGB GB  (${archiveSec}s)" -ForegroundColor Green
+        }
+    }
+} elseif ($MinimalPython -and -not $SkipBuild) {
+    Write-Host ""
+    Write-Host "[5b] Python 7z arsivi ATLANDI (Minimal Python modu - Python NSIS'e gomulecek)" -ForegroundColor DarkGray
+}
+
+# ============================================================================
+# ADIM 5c: NSIS ile Installer Derle
+# ============================================================================
+if (-not $SkipBuild) {
+    Write-Host ""
+    Write-Step "5b" "NSIS installer derleniyor..."
+
+    # makensis'i bul
+    $MakeNsis = Get-Command makensis -ErrorAction SilentlyContinue
+    if (-not $MakeNsis) {
+        # Yaygın kurulum yollarını dene
+        $nsisCandidates = @(
+            "$env:ProgramFiles\NSIS\makensis.exe",
+            "$env:ProgramFiles(x86)\NSIS\makensis.exe",
+            "C:\NSIS\makensis.exe"
+        )
+        foreach ($c in $nsisCandidates) {
+            if (Test-Path $c) { $MakeNsis = $c; break }
+        }
+    } else {
+        $MakeNsis = $MakeNsis.Source
+    }
+
+    if (-not $MakeNsis) {
+        Write-Host "  UYARI: makensis bulunamadi. NSIS'i kurun ve PATH'e ekleyin." -ForegroundColor DarkYellow
+        Write-Host "  https://nsis.sourceforge.io/Download" -ForegroundColor Gray
+        Write-Host "  Manuel build:  makensis SubMaker.nsi" -ForegroundColor Gray
+    } else {
+        Push-Location $InstallerDir
+        try {
+            $BuildStart = Get-Date
+            if ($MinimalPython) {
+                Write-Host "  Minimal Python modu: /DMINIMAL_PYTHON flag'i ile derleniyor..." -ForegroundColor Cyan
+                & $MakeNsis /DMINIMAL_PYTHON "SubMaker.nsi"
+            } else {
+                & $MakeNsis "SubMaker.nsi"
+            }
+            if ($LASTEXITCODE -ne 0) { throw "makensis basarisiz (exit $LASTEXITCODE)" }
+            $BuildSec = [int]((Get-Date) - $BuildStart).TotalSeconds
+            Write-Host ""
+            $OutExe = Get-ChildItem (Join-Path $InstallerDir "output") -Filter "SubMaker_Setup_*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            Write-Host "  [OK] Installer olusturuldu: output\$($OutExe.Name)  (${BuildSec}s)" -ForegroundColor Green
+        } catch {
+            Write-Host "  HATA: $_" -ForegroundColor Red
+        } finally {
+            Pop-Location
+        }
+    }
+} else {
+    Write-Host ""
+    Write-Host "[5b] NSIS build ATLANDI (-SkipBuild)" -ForegroundColor DarkGray
+    Write-Host "  Manuel build icin: cd installer ; makensis SubMaker.nsi" -ForegroundColor Gray
+}
+
+Write-Host ""
+Write-Host "  NOT: AI modelleri installer'a dahil edilmemistir." -ForegroundColor Cyan
+Write-Host "  Kullanicilar kurulum sonrasi uygulamadan veya download_models.py ile indirebilir." -ForegroundColor Cyan
+Write-Host "  Beklenen installer boyutu: ~$([math]::Round($totalGB * 0.60, 1)) - $([math]::Round($totalGB * 0.75, 1)) GB" -ForegroundColor DarkGray

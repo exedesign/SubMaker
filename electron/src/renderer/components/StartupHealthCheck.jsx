@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { streamJsonEvents } from '../services/electronTransport';
 
 /* ── Model display order & icons ───────────────────────────────────── */
 const CHECK_ITEMS = [
@@ -18,6 +19,7 @@ const CHECK_ITEMS = [
 ];
 
 const FIRST_RUN_KEY = 'submaker-startup-check-done';
+const API_BASE = window.API_URL || 'http://localhost:5000/api';
 
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return '0 B';
@@ -29,6 +31,25 @@ function formatBytes(bytes) {
 
 function StartupHealthCheck() {
   const { systemHealth, runSystemHealthCheck, setStartupCheckComplete, backendStatus, downloadModels, modelDownloading, modelProgress } = useAppStore();
+
+  // ── Phase state: 'packages' first, then 'health' ─────────────────
+  const [phase, setPhase] = useState('packages'); // 'packages' | 'health'
+  const [pkgState, setPkgState] = useState({
+    loading: false,          // fetching /packages/check
+    missing: [],
+    installed: [],
+    warnings: {},            // pkg_name -> warning string (e.g. CPU-only torch)
+    installing: false,
+    log: [],                 // pip output lines (capped at 300)
+    done: false,
+    success: null,
+    restartRequired: false,  // true when torch was installed (CUDA activation)
+    error: null,
+  });
+  const pkgCheckDoneRef = useRef(false);
+  const logEndRef = useRef(null);
+
+  // ── Existing health-check state ───────────────────────────────────
   const [itemStates, setItemStates] = useState({}); // key -> 'waiting' | 'checking' | 'ok' | 'fail'
   const [progress, setProgress] = useState({});     // key -> 0..100
   const [fadeOut, setFadeOut] = useState(false);
@@ -52,14 +73,105 @@ function StartupHealthCheck() {
     setProgress(initialProgress);
   }, []);
 
-  // Trigger health check when backend comes online
-  useEffect(() => {
-    if (backendStatus === 'online' && !hasRunRef.current) {
+  // ── Transition from packages phase to health phase ────────────────
+  const proceedToHealthPhase = useCallback(() => {
+    setPhase('health');
+    if (!hasRunRef.current) {
       hasRunRef.current = true;
-      // Use quick (cached) for subsequent runs
       runSystemHealthCheck(!isFirstRun);
     }
-  }, [backendStatus, runSystemHealthCheck, isFirstRun]);
+  }, [runSystemHealthCheck, isFirstRun]);
+
+  // ── Check packages when backend comes online ──────────────────────
+  useEffect(() => {
+    if (backendStatus !== 'online' || pkgCheckDoneRef.current) return;
+    pkgCheckDoneRef.current = true;
+
+    setPkgState(s => ({ ...s, loading: true }));
+    fetch(`${API_BASE}/packages/check`)
+      .then(r => r.json())
+      .then(data => {
+        setPkgState(s => ({
+          ...s,
+          loading: false,
+          missing: data.missing || [],
+          installed: data.installed || [],
+          warnings: data.warnings || {},
+        }));
+        if (!data.missing || data.missing.length === 0) {
+          // All packages present — skip straight to health check
+          proceedToHealthPhase();
+        }
+      })
+      .catch(() => {
+        // If check fails (e.g. endpoint not found), skip to health check
+        setPkgState(s => ({ ...s, loading: false }));
+        proceedToHealthPhase();
+      });
+  }, [backendStatus, proceedToHealthPhase]);
+
+  // ── Auto-scroll pip log ───────────────────────────────────────────
+  useEffect(() => {
+    if (logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [pkgState.log]);
+
+  // ── Restart application (after package install) ────────────────────
+  const handleRestartApp = useCallback(() => {
+    // First signal backend to restart itself, then Electron will relaunch
+    fetch(`${API_BASE}/packages/restart`, { method: 'POST' }).catch(() => {});
+    // Ask Electron to relaunch after a short delay
+    if (window.electronAPI?.relaunchApp) {
+      setTimeout(() => window.electronAPI.relaunchApp(), 800);
+    } else {
+      // Fallback: reload the window
+      setTimeout(() => window.location.reload(), 800);
+    }
+  }, []);
+
+  // ── Install missing packages (SSE stream) ─────────────────────────
+  const handleInstallPackages = useCallback(async () => {
+    setPkgState(s => ({ ...s, installing: true, log: [], done: false, error: null, restartRequired: false }));
+    try {
+      await streamJsonEvents(
+        `${API_BASE}/packages/install`,
+        { packages: pkgState.missing },
+        (event) => {
+          if (event.type === '_rc') return; // internal exit code marker
+          if (event.type === 'output' || event.type === 'status' || event.type === 'command') {
+            setPkgState(s => ({
+              ...s,
+              log: [...s.log.slice(-299), event.message],
+            }));
+          } else if (event.type === 'done') {
+            setPkgState(s => ({
+              ...s,
+              installing: false,
+              done: true,
+              success: event.success,
+              restartRequired: event.restart_required || false,
+              log: [...s.log.slice(-299), event.message],
+            }));
+          } else if (event.type === 'error') {
+            setPkgState(s => ({
+              ...s,
+              log: [...s.log.slice(-299), `⚠ ${event.message}`],
+            }));
+          }
+        },
+      );
+    } catch (err) {
+      setPkgState(s => ({
+        ...s,
+        installing: false,
+        done: true,
+        success: false,
+        error: err.message,
+        log: [...s.log.slice(-299), `Error: ${err.message}`],
+      }));
+    }
+  }, [pkgState.missing]);
 
   // Animate items sequentially once health data arrives
   const animateSequence = useCallback(async (healthData) => {
@@ -200,15 +312,105 @@ function StartupHealthCheck() {
             </svg>
             <span className="startup-title">SubMaker</span>
           </div>
+          {/* Close/skip button — always visible */}
+          <button
+            className="startup-close-btn"
+            onClick={handleContinue}
+            title="Skip & Continue"
+          >
+            ✕
+          </button>
           <div className="startup-subtitle">
-            {!systemHealth ? 'Connecting to backend...' :
+            {phase === 'packages' && pkgState.loading ? 'Checking Python packages...' :
+             phase === 'packages' && pkgState.installing ? 'Installing missing packages...' :
+             phase === 'packages' && pkgState.done && pkgState.success ? 'Packages ready' :
+             phase === 'packages' && pkgState.missing.length > 0 ? 'Missing packages detected' :
+             !systemHealth ? 'Connecting to backend...' :
              anyDownloading ? 'Downloading models...' :
              showDownloadUI && failCount > 0 ? 'Some models are missing' :
              allDone ? 'System check complete' : 'Verifying system components...'}
           </div>
         </div>
 
-        {/* Check list */}
+        {/* ── Packages phase ─────────────────────────────────────── */}
+        {phase === 'packages' && (
+          <div className="startup-pkg-phase">
+            {pkgState.loading && (
+              <div className="startup-pkg-loading">
+                <span className="startup-icon-spin" />
+                <span>Checking Python packages...</span>
+              </div>
+            )}
+
+            {!pkgState.loading && !pkgState.installing && !pkgState.done && pkgState.missing.length > 0 && (
+              <>
+                <div className="startup-pkg-list">
+                  {pkgState.missing.map(pkg => (
+                    <div key={pkg} className="startup-pkg-item">
+                      <span className="startup-pkg-icon">📦</span>
+                      <span className="startup-pkg-name">{pkg}</span>
+                      <span className="startup-pkg-badge">missing</span>
+                      {pkgState.warnings[pkg] && (
+                        <span className="startup-pkg-warning" title={pkgState.warnings[pkg]}>⚠ CPU only</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="startup-pkg-actions">
+                  <button className="startup-btn startup-btn--primary" onClick={handleInstallPackages}>
+                    Install {pkgState.missing.length} missing package{pkgState.missing.length !== 1 ? 's' : ''}
+                  </button>
+                  <button className="startup-btn startup-btn--secondary" onClick={proceedToHealthPhase}>
+                    Skip
+                  </button>
+                </div>
+              </>
+            )}
+
+            {(pkgState.installing || (pkgState.done && pkgState.log.length > 0)) && (
+              <div className="startup-pkg-terminal">
+                {pkgState.log.map((line, i) => (
+                  <div key={i} className="startup-pkg-log-line">{line}</div>
+                ))}
+                <div ref={logEndRef} />
+              </div>
+            )}
+
+            {pkgState.done && (
+              <div className={`startup-pkg-result ${pkgState.success ? 'startup-pkg-result--ok' : 'startup-pkg-result--fail'}`}>
+                {pkgState.success
+                  ? '✓ All packages installed successfully'
+                  : `⚠ Installation failed${pkgState.error ? ': ' + pkgState.error : ''}`}
+              </div>
+            )}
+
+            {pkgState.done && (
+              <div className="startup-pkg-actions">
+                {pkgState.success && pkgState.restartRequired && (
+                  <button className="startup-btn startup-btn--primary" onClick={handleRestartApp}>
+                    🔄 Restart App (Required for CUDA)
+                  </button>
+                )}
+                {!pkgState.success && (
+                  <button className="startup-btn startup-btn--primary" onClick={handleInstallPackages}>
+                    Retry
+                  </button>
+                )}
+                {(!pkgState.restartRequired) && (
+                  <button
+                    className={`startup-btn ${pkgState.success ? 'startup-btn--primary' : 'startup-btn--secondary'}`}
+                    onClick={proceedToHealthPhase}
+                  >
+                    {pkgState.success ? 'Continue' : 'Skip & Continue'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Health check phase ───────────────────────────────────── */}
+        {phase === 'health' && <>
         <div className="startup-checks">
           {CHECK_ITEMS.map((item) => {
             const state = itemStates[item.key] || 'waiting';
@@ -218,6 +420,7 @@ function StartupHealthCheck() {
             const dlPercent = dlProgress?.progress || 0;
             const dlBytes = dlProgress?.downloaded_bytes || 0;
             const dlTotal = dlProgress?.total_bytes || 0;
+            const dlError = dlProgress?.status === 'error' ? (dlProgress.error || 'Download failed') : null;
 
             return (
               <div key={item.key} className={`startup-check-row startup-check-row--${isDownloading ? 'checking' : state}`}>
@@ -233,6 +436,11 @@ function StartupHealthCheck() {
                     {isDownloading && dlTotal > 0 && (
                       <span className="startup-download-size">
                         {formatBytes(dlBytes)} / {formatBytes(dlTotal)}
+                      </span>
+                    )}
+                    {!isDownloading && dlError && (
+                      <span className="startup-download-badge startup-download-badge--error" title={dlError}>
+                        failed
                       </span>
                     )}
                   </div>
@@ -341,6 +549,7 @@ function StartupHealthCheck() {
             </div>
           </div>
         )}
+        </>}
       </div>
     </div>
   );

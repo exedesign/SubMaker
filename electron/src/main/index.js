@@ -422,7 +422,10 @@ function startPythonBackend() {
         diagLog(`Python stderr output:\n${stderrBuffer.slice(-2000)}`);
       }
       if (code !== null && code !== 0) {
-        if (stderrBuffer.includes('ModuleNotFoundError') || stderrBuffer.includes('No module named')) {
+        // Only show "missing package" dialog for real import errors (Traceback lines),
+        // not for logging WARNING messages like "GPU check failed: No module named 'torch'"
+        const hasTraceback = stderrBuffer.includes('Traceback') || stderrBuffer.includes('ImportError');
+        if (hasTraceback && (stderrBuffer.includes('ModuleNotFoundError') || stderrBuffer.includes('No module named'))) {
           const missingModule = stderrBuffer.match(/No module named '([^']+)'/)?.[1] || 'unknown';
           dialog.showErrorBox('SubMaker - Missing Python Package',
             `Python package '${missingModule}' is not installed.\n\nDiagnostic log: ${DIAG_LOG_PATH}\n\nFull error:\n${stderrBuffer.slice(-500)}`);
@@ -813,6 +816,14 @@ ipcMain.handle('backend:restart', () => {
   stopPythonBackend();
   setTimeout(startPythonBackend, 1000);
   return true;
+});
+
+// Relaunch entire app (used after package installation to reload with new packages)
+ipcMain.handle('app:relaunch', () => {
+  diagLog('[MAIN] App relaunch requested (post-package-install)');
+  stopPythonBackend();
+  app.relaunch();
+  app.exit(0);
 });
 
 // =============================================================================

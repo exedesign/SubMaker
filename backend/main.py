@@ -344,7 +344,7 @@ def main():
     """)
     
     if USE_SOCKETIO and socketio:
-        socketio.run(app, host=SERVER_HOST, port=SERVER_PORT, debug=DEBUG)
+        socketio.run(app, host=SERVER_HOST, port=SERVER_PORT, debug=DEBUG, allow_unsafe_werkzeug=True)
     else:
         app.run(host=SERVER_HOST, port=SERVER_PORT, debug=DEBUG)
 

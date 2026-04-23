@@ -1,4 +1,4 @@
-﻿"""
+"""
 Vocal Isolation Service â€” dual specialized BS-Roformer models
 
 Engine:
@@ -78,9 +78,11 @@ def _verify_gpu_setup():
                 f"cuDNN {info['cudnn_version']} (enabled={info['cudnn']})"
             )
         else:
-            logger.warning("CUDA not available â€” vocal separation will use CPU (slower)")
+            logger.debug("CUDA not available â€” vocal separation will use CPU (slower)")
+    except ImportError:
+        logger.debug("torch not installed - GPU check skipped (will be installed on first run)")
     except Exception as e:
-        logger.warning(f"GPU check failed: {e}")
+        logger.debug(f"GPU check skipped: {e}")
     try:
         import onnxruntime
         providers = onnxruntime.get_available_providers()

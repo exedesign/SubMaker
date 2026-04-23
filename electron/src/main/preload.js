@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Backend control
   getBackendStatus: () => ipcRenderer.invoke('backend:status'),
   restartBackend: () => ipcRenderer.invoke('backend:restart'),
+  relaunchApp: () => ipcRenderer.invoke('app:relaunch'),
 
   // GPU / SwiftShader status
   getGpuStatus: () => ipcRenderer.invoke('gpu:status'),

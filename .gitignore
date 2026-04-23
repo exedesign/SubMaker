@@ -48,6 +48,6 @@ logs/
 
 # Installer build artifacts (large binaries)
 installer/*
-!installer/SubMaker.iss
+!installer/SubMaker.nsi
 !installer/download_models.py
 !installer/prepare_build.ps1

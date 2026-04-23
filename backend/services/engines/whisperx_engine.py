@@ -64,9 +64,20 @@ class FasterWhisperEngine:
     # ------------------------------------------------------------------
     def is_available(self) -> bool:
         try:
+            # On Windows, pre-register torch's DLL directory so ctranslate2
+            # can find CUDA DLLs (torch_cuda.dll, cublas64_12.dll, etc.)
+            if os.name == "nt":
+                try:
+                    import torch as _torch
+                    torch_lib = os.path.join(os.path.dirname(_torch.__file__), "lib")
+                    if os.path.isdir(torch_lib):
+                        os.add_dll_directory(torch_lib)
+                except Exception:
+                    pass  # torch not installed — ctranslate2 will use its own bundled CUDA DLLs
             import faster_whisper  # noqa: F401
             return True
-        except (ImportError, OSError):
+        except (ImportError, OSError) as e:
+            logger.warning(f"faster-whisper check failed ({type(e).__name__}): {e}")
             return False
 
     # ------------------------------------------------------------------

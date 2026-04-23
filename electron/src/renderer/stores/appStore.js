@@ -171,6 +171,7 @@ export const useAppStore = create((set, get) => ({
     dualSubtitleEnabled: true, // Module toggle in settings - enabled by default
     seekStep: 5, // Arrow key seek step in seconds
     cleanCacheOnStartup: true, // Clear temp/cache files when app starts
+    vizPreviewQuality: 'auto', // 'auto' | 'native' | 'high' | 'medium' | 'performance'
 
     // Audio Visualization Settings - Simplified and enabled by default
     audioVisualization: {
@@ -413,6 +414,15 @@ export const useAppStore = create((set, get) => ({
   modelDownloading: {},      // { modelKey: true/false }
   modelProgress: {},         // { modelKey: { progress: 0-100, downloaded_bytes, total_bytes, status } }
   startupCheckComplete: false, // true after startup overlay finishes
+
+  // Python packages (for Settings > System > Python Packages section)
+  pythonPackages: null,          // { missing: [], installed: [], total: number }
+  packagesLoading: false,
+  packagesInstalling: false,
+  packagesInstallLog: [],        // pip output lines (capped at 300)
+  packagesInstallDone: false,    // true after install finished
+  packagesInstallSuccess: null,  // boolean | null
+  packagesRestartRequired: false,// true after torch installed
   
   // ==========================================================================
   // Actions
@@ -446,6 +456,73 @@ export const useAppStore = create((set, get) => ({
   },
 
   setStartupCheckComplete: () => set({ startupCheckComplete: true }),
+
+  // Check which Python packages are missing (Settings > System > Python Packages)
+  checkPythonPackages: async () => {
+    set({ packagesLoading: true });
+    try {
+      const response = await api.get('/packages/check');
+      set({ pythonPackages: response.data, packagesLoading: false });
+      return response.data;
+    } catch (error) {
+      set({ packagesLoading: false });
+      return null;
+    }
+  },
+
+  // Install Python packages via pip (streams output back as SSE)
+  installPythonPackages: async (packageNames) => {
+    if (!packageNames || packageNames.length === 0) return;
+    set({
+      packagesInstalling: true,
+      packagesInstallLog: [],
+      packagesInstallDone: false,
+      packagesInstallSuccess: null,
+      packagesRestartRequired: false,
+    });
+    try {
+      await streamJsonEvents(
+        `${API_URL}/packages/install`,
+        { packages: packageNames },
+        (event) => {
+          if (event.type === '_rc') return;
+          if (event.type === 'output' || event.type === 'status' || event.type === 'command') {
+            const prev = get().packagesInstallLog;
+            set({ packagesInstallLog: [...prev.slice(-299), event.message] });
+          } else if (event.type === 'done') {
+            const prev = get().packagesInstallLog;
+            set({
+              packagesInstalling: false,
+              packagesInstallDone: true,
+              packagesInstallSuccess: !!event.success,
+              packagesRestartRequired: !!event.restart_required,
+              packagesInstallLog: [...prev.slice(-299), event.message || (event.success ? 'Done.' : 'Failed.')],
+            });
+          } else if (event.type === 'error') {
+            const prev = get().packagesInstallLog;
+            set({ packagesInstallLog: [...prev.slice(-299), `⚠ ${event.message}`] });
+          }
+        },
+      );
+      // Re-check package state after install
+      get().checkPythonPackages();
+    } catch (err) {
+      const prev = get().packagesInstallLog;
+      set({
+        packagesInstalling: false,
+        packagesInstallDone: true,
+        packagesInstallSuccess: false,
+        packagesInstallLog: [...prev.slice(-299), `Error: ${err.message}`],
+      });
+    }
+  },
+
+  resetPackagesInstallLog: () => set({
+    packagesInstallLog: [],
+    packagesInstallDone: false,
+    packagesInstallSuccess: null,
+    packagesRestartRequired: false,
+  }),
 
   // Download missing models
   downloadModels: async (modelKeys) => {
@@ -487,8 +564,12 @@ export const useAppStore = create((set, get) => ({
       }, 1500);
     } catch (error) {
       const cleared = { ...get().modelDownloading };
-      modelKeys.forEach(k => delete cleared[k]);
-      set({ modelDownloading: cleared });
+      const failedProgress = { ...get().modelProgress };
+      modelKeys.forEach(k => {
+        delete cleared[k];
+        failedProgress[k] = { progress: 0, status: 'error', error: error?.message || 'Download failed' };
+      });
+      set({ modelDownloading: cleared, modelProgress: failedProgress });
     }
   },
   

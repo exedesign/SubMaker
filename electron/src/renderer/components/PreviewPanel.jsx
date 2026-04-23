@@ -632,6 +632,32 @@ function PreviewPanel() {
   const { width: previewWidth, height: previewHeight, scaleFactor } = previewDimensions;
   const { width: fsWidth, height: fsHeight, scaleFactor: fsScaleFactor } = fullscreenDimensions;
 
+  // Visualizer render scale — lower resolution rendered by WebGL, CSS-upscaled to fill display
+  // This is the main performance lever for 4K / second-screen mode
+  const { vizRenderScale, vizThrottleFps } = useMemo(() => {
+    const quality = settings.vizPreviewQuality ?? 'auto';
+    if (quality === 'native') return { vizRenderScale: 1.0, vizThrottleFps: false };
+
+    // Use fullscreen dims when fullscreen, preview dims otherwise
+    const w = isFullscreen ? fsWidth : previewWidth;
+    const h = isFullscreen ? fsHeight : previewHeight;
+    const mpx = (w * h) / 1e6; // megapixels
+
+    let scale;
+    if (quality === 'auto') {
+      // Auto: scale down only when the render area exceeds 1080p
+      if (mpx <= 2.1)      scale = 1.0;   // ≤ ~1080p: native
+      else if (mpx <= 4.0) scale = 0.75;  // ≤ ~1440p
+      else if (mpx <= 8.5) scale = 0.5;   // ≤ 4K
+      else                 scale = 0.33;  // > 4K
+    } else {
+      scale = { high: 0.75, medium: 0.5, performance: 0.25 }[quality] ?? 1.0;
+    }
+
+    const throttle = quality === 'medium' || quality === 'performance';
+    return { vizRenderScale: scale, vizThrottleFps: throttle };
+  }, [settings.vizPreviewQuality, isFullscreen, fsWidth, fsHeight, previewWidth, previewHeight]);
+
   // Margin guide lines — flash red guides when margin values change
   const [marginGuideKey, setMarginGuideKey] = useState(0);
   const marginGuideTimer = useRef(null);
@@ -871,6 +897,7 @@ function PreviewPanel() {
         presetName: visualizer.presetName,
         opacity: visualizer.opacity,
         sensitivity: visualizer.sensitivity,
+        previewQuality: settings.vizPreviewQuality ?? 'auto',
       },
       logos: (logos || []).filter(l => l.enabled && l.imageData).map(l => ({
         id: l.id,
@@ -884,7 +911,7 @@ function PreviewPanel() {
     channel.postMessage(state);
     try { localStorage.setItem('submaker-preview-state', JSON.stringify(state)); } catch {}
     return () => channel.close();
-  }, [displayText, style, background, animation, animationProgress.progress, formatInfo, settings?.dualSubtitleEnabled, activeSecondarySubtitle?.translatedText, secondarySubtitle?.style, visualizer.enabled, visualizer.presetName, visualizer.opacity, visualizer.sensitivity, logos]);
+  }, [displayText, style, background, animation, animationProgress.progress, formatInfo, settings?.dualSubtitleEnabled, activeSecondarySubtitle?.translatedText, secondarySubtitle?.style, visualizer.enabled, visualizer.presetName, visualizer.opacity, visualizer.sensitivity, settings.vizPreviewQuality, logos]);
 
   // When preview window asks for immediate state (on mount), broadcast right away
   useEffect(() => {
@@ -1018,6 +1045,8 @@ function PreviewPanel() {
               audioElement={audioElementForViz}
               presetName={visualizer.presetName}
               sensitivity={visualizer.sensitivity}
+              renderScale={vizRenderScale}
+              throttleFps={vizThrottleFps}
             />
           </div>
         )}
@@ -1269,6 +1298,8 @@ function PreviewPanel() {
                 audioElement={audioElementForViz}
                 presetName={visualizer.presetName}
                 sensitivity={visualizer.sensitivity}
+                renderScale={vizRenderScale}
+                throttleFps={vizThrottleFps}
               />
             </div>
           )}

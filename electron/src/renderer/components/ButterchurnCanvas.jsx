@@ -102,6 +102,11 @@ let singletonAnimFrame = null;
 let singletonAudioConnected = null;
 let _singletonContextLost = false;
 
+// ── Render quality controls (module-level so singleton render loop can read them) ──
+let _renderScale = 1.0;   // 0.25 – 1.0: internal canvas resolution multiplier
+let _fpsThrottle = false;  // true → render at ~30fps instead of 60fps
+let _frameCount = 0;
+
 // ── Global WebGL error suppression ──────────────────────────────────
 // Butterchurn preset shaders produce harmless WebGL warnings/errors
 // (INVALID_OPERATION, program not linked/valid, getAttribLocation, getUniformLocation).
@@ -182,14 +187,24 @@ export function destroyPreviewViz() {
   console.log('Butterchurn: preview singleton destroyed (pre-export cleanup)');
 }
 
-function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivity = 1.0 }) {
+function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivity = 1.0, renderScale = 1.0, throttleFps = false }) {
   const canvasRef = useRef(null);
   const mountedRef = useRef(true);
   const initAttemptRef = useRef(0);
   const retryTimerRef = useRef(null);
 
+  // Keep module-level quality vars in sync with props
+  useEffect(() => {
+    _renderScale = Math.max(0.1, Math.min(1.0, renderScale));
+    _fpsThrottle = throttleFps;
+  }, [renderScale, throttleFps]);
+
   // Core init function — creates or reconnects the visualizer
   const initVisualizer = useCallback(async (canvas, audioEl, targetWidth, targetHeight, preset) => {
+    // Apply render scale — Butterchurn renders at lower resolution; CSS scales it up
+    const scale = Math.max(0.1, Math.min(1.0, _renderScale));
+    const renderW = Math.max(64, Math.round(targetWidth * scale));
+    const renderH = Math.max(64, Math.round(targetHeight * scale));
     try {
       const butterchurn = await loadButterchurn();
       const keys = await loadPresetKeys();
@@ -219,7 +234,9 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
 
       // Re-use existing visualizer if same canvas
       if (singletonViz && singletonCanvas === canvas) {
-        singletonViz.setRendererSize(targetWidth, targetHeight);
+        singletonViz.setRendererSize(renderW, renderH);
+        canvas.width = renderW;
+        canvas.height = renderH;
         // Reconnect audio if element changed
         if (analyser && singletonAudioConnected !== audioEl) {
           try {
@@ -247,10 +264,15 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
       // Enable persistent WebGL error filter — stays active while visualizer is alive
       enableWebGLFilter();
 
+      // Set canvas pixel dimensions to the scaled-down render size
+      // CSS (100%/100%) will upscale it visually — GPU bilinear for free
+      canvas.width = renderW;
+      canvas.height = renderH;
+
       // Let butterchurn create and manage its own WebGL context
       const viz = butterchurn.createVisualizer(ctx, canvas, {
-        width: targetWidth,
-        height: targetHeight,
+        width: renderW,
+        height: renderH,
         pixelRatio: 1,
         textureRatio: 1,
       });
@@ -316,11 +338,18 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
   // Render loop with error recovery
   function startRenderLoop() {
     stopRenderLoop();
+    _frameCount = 0;
 
     function renderLoop() {
       if (!mountedRef.current) return;
       // Skip rendering if context is lost — avoids flooding console with WebGL errors
       if (_singletonContextLost) {
+        singletonAnimFrame = requestAnimationFrame(renderLoop);
+        return;
+      }
+      // FPS throttle: skip odd frames to target ~30fps
+      _frameCount++;
+      if (_fpsThrottle && (_frameCount & 1) === 1) {
         singletonAnimFrame = requestAnimationFrame(renderLoop);
         return;
       }
@@ -412,12 +441,31 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
     };
   }, [audioElement]);
 
-  // Handle resize
+  // Handle resize — also re-applies render scale
   useEffect(() => {
     if (singletonViz && width && height) {
-      singletonViz.setRendererSize(width, height);
+      const scale = Math.max(0.1, Math.min(1.0, _renderScale));
+      const renderW = Math.max(64, Math.round(width * scale));
+      const renderH = Math.max(64, Math.round(height * scale));
+      if (singletonCanvas) {
+        singletonCanvas.width = renderW;
+        singletonCanvas.height = renderH;
+      }
+      singletonViz.setRendererSize(renderW, renderH);
     }
   }, [width, height]);
+
+  // Apply quality changes on-the-fly without remount
+  useEffect(() => {
+    if (singletonViz && singletonCanvas && width && height) {
+      const scale = Math.max(0.1, Math.min(1.0, renderScale));
+      const renderW = Math.max(64, Math.round(width * scale));
+      const renderH = Math.max(64, Math.round(height * scale));
+      singletonCanvas.width = renderW;
+      singletonCanvas.height = renderH;
+      singletonViz.setRendererSize(renderW, renderH);
+    }
+  }, [renderScale, width, height]);
 
   // Handle preset changes
   useEffect(() => {
@@ -437,11 +485,14 @@ function ButterchurnCanvas({ width, height, audioElement, presetName, sensitivit
     changePreset();
   }, [presetName]);
 
+  const renderW = Math.max(64, Math.round((width || 512) * Math.max(0.1, Math.min(1.0, renderScale))));
+  const renderH = Math.max(64, Math.round((height || 512) * Math.max(0.1, Math.min(1.0, renderScale))));
+
   return (
     <canvas
       ref={canvasRef}
-      width={width || 512}
-      height={height || 512}
+      width={renderW}
+      height={renderH}
       style={{
         width: '100%',
         height: '100%',

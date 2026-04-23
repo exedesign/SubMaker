@@ -232,6 +232,23 @@ export default function PreviewScreenOutput() {
   const frameH = fmtH * scale;
   const sf = scale;
 
+  // Visualizer render scale — same logic as PreviewPanel
+  const { vizRenderScale, vizThrottleFps } = useMemo(() => {
+    const quality = state?.visualizer?.previewQuality ?? 'auto';
+    if (quality === 'native') return { vizRenderScale: 1.0, vizThrottleFps: false };
+    const mpx = (frameW * frameH) / 1e6;
+    let sc;
+    if (quality === 'auto') {
+      if (mpx <= 2.1)      sc = 1.0;
+      else if (mpx <= 4.0) sc = 0.75;
+      else if (mpx <= 8.5) sc = 0.5;
+      else                 sc = 0.33;
+    } else {
+      sc = { high: 0.75, medium: 0.5, performance: 0.25 }[quality] ?? 1.0;
+    }
+    return { vizRenderScale: sc, vizThrottleFps: quality === 'medium' || quality === 'performance' };
+  }, [state?.visualizer?.previewQuality, frameW, frameH]);
+
   const displayText = state?.displayText || null;
 
   const subtitleStyle = sty ? {
@@ -320,6 +337,8 @@ export default function PreviewScreenOutput() {
                 audioElement={null}
                 presetName={state.visualizer.presetName}
                 sensitivity={state.visualizer.sensitivity ?? 1.0}
+                renderScale={vizRenderScale}
+                throttleFps={vizThrottleFps}
               />
             </div>
           )}

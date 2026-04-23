@@ -116,6 +116,14 @@ body.dragging-preview * {
 .header-logo svg {
   width: 24px;
   height: 24px;
+  color: var(--accent-primary);
+}
+
+/* about-logo-img: used by AppLogo inside the about modal body */
+.about-logo-img {
+  display: block;
+  margin: 0 auto 10px;
+  color: var(--accent-primary);
 }
 
 .header-source-btn {

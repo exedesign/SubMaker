@@ -3232,6 +3232,7 @@ def system_health_check():
         "python": {"ok": True, "version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"},
         "ffmpeg": {"ok": False, "path": None},
         "models": {},
+        "models_dir": str(MODELS_DIR),
         "summary": {
             "total": len(_HEALTH_MODELS),
             "installed": 0,
@@ -3377,34 +3378,38 @@ def _do_download(models_dir, key, info):
     target_dir.mkdir(parents=True, exist_ok=True)
 
     if key == "audio-separator":
-        # Download model files directly from known URLs (more reliable than Separator.load_model)
-        import requests
-        download_urls = info.get("download_urls", {})
-        if download_urls:
+        # Prefer the audio-separator library's own downloader (handles redirects, retries, CDN).
+        # Fall back to raw requests.get() if the library is not yet installed.
+        try:
+            from audio_separator.separator import Separator
+            for model_file in info["check_files"]:
+                dest = target_dir / model_file
+                if dest.exists() and dest.stat().st_size > 0:
+                    logger.info(f"Skipping {model_file} — already present")
+                    continue
+                logger.info(f"Downloading {model_file} via audio-separator library")
+                sep = Separator(output_dir=str(target_dir), model_file_dir=str(target_dir))
+                sep.load_model(model_filename=model_file)
+                del sep
+                logger.info(f"Downloaded {model_file}: {dest.stat().st_size} bytes")
+        except ImportError:
+            # audio-separator not installed — fall back to direct URL downloads
+            logger.warning("audio_separator not importable; falling back to direct URL download")
+            import requests
+            download_urls = info.get("download_urls", {})
             for filename, url in download_urls.items():
                 dest = target_dir / filename
                 if dest.exists() and dest.stat().st_size > 0:
                     continue
                 logger.info(f"Downloading {filename} from {url}")
-                resp = requests.get(url, stream=True, timeout=600)
+                resp = requests.get(url, stream=True, timeout=600,
+                                    headers={"User-Agent": "SubMaker/1.0"})
                 resp.raise_for_status()
                 with open(str(dest), "wb") as f:
                     for chunk in resp.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             f.write(chunk)
                 logger.info(f"Downloaded {filename}: {dest.stat().st_size} bytes")
-        else:
-            # Fallback to audio-separator library
-            import tempfile
-            from audio_separator.separator import Separator
-            for model_file in info["check_files"]:
-                dest = target_dir / model_file
-                if dest.exists() and dest.stat().st_size > 0:
-                    continue
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    sep = Separator(output_dir=tmpdir, model_file_dir=str(target_dir))
-                    sep.load_model(model_filename=model_file)
-                    del sep
     else:
         from huggingface_hub import snapshot_download
         repo_id = info.get("repo_id")
@@ -3438,3 +3443,254 @@ def system_download_status():
         entry.pop("pre_existing", None)
         result[key] = entry
     return jsonify(result)
+
+
+# =============================================================================
+# Python Package Management
+# =============================================================================
+
+# (install_name, import_name) — packages that can be auto-installed via pip.
+# Excludes torch (needs CUDA index), diffusers (needs git), autoawq/onnxruntime-gpu (special).
+_REQUIRED_PACKAGES = [
+    # Core ML packages
+    ("torch",           "torch"),
+    ("faster-whisper",  "faster_whisper"),
+    ("transformers",    "transformers"),
+    ("accelerate",      "accelerate"),
+    ("datasets",        "datasets"),
+    # Audio / isolation
+    ("audio-separator", "audio_separator"),
+    ("librosa",         "librosa"),
+    ("soundfile",       "soundfile"),
+    ("pydub",           "pydub"),
+    # Image generation
+    ("diffusers",       "diffusers"),
+    ("bitsandbytes",    "bitsandbytes"),
+    ("sentencepiece",   "sentencepiece"),
+    # HuggingFace
+    ("huggingface-hub", "huggingface_hub"),
+    # Text / language
+    ("arabic-reshaper", "arabic_reshaper"),
+    ("python-bidi",     "bidi"),
+    # Utilities
+    ("mutagen",         "mutagen"),
+    ("numpy",           "numpy"),
+    ("tqdm",            "tqdm"),
+    ("psutil",          "psutil"),
+    # API framework (should already be installed, listed for completeness)
+    ("flask",           "flask"),
+    ("flask-cors",      "flask_cors"),
+    ("flask-socketio",  "flask_socketio"),
+    ("eventlet",        "eventlet"),
+]
+
+# Packages that need a special PyPI index (torch CUDA wheels)
+_TORCH_PACKAGES = {"torch", "torchvision", "torchaudio"}
+_TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu124"
+
+# Packages that need --no-build-isolation --no-deps (autoawq on Windows)
+_NO_BUILD_ISOLATION_PACKAGES = {"autoawq"}
+
+
+@api.route('/packages/check', methods=['GET'])
+def packages_check():
+    """Check which required Python packages are installed.
+    Also detects CPU-only torch (no CUDA) and reports it as missing so user
+    can reinstall the CUDA build via the packages manager."""
+    import importlib.util
+    import importlib
+    import os as _os
+    missing = []
+    installed = []
+    warnings = {}  # pkg_name -> warning string
+
+    # Packages where we must do a real import test (not just find_spec) because
+    # their native DLL dependencies (ctranslate2 / CUDA) may fail to load even
+    # when the Python files are present on disk.
+    _IMPORT_TEST = {"faster_whisper"}
+
+    for pkg_name, import_name in _REQUIRED_PACKAGES:
+        if import_name in _IMPORT_TEST:
+            # Real import test — catches DLL load failures (OSError / WinError 126)
+            # that find_spec cannot detect.
+            try:
+                # Pre-register torch DLL directory so ctranslate2 can find
+                # CUDA libraries (same logic as whisperx_engine.is_available)
+                if _os.name == "nt":
+                    try:
+                        import torch as _t
+                        _td = _os.path.join(_os.path.dirname(_t.__file__), "lib")
+                        if _os.path.isdir(_td):
+                            _os.add_dll_directory(_td)
+                    except Exception:
+                        pass
+                importlib.import_module(import_name)
+                installed.append(pkg_name)
+            except (ImportError, OSError) as _e:
+                missing.append(pkg_name)
+                warnings[pkg_name] = f"Import failed: {type(_e).__name__}: {_e}"
+        else:
+            spec = importlib.util.find_spec(import_name)
+            if spec is None:
+                missing.append(pkg_name)
+            else:
+                installed.append(pkg_name)
+
+            # Special check: torch must be the CUDA build (has torch_cuda.dll on Windows).
+            # Only the DLL check matters — cuda_available() depends on GPU hardware
+            # and would wrongly flag CUDA torch as broken on CPU-only machines.
+            if pkg_name == "torch" and _os.name == "nt" and pkg_name in installed:
+                try:
+                    import torch as _torch
+                    torch_lib = _os.path.join(_os.path.dirname(_torch.__file__), "lib")
+                    has_cuda_dll = _os.path.exists(_os.path.join(torch_lib, "torch_cuda.dll"))
+                    if not has_cuda_dll:
+                        warnings["torch"] = (
+                            "CPU-only build detected — GPU acceleration unavailable. "
+                            "Reinstall torch with CUDA support for GPU transcription."
+                        )
+                        # Move torch from installed → missing so user sees the install button
+                        if "torch" in installed:
+                            installed.remove("torch")
+                        if "torch" not in missing:
+                            missing.append("torch")
+                except Exception:
+                    pass
+
+    return jsonify({
+        "missing": missing,
+        "installed": installed,
+        "warnings": warnings,
+        "python_exe": sys.executable,
+        "total": len(_REQUIRED_PACKAGES),
+    })
+
+
+@api.route('/packages/install', methods=['POST'])
+def packages_install():
+    """Install Python packages via pip. Body: { "packages": ["pkg1", ...] }
+    Handles torch CUDA wheels and autoawq special cases automatically.
+    Returns an SSE stream of pip output."""
+    import re as _re
+    import subprocess
+    from flask import Response, stream_with_context
+    import json as json_module
+
+    data = request.get_json() or {}
+    packages = data.get("packages", [])
+
+    # Validate package names — only standard pip-safe characters allowed
+    safe_packages = [
+        p for p in packages
+        if isinstance(p, str) and _re.match(r'^[A-Za-z0-9_\-\.\[\]=<>!@]+$', p)
+    ]
+
+    def _pip_stream(cmd):
+        """Run pip command, yield SSE lines, return exit code."""
+        yield f"data: {json_module.dumps({'type': 'command', 'message': ' '.join(cmd)})}\n\n"
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, bufsize=1)
+        for line in proc.stdout:
+            line = line.rstrip('\n\r')
+            if line.strip():
+                yield f"data: {json_module.dumps({'type': 'output', 'message': line})}\n\n"
+        proc.wait()
+        # Encode exit code as a special event so generate() can read it
+        yield f"data: {json_module.dumps({'type': '_rc', 'code': proc.returncode})}\n\n"
+
+    def generate():
+        if not safe_packages:
+            yield f"data: {json_module.dumps({'type': 'error', 'message': 'No valid packages specified'})}\n\n"
+            return
+
+        torch_pkgs    = [p for p in safe_packages if p in _TORCH_PACKAGES]
+        no_build_pkgs = [p for p in safe_packages if p in _NO_BUILD_ISOLATION_PACKAGES]
+        standard_pkgs = [p for p in safe_packages
+                         if p not in _TORCH_PACKAGES and p not in _NO_BUILD_ISOLATION_PACKAGES]
+
+        total  = len(safe_packages)
+        failed = False
+        restart_required = False
+
+        yield f"data: {json_module.dumps({'type': 'status', 'message': f'Installing {total} package(s)...'})}\n\n"
+
+        # ── 1. PyTorch + CUDA ─────────────────────────────────────────────────
+        if torch_pkgs:
+            yield f"data: {json_module.dumps({'type': 'status', 'message': 'Installing PyTorch with CUDA 12.4...'})}\n\n"
+            rc = 0
+            for chunk in _pip_stream(
+                [sys.executable, "-m", "pip", "install", "--upgrade"] + torch_pkgs +
+                ["--index-url", _TORCH_INDEX_URL]
+            ):
+                data_json = json_module.loads(chunk[len("data: "):].strip())
+                if data_json.get("type") == "_rc":
+                    rc = data_json["code"]
+                else:
+                    yield chunk
+            if rc == 0:
+                restart_required = True
+                yield f"data: {json_module.dumps({'type': 'status', 'message': 'PyTorch (CUDA) installed successfully.'})}\n\n"
+            else:
+                yield f"data: {json_module.dumps({'type': 'error', 'message': f'PyTorch install failed (exit {rc})'})}\n\n"
+                failed = True
+
+        # ── 2. autoawq (--no-build-isolation --no-deps) ───────────────────────
+        if no_build_pkgs:
+            yield f"data: {json_module.dumps({'type': 'status', 'message': 'Installing autoawq...'})}\n\n"
+            rc = 0
+            for chunk in _pip_stream(
+                [sys.executable, "-m", "pip", "install", "--no-build-isolation", "--no-deps"] + no_build_pkgs
+            ):
+                data_json = json_module.loads(chunk[len("data: "):].strip())
+                if data_json.get("type") == "_rc":
+                    rc = data_json["code"]
+                else:
+                    yield chunk
+            if rc != 0:
+                yield f"data: {json_module.dumps({'type': 'error', 'message': 'autoawq install failed — Qwen translation may not work'})}\n\n"
+
+        # ── 3. Standard packages ──────────────────────────────────────────────
+        if standard_pkgs:
+            yield f"data: {json_module.dumps({'type': 'status', 'message': f'Installing {len(standard_pkgs)} remaining package(s)...'})}\n\n"
+            rc = 0
+            for chunk in _pip_stream(
+                [sys.executable, "-m", "pip", "install", "--upgrade"] + standard_pkgs
+            ):
+                data_json = json_module.loads(chunk[len("data: "):].strip())
+                if data_json.get("type") == "_rc":
+                    rc = data_json["code"]
+                else:
+                    yield chunk
+            if rc != 0:
+                yield f"data: {json_module.dumps({'type': 'done', 'success': False, 'message': f'pip exited {rc}'})}\n\n"
+                failed = True
+
+        # ── Final ─────────────────────────────────────────────────────────────
+        if not failed:
+            msg = ('All packages installed. Please restart the app to activate CUDA.'
+                   if restart_required else 'All packages installed successfully.')
+            yield f"data: {json_module.dumps({'type': 'done', 'success': True, 'restart_required': restart_required, 'message': msg})}\n\n"
+        else:
+            yield f"data: {json_module.dumps({'type': 'done', 'success': False, 'restart_required': False, 'message': 'Some packages failed to install.'})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache'},
+    )
+
+
+@api.route('/packages/restart', methods=['POST'])
+def packages_restart():
+    """Restart the backend process. Called after package installation completes."""
+    import threading
+    import os
+    import signal
+
+    def _do_restart():
+        import time
+        time.sleep(0.5)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return jsonify({"status": "restarting"})

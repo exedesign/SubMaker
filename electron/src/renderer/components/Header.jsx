@@ -1,5 +1,6 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { FiFilm, FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft, FiTrash2, FiDroplet, FiHeart, FiCpu, FiDownload, FiCheck, FiAlertTriangle, FiRefreshCw } from 'react-icons/fi';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { FiSettings, FiX, FiGlobe, FiMusic, FiUpload, FiFile, FiMinus, FiSquare, FiMaximize2, FiChevronsLeft, FiTrash2, FiDroplet, FiHeart, FiCpu, FiDownload, FiCheck, FiAlertTriangle, FiRefreshCw, FiPackage, FiTerminal } from 'react-icons/fi';
+import AppLogo from './AppLogo';
 import { useAppStore } from '../stores/appStore';
 import packageJson from '../../../package.json';
 import THEMES from '../themes';
@@ -27,7 +28,197 @@ const CATEGORY_LABELS = {
 
 const CATEGORY_ORDER = ['required', 'translation', 'extra', 'cover-art'];
 
-function SystemHealthPanel({ systemHealth, healthCheckLoading, onRefresh, onDownload, modelDownloading }) {
+function PythonPackagesSection({
+  pythonPackages, packagesLoading, packagesInstalling, packagesInstallLog,
+  packagesInstallDone, packagesInstallSuccess, packagesRestartRequired,
+  onInstallPackages, onResetInstallLog,
+}) {
+  const logEndRef = useRef(null);
+  useEffect(() => {
+    if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [packagesInstallLog]);
+
+  const missing = pythonPackages?.missing || [];
+  const installed = pythonPackages?.installed || [];
+  const warnings = pythonPackages?.warnings || {};
+  const total = pythonPackages?.total || (missing.length + installed.length);
+
+  const handleRestart = () => {
+    const API_BASE = window.API_URL || 'http://localhost:5000/api';
+    fetch(`${API_BASE}/packages/restart`, { method: 'POST' }).catch(() => {});
+    if (window.electronAPI?.relaunchApp) {
+      setTimeout(() => window.electronAPI.relaunchApp(), 800);
+    } else {
+      setTimeout(() => window.location.reload(), 800);
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ height: 1, background: 'var(--border-color)', margin: '12px 0' }} />
+      <label className="label" style={{ fontSize: 12, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
+        <FiPackage size={14} /> Python Packages
+      </label>
+
+      {/* Summary bar */}
+      <div style={{
+        padding: '10px 12px',
+        background: 'var(--bg-secondary)',
+        borderRadius: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        fontSize: 12, marginBottom: 10,
+      }}>
+        {packagesLoading ? (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <FiRefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} />
+            Checking packages...
+          </span>
+        ) : (
+          <>
+            <span>
+              <strong style={{ color: '#22c55e' }}>{installed.length}</strong> installed
+              {missing.length > 0 && <>, <strong style={{ color: '#ef4444' }}>{missing.length}</strong> missing</>}
+            </span>
+            <span style={{ color: 'var(--text-secondary)' }}>{total} total</span>
+          </>
+        )}
+      </div>
+
+      {/* Install All button (when not installing and there's something to install) */}
+      {!packagesInstalling && !packagesInstallDone && missing.length > 0 && (
+        <button
+          className="btn btn-primary"
+          onClick={() => onInstallPackages(missing)}
+          style={{ width: '100%', padding: '10px 16px', fontSize: 13, marginBottom: 10 }}
+        >
+          <FiDownload size={14} style={{ marginRight: 6 }} />
+          Install {missing.length} Missing Package{missing.length !== 1 ? 's' : ''}
+        </button>
+      )}
+
+      {/* Missing packages list with individual install buttons */}
+      {!packagesInstalling && !packagesInstallDone && missing.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          {missing.map((pkg) => (
+            <div
+              key={pkg}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 10px', background: 'var(--bg-secondary)', borderRadius: 6,
+                marginBottom: 4, border: '1px solid rgba(239,68,68,0.15)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <FiAlertTriangle size={12} style={{ color: '#ef4444', flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {pkg}
+                </span>
+                {pkg === 'torch' && (
+                  <span style={{ fontSize: 10, color: 'var(--text-secondary)', marginLeft: 4 }}>
+                    (~2.5 GB, CUDA 12.4)
+                  </span>
+                )}
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() => onInstallPackages([pkg])}
+                style={{ padding: '3px 10px', fontSize: 10, flexShrink: 0 }}
+              >
+                <FiDownload size={10} style={{ marginRight: 4 }} />
+                Install
+              </button>
+            </div>
+            {warnings[pkg] && (
+              <div style={{
+                padding: '5px 10px 6px',
+                background: 'rgba(245,158,11,0.08)',
+                borderRadius: '0 0 6px 6px',
+                border: '1px solid rgba(245,158,11,0.2)',
+                borderTop: 'none',
+                fontSize: 10,
+                color: '#f59e0b',
+                display: 'flex', alignItems: 'flex-start', gap: 5,
+                marginBottom: 4,
+              }}>
+                <FiAlertTriangle size={11} style={{ flexShrink: 0, marginTop: 1 }} />
+                {warnings[pkg]}
+              </div>
+            )}
+          ))}
+        </div>
+      )}
+
+      {/* All installed message */}
+      {!packagesLoading && !packagesInstalling && !packagesInstallDone && missing.length === 0 && pythonPackages && (
+        <div style={{
+          padding: '10px 12px', background: 'rgba(34,197,94,0.1)',
+          borderRadius: 8, border: '1px solid rgba(34,197,94,0.2)',
+          fontSize: 12, color: '#22c55e', display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <FiCheck size={14} /> All required Python packages are installed.
+        </div>
+      )}
+
+      {/* pip install terminal (live + after completion) */}
+      {(packagesInstalling || (packagesInstallDone && packagesInstallLog.length > 0)) && (
+        <div style={{
+          background: '#0b0b0b', border: '1px solid var(--border-color)', borderRadius: 6,
+          padding: 8, fontFamily: 'Consolas, monospace', fontSize: 10,
+          color: '#c8c8c8', maxHeight: 180, overflowY: 'auto', marginBottom: 10,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#888', marginBottom: 4 }}>
+            <FiTerminal size={11} /> pip
+          </div>
+          {packagesInstallLog.map((line, i) => (
+            <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{line}</div>
+          ))}
+          <div ref={logEndRef} />
+        </div>
+      )}
+
+      {/* Result banner + action buttons */}
+      {packagesInstallDone && (
+        <>
+          <div style={{
+            padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 8,
+            background: packagesInstallSuccess ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            color: packagesInstallSuccess ? '#22c55e' : '#ef4444',
+            border: `1px solid ${packagesInstallSuccess ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+          }}>
+            {packagesInstallSuccess
+              ? '✓ Installation finished.'
+              : '⚠ Installation failed — see log above.'}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {packagesInstallSuccess && packagesRestartRequired && (
+              <button className="btn btn-primary" onClick={handleRestart}
+                style={{ padding: '8px 14px', fontSize: 12 }}>
+                <FiRefreshCw size={12} style={{ marginRight: 4 }} /> Restart App (CUDA)
+              </button>
+            )}
+            {!packagesInstallSuccess && missing.length > 0 && (
+              <button className="btn btn-primary" onClick={() => onInstallPackages(missing)}
+                style={{ padding: '8px 14px', fontSize: 12 }}>
+                <FiRefreshCw size={12} style={{ marginRight: 4 }} /> Retry
+              </button>
+            )}
+            <button className="btn btn-secondary" onClick={onResetInstallLog}
+              style={{ padding: '8px 14px', fontSize: 12 }}>
+              Clear Log
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SystemHealthPanel({
+  systemHealth, healthCheckLoading, onRefresh, onDownload, modelDownloading,
+  pythonPackages, packagesLoading, packagesInstalling, packagesInstallLog,
+  packagesInstallDone, packagesInstallSuccess, packagesRestartRequired,
+  onInstallPackages, onResetInstallLog, modelsDir,
+}) {
   if (healthCheckLoading && !systemHealth) {
     return (
       <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
@@ -130,20 +321,78 @@ function SystemHealthPanel({ systemHealth, healthCheckLoading, onRefresh, onDown
         </div>
       </div>
 
+      {/* Models directory path */}
+      {(modelsDir || systemHealth?.models_dir) && (
+        <div style={{
+          padding: '8px 12px',
+          background: 'var(--bg-secondary)',
+          borderRadius: 8,
+          marginBottom: 12,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 8,
+          fontSize: 11,
+          border: '1px solid var(--border-color)',
+        }}>
+          <FiDownload size={12} style={{ color: 'var(--text-secondary)', flexShrink: 0, marginTop: 1 }} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: 'var(--text-secondary)', marginBottom: 2 }}>Models folder</div>
+            <div
+              title={modelsDir || systemHealth?.models_dir}
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: 'Consolas, monospace',
+                fontSize: 10,
+                wordBreak: 'break-all',
+                cursor: 'default',
+              }}
+            >
+              {modelsDir || systemHealth?.models_dir}
+            </div>
+          </div>
+          {window.electronAPI?.openPath && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => window.electronAPI.openPath(modelsDir || systemHealth?.models_dir)}
+              title="Open folder"
+              style={{ padding: '2px 8px', fontSize: 10, flexShrink: 0, marginTop: 2 }}
+            >
+              Open
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Python Packages section ──────────────────────── */}
+      <PythonPackagesSection
+        pythonPackages={pythonPackages}
+        packagesLoading={packagesLoading}
+        packagesInstalling={packagesInstalling}
+        packagesInstallLog={packagesInstallLog}
+        packagesInstallDone={packagesInstallDone}
+        packagesInstallSuccess={packagesInstallSuccess}
+        packagesRestartRequired={packagesRestartRequired}
+        onInstallPackages={onInstallPackages}
+        onResetInstallLog={onResetInstallLog}
+      />
+
+      {/* ── Models header ─────────────────────────────────── */}
+      <div style={{ height: 1, background: 'var(--border-color)', margin: '12px 0' }} />
+      <label className="label" style={{ fontSize: 12, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
+        <FiDownload size={14} /> AI Models
+      </label>
+
       {/* Download All Missing button */}
       {missingKeys.length > 0 && (
-        <>
-          <div style={{ height: 1, background: 'var(--border-color)', margin: '16px 0' }} />
-          <button
-            className="btn btn-primary"
-            onClick={() => onDownload(missingKeys)}
-            disabled={missingKeys.some(k => modelDownloading[k])}
-            style={{ width: '100%', padding: '10px 16px', fontSize: 13, marginBottom: 16 }}
-          >
-            <FiDownload size={14} style={{ marginRight: 6 }} />
-            Download {missingKeys.length} Missing Model{missingKeys.length > 1 ? 's' : ''}
-          </button>
-        </>
+        <button
+          className="btn btn-primary"
+          onClick={() => onDownload(missingKeys)}
+          disabled={missingKeys.some(k => modelDownloading[k])}
+          style={{ width: '100%', padding: '10px 16px', fontSize: 13, marginBottom: 16 }}
+        >
+          <FiDownload size={14} style={{ marginRight: 6 }} />
+          Download {missingKeys.length} Missing Model{missingKeys.length > 1 ? 's' : ''}
+        </button>
       )}
 
       {/* Models by category */}
@@ -233,6 +482,9 @@ function Header() {
     cacheInfo, fetchCacheInfo, clearCache,
     systemStats, fetchSystemStats, unloadAllModels,
     systemHealth, healthCheckLoading, runSystemHealthCheck, downloadModels, modelDownloading,
+    pythonPackages, packagesLoading, packagesInstalling, packagesInstallLog,
+    packagesInstallDone, packagesInstallSuccess, packagesRestartRequired,
+    checkPythonPackages, installPythonPackages, resetPackagesInstallLog,
   } = useAppStore();
 
   const handleChangeSource = useCallback(async () => {
@@ -315,18 +567,19 @@ function Header() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refresh health check when System tab is opened
+  // Refresh health check + Python package list when System tab is opened
   useEffect(() => {
     if (showSettings && settingsTab === 'system') {
       runSystemHealthCheck();
+      checkPythonPackages();
     }
-  }, [showSettings, settingsTab, runSystemHealthCheck]);
+  }, [showSettings, settingsTab, runSystemHealthCheck, checkPythonPackages]);
 
   return (
     <>
       <header className="header">
         <div className="header-logo" onClick={() => setShowAbout(true)} style={{ cursor: 'pointer' }} title="About SubMaker">
-          <FiFilm />
+          <AppLogo size={24} />
           <span>SubMaker</span>
         </div>
 
@@ -593,9 +846,19 @@ function Header() {
                 <SystemHealthPanel
                   systemHealth={systemHealth}
                   healthCheckLoading={healthCheckLoading}
-                  onRefresh={runSystemHealthCheck}
+                  onRefresh={() => { runSystemHealthCheck(); checkPythonPackages(); }}
                   onDownload={downloadModels}
                   modelDownloading={modelDownloading}
+                  pythonPackages={pythonPackages}
+                  packagesLoading={packagesLoading}
+                  packagesInstalling={packagesInstalling}
+                  packagesInstallLog={packagesInstallLog}
+                  packagesInstallDone={packagesInstallDone}
+                  packagesInstallSuccess={packagesInstallSuccess}
+                  packagesRestartRequired={packagesRestartRequired}
+                  onInstallPackages={installPythonPackages}
+                  onResetInstallLog={resetPackagesInstallLog}
+                  modelsDir={systemHealth?.models_dir}
                 />
               ) : (
               <>
@@ -846,6 +1109,39 @@ function Header() {
               {/* Divider */}
               <div style={{ height: 1, background: 'var(--border-color)', margin: '20px 0' }} />
 
+              {/* Visualizer Preview Quality */}
+              <div className="form-group">
+                <label className="label" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FiCpu size={16} />
+                  Visualizer Preview Quality
+                </label>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                  Lower quality reduces GPU load in fullscreen / 4K. Does not affect export quality.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                  {[
+                    { key: 'auto',        label: 'Auto',        sub: 'Adjusts by resolution' },
+                    { key: 'native',      label: 'Native',      sub: 'Full GPU, best quality' },
+                    { key: 'high',        label: 'High',        sub: '75% — slight saving' },
+                    { key: 'medium',      label: 'Medium',      sub: '50% + 30fps' },
+                    { key: 'performance', label: 'Performance', sub: '25% + 30fps, most saving' },
+                  ].map(({ key, label, sub }) => (
+                    <button
+                      key={key}
+                      className={`btn ${(settings.vizPreviewQuality ?? 'auto') === key ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setSettings({ vizPreviewQuality: key })}
+                      style={{ padding: '8px 6px', flexDirection: 'column', gap: 3, textAlign: 'center' }}
+                    >
+                      <span style={{ fontWeight: 600, fontSize: 11 }}>{label}</span>
+                      <span style={{ fontSize: 9, opacity: 0.7, lineHeight: 1.3 }}>{sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '20px 0' }} />
+
               {/* Cache Cleanup on Startup */}
               <div className="form-group">
                 <div style={{
@@ -890,7 +1186,7 @@ function Header() {
         <div className="about-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowAbout(false); }}>
           <div className="about-modal">
             <div className="about-modal-header">
-              <h3><FiHeart size={18} style={{ color: '#ef4444', fill: '#ef4444' }} /> About SubMaker</h3>
+              <h3><AppLogo size={20} style={{ verticalAlign: 'middle', marginRight: 6 }} /> About SubMaker</h3>
               <button className="btn btn-secondary" onClick={() => setShowAbout(false)} style={{ padding: 8 }}>
                 <FiX size={16} />
               </button>
@@ -898,6 +1194,7 @@ function Header() {
             <div className="about-modal-body">
               {/* Author */}
               <div className="about-author">
+                <AppLogo size={72} className="about-logo-img" />
                 <div className="about-app-name">SubMaker</div>
                 <div className="about-version">v{packageJson.version}</div>
                 <div className="about-desc">Professional subtitle generator with AI-powered transcription, translation, cover art generation, video input support and audio visualization.</div>

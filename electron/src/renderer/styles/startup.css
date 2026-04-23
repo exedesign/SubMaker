@@ -308,6 +308,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.startup-download-badge--error {
+  color: #e05555;
+}
+
 .startup-download-size {
   font-size: 9px;
   color: var(--text-muted);
@@ -409,4 +413,154 @@
   margin-top: 14px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* ── Packages phase ────────────────────────────────────────── */
+
+.startup-pkg-phase {
+  animation: startupFadeIn 0.25s ease-out;
+}
+
+.startup-pkg-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.startup-pkg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.startup-pkg-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-error) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-error) 15%, transparent);
+}
+
+.startup-pkg-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.startup-pkg-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: var(--font-mono, 'Consolas', monospace);
+}
+
+.startup-pkg-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-error);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.startup-pkg-warning {
+  font-size: 10px;
+  font-weight: 500;
+  color: #f59e0b;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+.startup-pkg-terminal {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  height: 180px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  font-family: var(--font-mono, 'Consolas', monospace);
+  font-size: 10.5px;
+  line-height: 1.6;
+  scroll-behavior: smooth;
+}
+
+.startup-pkg-log-line {
+  color: var(--text-muted);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.startup-pkg-log-line:last-child {
+  color: var(--text-secondary);
+}
+
+.startup-pkg-result {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 12px;
+  animation: startupPop 0.25s ease-out;
+}
+
+.startup-pkg-result--ok {
+  background: color-mix(in srgb, var(--accent-success) 12%, transparent);
+  color: var(--accent-success);
+  border: 1px solid color-mix(in srgb, var(--accent-success) 25%, transparent);
+}
+
+.startup-pkg-result--fail {
+  background: color-mix(in srgb, var(--accent-error) 12%, transparent);
+  color: var(--accent-error);
+  border: 1px solid color-mix(in srgb, var(--accent-error) 25%, transparent);
+}
+
+.startup-pkg-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* ── Close / skip button ───────────────────────────────────── */
+
+.startup-header {
+  position: relative;
+}
+
+.startup-close-btn {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.startup-close-btn:hover {
+  background: color-mix(in srgb, var(--accent-error) 12%, transparent);
+  border-color: var(--accent-error);
+  color: var(--accent-error);
 }

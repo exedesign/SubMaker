@@ -520,17 +520,18 @@ class TranscriptionService:
         """Determine the best device and compute type"""
         device = self.device
         compute_type = self.compute_type
-        
+
         if device == "auto":
             try:
                 import torch
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-            except ImportError:
+            except (ImportError, OSError):
+                # OSError catches DLL load failures on Windows (e.g. torch_cuda.dll missing)
                 device = "cpu"
-        
+
         if compute_type == "auto":
             compute_type = "float16" if device == "cuda" else "int8"
-            
+
         return device, compute_type
     
     def load_model(self, language: Optional[str] = None, model_size_override: Optional[str] = None):
@@ -541,9 +542,25 @@ class TranscriptionService:
             model_size_override: Explicit model ID (overrides language-based selection)
         """
         if not self.engine.is_available():
-            raise ImportError(
-                "faster-whisper is not installed. Run: pip install faster-whisper"
-            )
+            # Provide a diagnostic-aware error message
+            try:
+                import faster_whisper  # noqa: F401 — check importability
+                raise RuntimeError(
+                    "faster-whisper loaded but engine is unavailable. "
+                    "Check backend logs for details."
+                )
+            except ImportError as _ie:
+                raise ImportError(
+                    f"faster-whisper is not installed. "
+                    f"Go to Settings → System → Python Packages and install it. "
+                    f"({_ie})"
+                ) from _ie
+            except OSError as _oe:
+                raise RuntimeError(
+                    f"faster-whisper failed to load (missing DLL or C++ runtime). "
+                    f"Install PyTorch with CUDA from Settings → System → Python Packages, "
+                    f"then restart the app. Details: {_oe}"
+                ) from _oe
 
         if model_size_override:
             model_id = model_size_override
