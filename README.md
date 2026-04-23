@@ -3,6 +3,10 @@
 **AI-powered subtitle and karaoke video generator for Windows.**  
 Transcribe audio, isolate vocals, translate to 37+ languages, and burn animated subtitles — all offline, no cloud required.
 
+[![Patreon](https://img.shields.io/badge/Patreon-Support%20monthly-FF424D?style=flat&logo=patreon&logoColor=white)](https://www.patreon.com/10985664/join)
+[![Patreon Shop](https://img.shields.io/badge/Patreon-One--time%20tip-FF424D?style=flat&logo=patreon&logoColor=white)](https://www.patreon.com/cw/fatiheke/shop)
+[![Kreosus](https://img.shields.io/badge/Kreosus-Destek%20ol-f59e0b?style=flat&logoColor=white)](https://kreosus.com/exedesign#creator-profile-support)
+
 ---
 
 ## Features
@@ -235,6 +239,18 @@ Ensure you're using a font with Arabic glyph support (e.g., Cairo, Noto Sans Ara
 - [FFmpeg](https://ffmpeg.org/) — Video encoding and processing
 - [Electron](https://www.electronjs.org/) — Desktop application framework
 - [React](https://react.dev/) — UI framework
+
+---
+
+## Support
+
+SubMaker is free and open source. If it saves you time, consider supporting development:
+
+| Platform | Type | Link |
+|---|---|---|
+| Patreon | Monthly membership | [patreon.com/fatiheke](https://www.patreon.com/10985664/join) |
+| Patreon | One-time tip | [patreon.com/fatiheke/shop](https://www.patreon.com/cw/fatiheke/shop) |
+| Kreosus | One-time / recurring | [kreosus.com/exedesign](https://kreosus.com/exedesign#creator-profile-support) |
 
 ---
 
