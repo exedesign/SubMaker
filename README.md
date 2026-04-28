@@ -88,38 +88,38 @@ Models are stored in `%AppData%\SubMaker\models\` and can be managed from the ap
 
 ## Screenshots
 
-### Main Interface
-![Main Interface](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160608.png)
+### File Upload Interface
+![File Upload Interface](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160608.png)
 
-### Transcription Process
-![Transcription](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160649.png)
+### Keyboard Shortcuts Settings
+![Keyboard Shortcuts](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160649.png)
 
-### Subtitle Editor
-![Subtitle Editor](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160657.png)
+### System Health & Model Status
+![System Health](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160657.png)
 
-### Style Customization
-![Style Settings](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160704.png)
+### General Settings & Theme Customization
+![General Settings](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20160704.png)
 
-### Preview Panel
-![Preview Panel](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20161304.png)
+### Subtitle Editor with Timeline & Karaoke Preview
+![Subtitle Editor](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20161304.png)
 
-### Audio Visualizer
-![Audio Visualizer](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20161332.png)
+### Text Styling Panel
+![Text Styling](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20161332.png)
 
-### Translation Feature
-![Translation](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20161350.png)
+### AI Cover Art Generator
+![Cover Art Generator](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20161350.png)
 
-### System Health Panel
-![System Health](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20162718.png)
+### Preview with Audio Visualizer
+![Audio Visualizer Preview](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20162718.png)
 
-### Model Management
-![Model Management](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20163759.png)
+### Vocal Isolation (Separated Audio Tracks)
+![Vocal Isolation](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20163759.png)
 
-### Export Options
-![Export Options](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20163811.png)
+### Video Export Format Settings
+![Export Format](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20163811.png)
 
-### Final Output
-![Final Output](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20192446.png)
+### Multi-Language Support (Russian Example)
+![Russian Subtitles](SC/Ekran%20g%C3%B6r%C3%BCnt%C3%BCs%C3%BC%202026-04-27%20192446.png)
 
 ---
 
